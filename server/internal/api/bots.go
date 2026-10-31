@@ -1,0 +1,231 @@
+package api
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"gbot/internal/runs"
+	"gbot/internal/store"
+)
+
+func (s *Server) listBots(w http.ResponseWriter, r *http.Request) {
+	bots, err := s.Store.ListBots(r.Context(), userFrom(r).SpaceID)
+	if err != nil {
+		s.Log.Error("list bots", "err", err)
+		writeErr(w, 500, "could not load bots")
+		return
+	}
+	if bots == nil {
+		bots = []*store.Bot{}
+	}
+	writeJSON(w, 200, map[string]any{"bots": bots, "presence": s.Runtime.PresenceSnapshot()})
+}
+
+// bot loads the path's bot inside the caller's space. Another space's
+// bot is indistinguishable from a missing one.
+func (s *Server) bot(w http.ResponseWriter, r *http.Request) *store.Bot {
+	b, err := s.Store.GetBot(r.Context(), userFrom(r).SpaceID, r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) || strings.Contains(err.Error(), "invalid input syntax") {
+			writeErr(w, 404, "bot not found")
+		} else {
+			s.Log.Error("get bot", "err", err)
+			writeErr(w, 500, "could not load bot")
+		}
+		return nil
+	}
+	return b
+}
+
+func (s *Server) getBot(w http.ResponseWriter, r *http.Request) {
+	if b := s.bot(w, r); b != nil {
+		writeJSON(w, 200, b)
+	}
+}
+
+func validBotFields(name, title, instructions *string, look *store.Look) string {
+	if name != nil {
+		*name = strings.TrimSpace(*name)
+		if *name == "" || utf8.RuneCountInString(*name) > 40 {
+			return "give your bot a name (up to 40 characters)"
+		}
+	}
+	if title != nil && utf8.RuneCountInString(*title) > 80 {
+		return "keep the title under 80 characters"
+	}
+	if instructions != nil && len(*instructions) > 20000 {
+		return "instructions are too long"
+	}
+	if look != nil && len(fmt.Sprint(*look)) > 2000 {
+		return "look is too large"
+	}
+	return ""
+}
+
+func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name         string     `json:"name"`
+		Title        string     `json:"title"`
+		Instructions string     `json:"instructions"`
+		Model        string     `json:"model"`
+		Look         store.Look `json:"look"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if msg := validBotFields(&body.Name, &body.Title, &body.Instructions, &body.Look); msg != "" {
+		writeErr(w, 400, msg)
+		return
+	}
+	u := userFrom(r)
+	b, err := s.Store.CreateBot(r.Context(), u.SpaceID, u.ID, store.NewBot{
+		Name: body.Name, Title: body.Title, Instructions: body.Instructions, Model: body.Model, Look: body.Look,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrBotLimit) {
+			writeErr(w, 409, err.Error())
+			return
+		}
+		s.Log.Error("create bot", "err", err)
+		writeErr(w, 500, "could not create bot")
+		return
+	}
+	s.Hub.Publish(u.SpaceID, runs.Event{Type: "bot", BotID: b.ID, Data: b})
+	writeJSON(w, 201, b)
+}
+
+func (s *Server) updateBot(w http.ResponseWriter, r *http.Request) {
+	var p store.BotPatch
+	if !readJSON(w, r, &p) {
+		return
+	}
+	if msg := validBotFields(p.Name, p.Title, p.Instructions, p.Look); msg != "" {
+		writeErr(w, 400, msg)
+		return
+	}
+	if p.Model != nil && *p.Model != "" && s.Models.Pick(r.Context(), *p.Model) != *p.Model {
+		writeErr(w, 400, "that model isn't available")
+		return
+	}
+	u := userFrom(r)
+	b, err := s.Store.UpdateBot(r.Context(), u.SpaceID, r.PathValue("id"), p)
+	if err != nil {
+		writeErr(w, 404, "bot not found")
+		return
+	}
+	s.Hub.Publish(u.SpaceID, runs.Event{Type: "bot", BotID: b.ID, Data: b})
+	writeJSON(w, 200, b)
+}
+
+func (s *Server) archiveBot(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if err := s.Store.ArchiveBot(r.Context(), u.SpaceID, r.PathValue("id")); err != nil {
+		writeErr(w, 404, "bot not found")
+		return
+	}
+	s.Runtime.Stop(r.PathValue("id"))
+	s.Hub.Publish(u.SpaceID, runs.Event{Type: "bot_removed", BotID: r.PathValue("id")})
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
+	b := s.bot(w, r)
+	if b == nil {
+		return
+	}
+	var before *time.Time
+	if v := r.URL.Query().Get("before"); v != "" {
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			writeErr(w, 400, "bad cursor")
+			return
+		}
+		before = &t
+	}
+	msgs, err := s.Store.ListMessages(r.Context(), b.ID, before, 100)
+	if err != nil {
+		writeErr(w, 500, "could not load messages")
+		return
+	}
+	if msgs == nil {
+		msgs = []*store.Message{}
+	}
+	writeJSON(w, 200, map[string]any{"messages": msgs})
+}
+
+func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
+	b := s.bot(w, r)
+	if b == nil {
+		return
+	}
+	u := userFrom(r)
+	if !s.msgLimit.Allow(u.ID) {
+		writeErr(w, http.StatusTooManyRequests, "slow down a little")
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	body.Text = strings.TrimSpace(body.Text)
+	if body.Text == "" || len(body.Text) > 32000 {
+		writeErr(w, 400, "message must be 1 to 32000 characters")
+		return
+	}
+	m := &store.Message{BotID: b.ID, Role: "user", Content: body.Text}
+	if err := s.Store.AddMessage(r.Context(), m, &u.ID); err != nil {
+		writeErr(w, 500, "could not send")
+		return
+	}
+	s.Hub.Publish(u.SpaceID, runs.Event{Type: "message", BotID: b.ID, Data: m})
+	s.Runtime.Enqueue(runs.Job{Bot: b, Prompt: body.Text, Trigger: "chat",
+		Model: s.Models.Pick(r.Context(), b.Model, u.DefaultModel)})
+	writeJSON(w, 201, m)
+}
+
+func (s *Server) stopBot(w http.ResponseWriter, r *http.Request) {
+	if b := s.bot(w, r); b != nil {
+		writeJSON(w, 200, map[string]bool{"stopped": s.Runtime.Stop(b.ID)})
+	}
+}
+
+// events streams the space's live events over SSE.
+func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, 500, "streaming unsupported")
+		return
+	}
+	u := userFrom(r)
+	ch, unsub := s.Hub.Subscribe(u.SpaceID)
+	defer unsub()
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Accel-Buffering", "no")
+	fmt.Fprint(w, "retry: 1500\n\n")
+	fl.Flush()
+	ping := time.NewTicker(20 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ping.C:
+			fmt.Fprint(w, ": ping\n\n")
+			fl.Flush()
+		case b, ok := <-ch:
+			if !ok {
+				return // dropped as too slow; the client reconnects
+			}
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			fl.Flush()
+		}
+	}
+}

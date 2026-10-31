@@ -1,0 +1,65 @@
+# Everything gbot needs, on your own machine. No external services.
+#   docker compose -f infra/compose/docker-compose.yml up -d            # uses Ollama on the host
+#   docker compose -f infra/compose/docker-compose.yml --profile ollama up -d   # bundled Ollama
+name: gbot
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gbot-local}
+      POSTGRES_DB: gbot
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gbot -d gbot"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  gbot:
+    profiles: ["app"]
+    # eipagent is a private module: GH_TOKEN=$(gh auth token) docker compose ... build
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+      secrets: [gh_token]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GBOT_DATABASE_URL: postgres://gbot:${POSTGRES_PASSWORD:-gbot-local}@postgres:5432/gbot?sslmode=disable
+      GBOT_ADDR: 0.0.0.0:8080
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${GBOT_PORT:-8080}:8080"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+secrets:
+  gh_token:
+    environment: GH_TOKEN
+
+volumes:
+  pgdata:
+  ollama:

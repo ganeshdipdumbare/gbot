@@ -1,0 +1,9 @@
+node_modules/
+apps/*/dist/
+packages/*/dist/
+.env
+*.log
+/server/internal/web/dist/*
+!/server/internal/web/dist/.keep
+/bin/
+.DS_Store

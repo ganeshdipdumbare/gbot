@@ -1,0 +1,11 @@
+{
+  "name": "gbot",
+  "private": true,
+  "packageManager": "pnpm@12.15.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @gbot/web dev",
+    "build:web": "pnpm --filter @gbot/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}
