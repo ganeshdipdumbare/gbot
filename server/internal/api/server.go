@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"gbot/internal/auth"
+	"gbot/internal/computer"
+	"gbot/internal/crypto"
 	"gbot/internal/models"
+	"gbot/internal/routines"
 	"gbot/internal/runs"
 	"gbot/internal/store"
 	"gbot/internal/web"
@@ -25,6 +28,11 @@ type Server struct {
 	Hub     *runs.Hub
 	Models  *models.Catalog
 	Log     *slog.Logger
+	// Optional services; their endpoints answer 503 when missing.
+	Computer *computer.Manager
+	Routines *routines.Service
+	Sealer   *crypto.Sealer
+	Voice    VoiceConfig
 	// SecureCookies is set when served over HTTPS.
 	SecureCookies bool
 	// AllowSignup lets new accounts register; the first account can
@@ -33,6 +41,7 @@ type Server struct {
 
 	authLimit *auth.Limiter
 	msgLimit  *auth.Limiter
+	hookLimit *auth.Limiter
 }
 
 const sessionCookie = "gbot_session"
@@ -41,6 +50,7 @@ const sessionTTL = 30 * 24 * time.Hour
 func (s *Server) Handler() http.Handler {
 	s.authLimit = auth.NewLimiter(10, time.Minute)
 	s.msgLimit = auth.NewLimiter(60, time.Minute)
+	s.hookLimit = auth.NewLimiter(120, time.Minute)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
@@ -61,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/bots/{id}/messages", s.authed(s.sendMessage))
 	mux.Handle("POST /api/bots/{id}/stop", s.authed(s.stopBot))
 	mux.Handle("GET /api/events", s.authed(s.events))
+	s.routesV2(mux)
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 	}))
@@ -75,7 +86,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) secure(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")
@@ -89,7 +100,11 @@ func (s *Server) secure(next http.Handler) http.Handler {
 				writeErr(w, http.StatusForbidden, "cross-site request blocked")
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			limit := int64(1 << 20)
+			if strings.HasPrefix(r.URL.Path, "/api/voice/") {
+				limit = 25 << 20
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)
 	})

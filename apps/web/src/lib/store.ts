@@ -1,12 +1,20 @@
 import { useSyncExternalStore } from "react";
-import { api, type Bot, type Message, type Model, type Presence, type User } from "./api";
+import { askToNotify, notify } from "./notify";
+import { api, type Bot, type ComputerStatus, type Group, type Message, type Model, type Presence, type User } from "./api";
+
+// A chat key is a bot id (its own chat) or "g:<group id>".
+export type ChatKey = string;
+export const groupKey = (id: string) => "g:" + id;
+export const isGroupKey = (k: string | null) => !!k && k.startsWith("g:");
 
 export interface State {
   me: User | null;
   bots: Bot[];
+  groups: Group[];
   presence: Record<string, Presence>;
-  messages: Record<string, Message[]>;
-  activeId: string | null;
+  computers: Record<string, ComputerStatus>;
+  messages: Record<ChatKey, Message[]>;
+  activeId: ChatKey | null;
   models: Model[] | null;
   connected: boolean;
 }
@@ -15,7 +23,7 @@ function savedActive() {
   try { return localStorage.getItem("gbot.active"); } catch { return null; }
 }
 
-let state: State = { me: null, bots: [], presence: {}, messages: {}, activeId: savedActive(), models: null, connected: false };
+let state: State = { me: null, bots: [], groups: [], presence: {}, computers: {}, messages: {}, activeId: savedActive(), models: null, connected: false };
 const listeners = new Set<() => void>();
 
 export function set(fn: (s: State) => Partial<State>) {
@@ -28,10 +36,10 @@ export function useStore<T>(sel: (s: State) => T): T {
   return useSyncExternalStore((l) => (listeners.add(l), () => listeners.delete(l)), () => sel(state));
 }
 
+const lastAt = (x: { lastMessage?: Message; createdAt: string }) => x.lastMessage?.createdAt ?? x.createdAt;
 const sortBots = (bots: Bot[]) =>
-  [...bots].sort((a, b) =>
-    a.pinned !== b.pinned ? (a.pinned ? -1 : 1) :
-    (b.lastMessage?.createdAt ?? b.createdAt).localeCompare(a.lastMessage?.createdAt ?? a.createdAt));
+  [...bots].sort((a, b) => (a.pinned !== b.pinned ? (a.pinned ? -1 : 1) : lastAt(b).localeCompare(lastAt(a))));
+const sortGroups = (gs: Group[]) => [...gs].sort((a, b) => lastAt(b).localeCompare(lastAt(a)));
 
 export function upsertBot(bot: Bot) {
   set((s) => {
@@ -41,112 +49,151 @@ export function upsertBot(bot: Bot) {
   });
 }
 
-function touchLast(botId: string, m: Message) {
-  if (m.role === "event") return;
-  set((s) => ({ bots: sortBots(s.bots.map((b) => (b.id === botId ? { ...b, lastMessage: m } : b))) }));
+export function upsertGroup(g: Group) {
+  set((s) => {
+    const old = s.groups.find((x) => x.id === g.id);
+    const merged = { ...old, ...g, lastMessage: g.lastMessage ?? old?.lastMessage };
+    return { groups: sortGroups(old ? s.groups.map((x) => (x.id === g.id ? merged : x)) : [...s.groups, merged]) };
+  });
+}
+
+export const keyOf = (m: Message): ChatKey => (m.groupId ? groupKey(m.groupId) : m.botId!);
+
+function touchLast(m: Message) {
+  if (m.role !== "user" && m.role !== "bot") return;
+  if (m.groupId) set((s) => ({ groups: sortGroups(s.groups.map((g) => (g.id === m.groupId ? { ...g, lastMessage: m } : g))) }));
+  else set((s) => ({ bots: sortBots(s.bots.map((b) => (b.id === m.botId ? { ...b, lastMessage: m } : b))) }));
 }
 
 export function addMessage(m: Message) {
+  const k = keyOf(m);
   set((s) => {
-    const list = s.messages[m.botId];
+    const list = s.messages[k];
     if (!list) return {};
     if (list.some((x) => x.id === m.id)) return {};
     // Swap an optimistic copy for the real one.
     const i = m.role === "user" ? list.findIndex((x) => x.pending && x.content === m.content) : -1;
     const next = i >= 0 ? list.map((x, j) => (j === i ? m : x)) : [...list, m];
-    return { messages: { ...s.messages, [m.botId]: next } };
+    return { messages: { ...s.messages, [k]: next } };
   });
-  touchLast(m.botId, m);
+  touchLast(m);
 }
 
-function patchMessage(botId: string, id: string, fn: (m: Message) => Message) {
+export function patchMessage(k: ChatKey, id: string, fn: (m: Message) => Message) {
   set((s) => {
-    const list = s.messages[botId];
+    const list = s.messages[k];
     if (!list) return {};
-    return { messages: { ...s.messages, [botId]: list.map((m) => (m.id === id ? fn(m) : m)) } };
+    return { messages: { ...s.messages, [k]: list.map((m) => (m.id === id ? fn(m) : m)) } };
   });
 }
 
-export async function loadBots() {
-  const { bots, presence } = await api.bots();
-  set((s) => ({ bots: sortBots(bots), presence, activeId: s.activeId && bots.some((b) => b.id === s.activeId) ? s.activeId : bots[0]?.id ?? null }));
+export async function loadAll() {
+  const [{ bots, presence }, { groups }] = await Promise.all([api.bots(), api.groups()]);
+  set((s) => {
+    const keys = new Set([...bots.map((b) => b.id), ...groups.map((g) => groupKey(g.id))]);
+    return { bots: sortBots(bots), groups: sortGroups(groups), presence, activeId: s.activeId && keys.has(s.activeId) ? s.activeId : bots[0]?.id ?? null };
+  });
 }
 
-export async function loadMessages(botId: string) {
-  const { messages } = await api.messages(botId);
-  set((s) => ({ messages: { ...s.messages, [botId]: messages } }));
+export async function loadMessages(k: ChatKey) {
+  const { messages } = isGroupKey(k) ? await api.groupMessages(k.slice(2)) : await api.messages(k);
+  set((s) => ({ messages: { ...s.messages, [k]: messages } }));
 }
 
-export async function sendMessage(botId: string, text: string) {
-  const tmp: Message = { id: "tmp-" + Math.random().toString(36).slice(2), botId, role: "user", content: text, createdAt: new Date().toISOString(), pending: true };
-  set((s) => ({
-    messages: { ...s.messages, [botId]: [...(s.messages[botId] ?? []), tmp] },
-    presence: { ...s.presence, [botId]: { state: "thinking" } },
-  }));
-  touchLast(botId, tmp);
+export async function sendMessage(k: ChatKey, text: string) {
+  askToNotify();
+  const group = isGroupKey(k) ? k.slice(2) : undefined;
+  const tmp: Message = { id: "tmp-" + Math.random().toString(36).slice(2), botId: group ? undefined : k, groupId: group, role: "user", content: text, createdAt: new Date().toISOString(), pending: true };
+  set((s) => ({ messages: { ...s.messages, [k]: [...(s.messages[k] ?? []), tmp] } }));
+  if (!group) set((s) => ({ presence: { ...s.presence, [k]: { ...s.presence[k], state: "thinking" } } }));
+  touchLast(tmp);
   try {
-    const real = await api.send(botId, text);
+    const real = group ? await api.sendGroup(group, text) : await api.send(k, text);
     set((s) => {
-      const list = s.messages[botId] ?? [];
+      const list = s.messages[k] ?? [];
       const has = list.some((m) => m.id === real.id);
-      return { messages: { ...s.messages, [botId]: has ? list.filter((m) => m.id !== tmp.id) : list.map((m) => (m.id === tmp.id ? real : m)) } };
+      return { messages: { ...s.messages, [k]: has ? list.filter((m) => m.id !== tmp.id) : list.map((m) => (m.id === tmp.id ? real : m)) } };
     });
   } catch (e) {
-    patchMessage(botId, tmp.id, (m) => ({ ...m, pending: false, data: { failed: true, error: (e as Error).message } }));
-    set((s) => ({ presence: { ...s.presence, [botId]: { state: "idle" } } }));
+    patchMessage(k, tmp.id, (m) => ({ ...m, pending: false, data: { failed: true, error: (e as Error).message } }));
+    if (!group) set((s) => ({ presence: { ...s.presence, [k]: { state: "idle" } } }));
   }
 }
 
 type LiveEvent =
   | { type: "presence"; botId: string; data: Presence }
-  | { type: "message"; botId: string; data: Message }
-  | { type: "delta"; botId: string; data: { id: string; text: string } }
-  | { type: "message_done"; botId: string; data: Message }
+  | { type: "message" | "message_done" | "message_update"; botId?: string; groupId?: string; data: Message }
+  | { type: "delta"; botId: string; groupId?: string; data: { id: string; text: string } }
   | { type: "bot"; botId: string; data: Bot }
-  | { type: "bot_removed"; botId: string };
+  | { type: "bot_removed"; botId: string }
+  | { type: "group"; groupId: string; data: Group }
+  | { type: "group_removed"; groupId: string }
+  | { type: "computer"; botId: string; data: ComputerStatus };
+
+type Listener = (e: LiveEvent) => void;
+const extra = new Set<Listener>();
+export function onLive(fn: Listener) { extra.add(fn); return () => { extra.delete(fn); }; }
 
 export function connectLive() {
   let es: EventSource | null = null;
   let hadError = false;
-  const open = () => {
-    es = new EventSource("/api/events");
-    es.onopen = () => {
-      set(() => ({ connected: true }));
-      if (hadError) {
-        // Catch up on anything missed while disconnected.
-        loadBots().catch(() => {});
-        const id = get().activeId;
-        if (id) loadMessages(id).catch(() => {});
-      }
-    };
-    es.onerror = () => { hadError = true; set(() => ({ connected: false })); };
-    es.onmessage = (ev) => {
-      const e = JSON.parse(ev.data) as LiveEvent;
-      switch (e.type) {
-        case "presence":
-          set((s) => ({ presence: { ...s.presence, [e.botId]: e.data } }));
-          break;
-        case "message":
-          addMessage({ ...e.data, streaming: e.data.role === "bot" });
-          break;
-        case "delta":
-          patchMessage(e.botId, e.data.id, (m) => ({ ...m, content: m.content + e.data.text }));
-          break;
-        case "message_done":
-          patchMessage(e.botId, e.data.id, (m) => ({ ...m, content: e.data.content, streaming: false }));
-          touchLast(e.botId, e.data);
-          break;
-        case "bot":
-          upsertBot(e.data);
-          break;
-        case "bot_removed":
-          set((s) => {
-            const bots = s.bots.filter((b) => b.id !== e.botId);
-            return { bots, activeId: s.activeId === e.botId ? bots[0]?.id ?? null : s.activeId };
-          });
-      }
-    };
+  es = new EventSource("/api/events");
+  es.onopen = () => {
+    set(() => ({ connected: true }));
+    if (hadError) {
+      // Catch up on anything missed while disconnected.
+      loadAll().catch(() => {});
+      const id = get().activeId;
+      if (id) loadMessages(id).catch(() => {});
+    }
   };
-  open();
+  es.onerror = () => { hadError = true; set(() => ({ connected: false })); };
+  es.onmessage = (ev) => {
+    const e = JSON.parse(ev.data) as LiveEvent;
+    extra.forEach((fn) => fn(e));
+    switch (e.type) {
+      case "presence": {
+        const prev = get().presence[e.botId]?.state;
+        set((s) => ({ presence: { ...s.presence, [e.botId]: e.data } }));
+        const b = get().bots.find((x) => x.id === e.botId);
+        const open = () => set(() => ({ activeId: e.botId }));
+        if (b && e.data.state === "waiting" && prev !== "waiting") notify(`${b.name} needs you`, e.data.detail ?? "Open gbot to answer.", open);
+        if (b && e.data.state === "done" && prev && prev !== "done") notify(`${b.name} is done`, b.lastMessage?.content.slice(0, 120) ?? "", open);
+        break;
+      }
+      case "message":
+        addMessage({ ...e.data, streaming: e.data.role === "bot" });
+        break;
+      case "delta": {
+        const k = e.groupId ? groupKey(e.groupId) : e.botId;
+        patchMessage(k, e.data.id, (m) => ({ ...m, content: m.content + e.data.text }));
+        break;
+      }
+      case "message_done":
+        patchMessage(keyOf(e.data), e.data.id, (m) => ({ ...m, content: e.data.content, streaming: false }));
+        touchLast(e.data);
+        break;
+      case "message_update":
+        patchMessage(keyOf(e.data), e.data.id, () => e.data);
+        break;
+      case "bot":
+        upsertBot(e.data);
+        break;
+      case "bot_removed":
+        set((s) => {
+          const bots = s.bots.filter((b) => b.id !== e.botId);
+          return { bots, activeId: s.activeId === e.botId ? bots[0]?.id ?? null : s.activeId };
+        });
+        break;
+      case "group":
+        upsertGroup(e.data);
+        break;
+      case "group_removed":
+        set((s) => ({ groups: s.groups.filter((g) => g.id !== e.groupId), activeId: s.activeId === groupKey(e.groupId) ? s.bots[0]?.id ?? null : s.activeId }));
+        break;
+      case "computer":
+        set((s) => ({ computers: { ...s.computers, [e.botId]: e.data } }));
+    }
+  };
   return () => es?.close();
 }

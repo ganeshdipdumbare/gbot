@@ -1,13 +1,15 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
-import { useStore } from "../lib/store";
+import { groupKey, useStore } from "../lib/store";
+import { Stack } from "./Chat";
 import { moodOf, presenceText, timeAgo } from "../lib/hooks";
 import { Icon, IconButton, spring } from "./ui";
 
-export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch }: {
-  activeId: string | null; onSelect: (id: string) => void; onHatch: () => void; onSettings: () => void; onSearch: () => void;
+export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch, onNewGroup }: {
+  activeId: string | null; onSelect: (id: string) => void; onHatch: () => void; onSettings: () => void; onSearch: () => void; onNewGroup: () => void;
 }) {
   const bots = useStore((s) => s.bots);
+  const groups = useStore((s) => s.groups);
   const presence = useStore((s) => s.presence);
   const me = useStore((s) => s.me);
   const connected = useStore((s) => s.connected);
@@ -50,6 +52,7 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch }: {
                     <div className="relative shrink-0">
                       <Gbot look={b.look} seed={b.id} size={44} mood={moodOf(p, b)} title={b.name} />
                       {busy && p.state === "waiting" && <span className="absolute -top-0.5 -right-0.5 size-3 rounded-full bg-live ring-2 ring-bg" />}
+                      {p?.live && p.state !== "waiting" && <span className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full bg-live ring-2 ring-bg" title="Its computer is active" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-2">
@@ -65,6 +68,39 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch }: {
             })}
           </AnimatePresence>
         </motion.ul>
+        {(groups.length > 0 || bots.length >= 2) && (
+          <div className="mt-4">
+            <div className="flex items-center px-2.5 mb-1">
+              <span className="text-[11.5px] font-semibold uppercase tracking-[.08em] text-ink-2 flex-1">Groups</span>
+              <IconButton label="New group" onClick={onNewGroup} className="size-7!"><Icon.plus /></IconButton>
+            </div>
+            <ul className="space-y-0.5">
+              {groups.map((g) => {
+                const members = g.botIds.map((id) => bots.find((b) => b.id === id)).filter(Boolean) as typeof bots;
+                const k = groupKey(g.id);
+                const active = k === activeId;
+                const working = members.find((b) => ["thinking", "working"].includes(presence[b.id]?.state ?? ""));
+                return (
+                  <li key={g.id}>
+                    <motion.button whileTap={{ scale: 0.97 }} onClick={() => onSelect(k)}
+                      className={`w-full flex items-center gap-3 rounded-[20px] px-2.5 py-2 text-left transition-colors cursor-pointer ${active ? "bg-surface shadow-soft" : "hover:bg-surface-2"}`}>
+                      <div className="w-11 grid place-items-center"><Stack bots={members} size={26} presence={presence} /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className="font-display font-extrabold text-[15px] truncate">{g.name}</span>
+                          <span className="ml-auto text-[11px] text-ink-2 shrink-0">{timeAgo(g.lastMessage?.createdAt)}</span>
+                        </div>
+                        <div className={`text-[13px] truncate ${working ? "text-live font-semibold" : "text-ink-2"}`}>
+                          {working ? `${working.name} is ${presence[working.id]?.state}…` : g.lastMessage ? g.lastMessage.content.replace(/[#*_`>]/g, "") : members.map((b) => b.name).join(", ")}
+                        </div>
+                      </div>
+                    </motion.button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
         {bots.length > 0 && bots.length < 3 && (
           <button onClick={onHatch} className="w-full mt-2 rounded-[20px] border-2 border-dashed border-line px-3 py-3 text-[13px] text-ink-2 hover:text-ink hover:border-ink-2/40 transition-colors cursor-pointer">
             One bot per job works best. <span className="font-bold">Add another →</span>

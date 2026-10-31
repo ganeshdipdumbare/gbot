@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./gbot.css": "./src/gbot.css"
+    "./gbot.css": "./src/gbot.css",
+    "./core": "./src/core.ts"
   },
   "scripts": {
     "test": "vitest run",

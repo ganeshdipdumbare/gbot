@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src http://127.0.0.1:* http://localhost:* https:; img-src 'self' data:" />
+  <title>gbot</title>
+  <link rel="stylesheet" href="connect.css" />
+</head>
+<body>
+  <main>
+    <svg class="bot" viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M50 9a41 41 0 1 1 0 82a41 41 0 1 1 0-82Z" fill="#8B5CF6" />
+      <g class="eyes"><rect x="38" y="39" width="9.5" height="17" rx="4.75" fill="#16131C" /><rect x="52.5" y="39" width="9.5" height="17" rx="4.75" fill="#16131C" /></g>
+    </svg>
+    <h1 id="title">Connecting to gbot</h1>
+    <p id="hint">Looking for gbot on this machine…</p>
+    <form id="form" hidden>
+      <input id="url" type="url" spellcheck="false" autocomplete="off" aria-label="Server address" />
+      <button type="submit">Connect</button>
+    </form>
+    <code id="cmd" hidden>make run</code>
+  </main>
+  <script src="connect.js"></script>
+</body>
+</html>

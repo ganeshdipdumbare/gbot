@@ -2,10 +2,25 @@
 
 Cute, persistent AI teammates that run entirely on your own machine.
 
-Each bot is a little character with its own name, look, memory and one
-continuous chat. Bots remember what you tell them, show what they're doing
-through their expressions (thinking, working, needs you, stuck, done), and
-keep working while you keep chatting.
+Each bot is a simple, expressive character with its own name, memory, one
+continuous chat, and its own computer. Bots remember what you tell them,
+show what they're doing through their eyes and motion (thinking, working,
+needs you, stuck, done), and keep working while you keep chatting.
+
+- **Approvals and questions.** Bots ask before risky steps with a card in the
+  chat (Ask, Auto or Never ask, plus allow/block lists). They ask you
+  questions the same way. Cards never block the chat.
+- **A computer per bot.** A private Linux desktop with a browser, terminal and
+  files in Docker, with no network unless you allow it. Watch it live beside
+  the chat, or take control when it needs you (sign-ins, codes).
+- **Routines.** Prompts a bot runs on a schedule or when a webhook fires.
+  Ask for one in chat, or set it up in the bot's panel.
+- **Integrations.** Remote MCP servers (tokens encrypted at rest, scoped to your
+  account) and skills you write once and use anywhere with `/`.
+- **Group chats.** Up to six bots in one chat. The first leads, `@mentions`
+  bring others in, and bots hand work to each other.
+- **Voice.** Dictation and read-aloud, local by default.
+- **Everywhere.** Web, a 4 MB desktop app (Tauri), and iOS/Android (Expo).
 
 - **Local first.** Defaults to models on your machine through
   [Ollama](https://ollama.com) or any OpenAI-compatible local server. No
@@ -39,6 +54,12 @@ gh auth setup-git
 go env -w GOPRIVATE='github.com/ganeshdipdumbare/*'
 ```
 
+Build the bots' computer image once (optional, about 1 GB):
+
+```bash
+make computer
+```
+
 Then build and start everything:
 
 ```bash
@@ -58,16 +79,23 @@ For development with hot reload, run `make dev` and open http://127.0.0.1:5173.
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | local model server |
 | `GBOT_SIGNUP` | `open` | `closed` allows only the first account |
 | `GBOT_PUBLIC_URL` | | set to an `https://` URL to enable secure cookies and HSTS |
+| `GBOT_COMPUTER` | `on` | `off` disables bot computers |
+| `GBOT_COMPUTER_IMAGE` | `gbot-computer:latest` | image for bot computers |
+| `GBOT_KEY_FILE` | `~/.config/gbot/secret.key` | key that encrypts integration tokens (or set `GBOT_SECRET_KEY`) |
+| `GBOT_STT_URL`, `GBOT_TTS_URL` | | OpenAI-compatible speech servers (e.g. faster-whisper, Kokoro), or `openai` |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY` | | optional cloud models |
 
 ## Layout
 
 ```
-server/               Go: API, auth, store, agent runtime (eipagent)
+server/               Go: API, auth, store, agent runtime (eipagent), computers, routines
 apps/web/             React 19 + Vite + Tailwind + Motion
+apps/desktop/         Tauri 2 shell with native notifications
+apps/mobile/          Expo (React Native) app
 packages/characters/  the gbot character rig: seeded traits, moods, animation
 packages/ui-tokens/   design tokens shared by every surface
 infra/compose/        Postgres (+ optional Ollama and app image)
+infra/sandboxes/      the bots' computer image
 ```
 
 ## Tests
@@ -79,8 +107,23 @@ make test
 The Go tests run the whole API against a throwaway database with
 eipagent's offline mock model, so they need no network or keys.
 
-## Roadmap
+## Desktop and mobile
 
-Approvals and question cards, each bot's computer (Docker sandbox with
-preview and takeover), routines, integrations (MCP, skills), group chats,
-desktop (Tauri), mobile (Expo), and voice.
+```bash
+make desktop   # builds apps/desktop/src-tauri/target/release/bundle/macos/gbot.app
+make mobile    # opens the app in the iOS simulator via Expo Go
+```
+
+Both connect to your gbot server; the phone needs its address on your network.
+
+## Security notes
+
+- Bots run one tool call at a time through a guard that applies the owner's
+  approval mode and allow/block lists. Once outside text (a webhook, a web page,
+  an MCP result) enters a run, changes always ask first, even in Auto.
+- Computers run with all capabilities dropped, no new privileges, CPU/memory/PID
+  limits and no network by default. gbot reaches them only through `docker exec`.
+  Takeover input is accepted only while you hold control.
+- Webhooks need the routine's secret (bearer token or HMAC signature).
+- MCP tokens are sealed with AES-256-GCM and redacted from logs; each account
+  only ever sees its own servers' tools.

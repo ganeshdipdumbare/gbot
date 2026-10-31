@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Gbot } from "@gbot/characters";
-import { useStore } from "../lib/store";
+import { groupKey, useStore } from "../lib/store";
+import { Stack } from "./Chat";
 import { moodOf } from "../lib/hooks";
 import { Modal } from "./Modal";
 import { Icon } from "./ui";
 
 export function CommandK({ open, onClose, onPick, onHatch }: { open: boolean; onClose: () => void; onPick: (id: string) => void; onHatch: () => void }) {
   const bots = useStore((s) => s.bots);
+  const groups = useStore((s) => s.groups);
   const presence = useStore((s) => s.presence);
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
@@ -15,8 +17,12 @@ export function CommandK({ open, onClose, onPick, onHatch }: { open: boolean; on
   useEffect(() => { if (open) { setQ(""); setI(0); setTimeout(() => input.current?.focus(), 30); } }, [open]);
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return s ? bots.filter((b) => (b.name + " " + b.title).toLowerCase().includes(s)) : bots;
-  }, [bots, q]);
+    const all = [
+      ...bots.map((b) => ({ id: b.id, name: b.name, sub: b.title, bot: b, members: undefined as typeof bots | undefined })),
+      ...groups.map((g) => ({ id: groupKey(g.id), name: g.name, sub: "Group", bot: undefined, members: g.botIds.map((id) => bots.find((b) => b.id === id)).filter(Boolean) as typeof bots })),
+    ];
+    return s ? all.filter((x) => (x.name + " " + x.sub).toLowerCase().includes(s)) : all;
+  }, [bots, groups, q]);
 
   return (
     <Modal open={open} onClose={onClose} width={480}>
@@ -42,9 +48,9 @@ export function CommandK({ open, onClose, onPick, onHatch }: { open: boolean; on
             <li key={b.id}>
               <button onMouseEnter={() => setI(j)} onClick={() => onPick(b.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-2xl text-left cursor-pointer ${i === j ? "bg-surface-2" : ""}`}>
-                <Gbot look={b.look} seed={b.id} size={32} mood={moodOf(presence[b.id], b)} />
+                {b.bot ? <Gbot look={b.bot.look} seed={b.bot.id} size={32} mood={moodOf(presence[b.bot.id], b.bot)} /> : <Stack bots={b.members ?? []} size={22} />}
                 <span className="font-display font-extrabold">{b.name}</span>
-                <span className="text-ink-2 text-[13px] truncate">{b.title}</span>
+                <span className="text-ink-2 text-[13px] truncate">{b.sub}</span>
               </button>
             </li>
           ))}

@@ -14,6 +14,7 @@ type User struct {
 	Email        string `json:"email"`
 	Name         string `json:"name"`
 	DefaultModel string `json:"defaultModel"`
+	ApprovalMode string `json:"approvalMode"`
 	SpaceID      string `json:"spaceId"`
 	passwordHash string
 }
@@ -23,7 +24,7 @@ func (u *User) PasswordHash() string { return u.passwordHash }
 // CreateUser makes the user, their first space, and their first bot in
 // one transaction, so a new account always lands on a bot to talk to.
 func (s *Store) CreateUser(ctx context.Context, email, name, hash, model string, firstBot NewBot) (*User, error) {
-	u := &User{Email: email, Name: name, DefaultModel: model}
+	u := &User{Email: email, Name: name, DefaultModel: model, ApprovalMode: "auto"}
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `INSERT INTO users(email,name,password_hash,default_model) VALUES($1,$2,$3,$4) RETURNING id`,
 			email, name, hash, model).Scan(&u.ID); err != nil {
@@ -46,12 +47,12 @@ func (s *Store) CreateUser(ctx context.Context, email, name, hash, model string,
 	return u, nil
 }
 
-const userCols = `u.id, u.email, u.name, u.default_model, u.password_hash,
+const userCols = `u.id, u.email, u.name, u.default_model, u.approval_mode, u.password_hash,
 	(SELECT space_id FROM space_members m WHERE m.user_id=u.id ORDER BY space_id LIMIT 1)`
 
 func scanUser(row pgx.Row) (*User, error) {
 	u := &User{}
-	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.DefaultModel, &u.passwordHash, &u.SpaceID); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.DefaultModel, &u.ApprovalMode, &u.passwordHash, &u.SpaceID); err != nil {
 		return nil, notFound(err)
 	}
 	return u, nil
@@ -93,5 +94,46 @@ func (s *Store) UserBySession(ctx context.Context, token string) (*User, error) 
 
 func (s *Store) PurgeExpiredSessions(ctx context.Context) error {
 	_, err := s.DB.Exec(ctx, `DELETE FROM sessions WHERE expires_at <= now()`)
+	return err
+}
+
+func (s *Store) UserByID(ctx context.Context, id string) (*User, error) {
+	return scanUser(s.DB.QueryRow(ctx, `SELECT `+userCols+` FROM users u WHERE u.id=$1`, id))
+}
+
+// OwnerOfSpace returns the space's owner, whose settings govern its bots.
+func (s *Store) OwnerOfSpace(ctx context.Context, spaceID string) (*User, error) {
+	return scanUser(s.DB.QueryRow(ctx, `SELECT `+userCols+` FROM space_members m JOIN users u ON u.id=m.user_id
+		WHERE m.space_id=$1 AND m.role='owner' LIMIT 1`, spaceID))
+}
+
+func (s *Store) SetApprovalMode(ctx context.Context, userID, mode string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE users SET approval_mode=$2 WHERE id=$1`, userID, mode)
+	return err
+}
+
+type ToolRule struct {
+	Tool string `json:"tool"`
+	Rule string `json:"rule"` // allow | block
+}
+
+func (s *Store) ToolRules(ctx context.Context, userID string) ([]ToolRule, error) {
+	rows, err := s.DB.Query(ctx, `SELECT tool, rule FROM tool_rules WHERE user_id=$1 ORDER BY created_at`, userID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (ToolRule, error) {
+		var t ToolRule
+		return t, r.Scan(&t.Tool, &t.Rule)
+	})
+}
+
+func (s *Store) SetToolRule(ctx context.Context, userID, tool, rule string) error {
+	if rule == "" {
+		_, err := s.DB.Exec(ctx, `DELETE FROM tool_rules WHERE user_id=$1 AND tool=$2`, userID, tool)
+		return err
+	}
+	_, err := s.DB.Exec(ctx, `INSERT INTO tool_rules(user_id,tool,rule) VALUES($1,$2,$3)
+		ON CONFLICT (user_id,tool) DO UPDATE SET rule=EXCLUDED.rule`, userID, tool, rule)
 	return err
 }

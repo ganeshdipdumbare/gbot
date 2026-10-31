@@ -7,3 +7,7 @@ packages/*/dist/
 !/server/internal/web/dist/.keep
 /bin/
 .DS_Store
+.expo/
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/expo-env.d.ts

@@ -9,10 +9,10 @@ import (
 
 // Event is what clients receive over SSE.
 type Event struct {
-	Type   string `json:"type"` // presence | message | delta | message_done | bot
-	BotID  string `json:"botId,omitempty"`
-	Data   any    `json:"data,omitempty"`
-	spaces string
+	Type    string `json:"type"` // presence | message | message_update | delta | message_done | bot | bot_removed | group | computer
+	BotID   string `json:"botId,omitempty"`
+	GroupID string `json:"groupId,omitempty"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // Hub fans events out per space. Slow subscribers are dropped rather than

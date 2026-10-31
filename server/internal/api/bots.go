@@ -128,6 +128,9 @@ func (s *Server) archiveBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Runtime.Stop(r.PathValue("id"))
+	if s.Computer != nil {
+		s.Computer.Stop(r.Context(), r.PathValue("id"))
+	}
 	s.Hub.Publish(u.SpaceID, runs.Event{Type: "bot_removed", BotID: r.PathValue("id")})
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
@@ -184,8 +187,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Hub.Publish(u.SpaceID, runs.Event{Type: "message", BotID: b.ID, Data: m})
-	s.Runtime.Enqueue(runs.Job{Bot: b, Prompt: body.Text, Trigger: "chat",
-		Model: s.Models.Pick(r.Context(), b.Model, u.DefaultModel)})
+	s.Runtime.Enqueue(runs.Job{Bot: b, Prompt: body.Text, Trigger: "chat"})
 	writeJSON(w, 201, m)
 }
 

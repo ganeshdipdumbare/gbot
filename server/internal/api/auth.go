@@ -125,21 +125,35 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, 
 
 func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		DefaultModel string `json:"defaultModel"`
+		DefaultModel *string `json:"defaultModel"`
+		ApprovalMode *string `json:"approvalMode"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
 	u := userFrom(r)
-	if body.DefaultModel != "" && s.Models.Pick(r.Context(), body.DefaultModel) != body.DefaultModel {
-		writeErr(w, 400, "that model isn't available")
-		return
+	if m := body.DefaultModel; m != nil {
+		if *m != "" && s.Models.Pick(r.Context(), *m) != *m {
+			writeErr(w, 400, "that model isn't available")
+			return
+		}
+		if err := s.Store.SetDefaultModel(r.Context(), u.ID, *m); err != nil {
+			writeErr(w, 500, "could not save")
+			return
+		}
+		u.DefaultModel = *m
 	}
-	if err := s.Store.SetDefaultModel(r.Context(), u.ID, body.DefaultModel); err != nil {
-		writeErr(w, 500, "could not save")
-		return
+	if m := body.ApprovalMode; m != nil {
+		if *m != "ask" && *m != "auto" && *m != "never" {
+			writeErr(w, 400, "approval mode is ask, auto or never")
+			return
+		}
+		if err := s.Store.SetApprovalMode(r.Context(), u.ID, *m); err != nil {
+			writeErr(w, 500, "could not save")
+			return
+		}
+		u.ApprovalMode = *m
 	}
-	u.DefaultModel = body.DefaultModel
 	writeJSON(w, 200, u)
 }
 

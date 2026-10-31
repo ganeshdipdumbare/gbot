@@ -22,6 +22,9 @@ type Bot struct {
 	Model        string    `json:"model"`
 	Look         Look      `json:"look"`
 	Pinned       bool      `json:"pinned"`
+	Network      bool      `json:"computerNetwork"`
+	Voice        string    `json:"voice"`
+	ReadAloud    bool      `json:"readAloud"`
 	CreatedAt    time.Time `json:"createdAt"`
 	LastMessage  *Message  `json:"lastMessage,omitempty"`
 }
@@ -31,12 +34,12 @@ type NewBot struct {
 	Look                             Look
 }
 
-const botCols = `b.id, b.space_id, b.name, b.title, b.instructions, b.model, b.look, b.pinned, b.created_at`
+const botCols = `b.id, b.space_id, b.name, b.title, b.instructions, b.model, b.look, b.pinned, b.computer_network, b.voice, b.read_aloud, b.created_at`
 
 func scanBot(row pgx.Row) (*Bot, error) {
 	b := &Bot{}
 	var look []byte
-	if err := row.Scan(&b.ID, &b.SpaceID, &b.Name, &b.Title, &b.Instructions, &b.Model, &look, &b.Pinned, &b.CreatedAt); err != nil {
+	if err := row.Scan(&b.ID, &b.SpaceID, &b.Name, &b.Title, &b.Instructions, &b.Model, &look, &b.Pinned, &b.Network, &b.Voice, &b.ReadAloud, &b.CreatedAt); err != nil {
 		return nil, notFound(err)
 	}
 	_ = json.Unmarshal(look, &b.Look)
@@ -49,7 +52,7 @@ func (s *Store) ListBots(ctx context.Context, spaceID string) ([]*Bot, error) {
 	rows, err := s.DB.Query(ctx, `SELECT `+botCols+`, m.id, m.role, m.content, m.created_at
 		FROM bots b
 		LEFT JOIN LATERAL (SELECT id, role, content, created_at FROM messages
-			WHERE bot_id=b.id AND role<>'event' ORDER BY created_at DESC, id DESC LIMIT 1) m ON true
+			WHERE bot_id=b.id AND group_id IS NULL AND role IN ('user','bot') ORDER BY created_at DESC, id DESC LIMIT 1) m ON true
 		WHERE b.space_id=$1 AND b.archived_at IS NULL
 		ORDER BY b.pinned DESC, COALESCE(m.created_at, b.created_at) DESC`, spaceID)
 	if err != nil {
@@ -62,7 +65,7 @@ func (s *Store) ListBots(ctx context.Context, spaceID string) ([]*Bot, error) {
 		var look []byte
 		var mid, mrole, mcontent *string
 		var mtime *time.Time
-		if err := rows.Scan(&b.ID, &b.SpaceID, &b.Name, &b.Title, &b.Instructions, &b.Model, &look, &b.Pinned, &b.CreatedAt,
+		if err := rows.Scan(&b.ID, &b.SpaceID, &b.Name, &b.Title, &b.Instructions, &b.Model, &look, &b.Pinned, &b.Network, &b.Voice, &b.ReadAloud, &b.CreatedAt,
 			&mid, &mrole, &mcontent, &mtime); err != nil {
 			return nil, err
 		}
@@ -98,7 +101,7 @@ func (s *Store) CreateBot(ctx context.Context, spaceID, ownerID string, nb NewBo
 	return b, err
 }
 
-const botColsBare = `id, space_id, name, title, instructions, model, look, pinned, created_at`
+const botColsBare = `id, space_id, name, title, instructions, model, look, pinned, computer_network, voice, read_aloud, created_at`
 
 type BotPatch struct {
 	Name         *string `json:"name"`
@@ -107,6 +110,9 @@ type BotPatch struct {
 	Model        *string `json:"model"`
 	Look         *Look   `json:"look"`
 	Pinned       *bool   `json:"pinned"`
+	Network      *bool   `json:"computerNetwork"`
+	Voice        *string `json:"voice"`
+	ReadAloud    *bool   `json:"readAloud"`
 }
 
 func (s *Store) UpdateBot(ctx context.Context, spaceID, id string, p BotPatch) (*Bot, error) {
@@ -116,9 +122,10 @@ func (s *Store) UpdateBot(ctx context.Context, spaceID, id string, p BotPatch) (
 	}
 	return scanBot(s.DB.QueryRow(ctx, `UPDATE bots SET
 		name=COALESCE($3,name), title=COALESCE($4,title), instructions=COALESCE($5,instructions),
-		model=COALESCE($6,model), look=COALESCE($7::jsonb,look), pinned=COALESCE($8,pinned), updated_at=now()
+		model=COALESCE($6,model), look=COALESCE($7::jsonb,look), pinned=COALESCE($8,pinned),
+		computer_network=COALESCE($9,computer_network), voice=COALESCE($10,voice), read_aloud=COALESCE($11,read_aloud), updated_at=now()
 		WHERE id=$1 AND space_id=$2 AND archived_at IS NULL RETURNING `+botColsBare,
-		id, spaceID, p.Name, p.Title, p.Instructions, p.Model, look, p.Pinned))
+		id, spaceID, p.Name, p.Title, p.Instructions, p.Model, look, p.Pinned, p.Network, p.Voice, p.ReadAloud))
 }
 
 func (s *Store) ArchiveBot(ctx context.Context, spaceID, id string) error {
@@ -127,4 +134,10 @@ func (s *Store) ArchiveBot(ctx context.Context, spaceID, id string) error {
 		return ErrNotFound
 	}
 	return err
+}
+
+// GetBotAnySpace loads a bot by id alone; only for server-side jobs
+// (routines, webhooks) that already proved who they act for.
+func (s *Store) GetBotAnySpace(ctx context.Context, id string) (*Bot, error) {
+	return scanBot(s.DB.QueryRow(ctx, `SELECT `+botCols+` FROM bots b WHERE b.id=$1 AND b.archived_at IS NULL`, id))
 }

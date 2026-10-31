@@ -5,6 +5,8 @@ import { upsertBot, useStore } from "../lib/store";
 import { Modal } from "./Modal";
 import { LookPicker, SurpriseButton } from "./LookPicker";
 import { ModelSelect } from "./ModelSelect";
+import { Toggle } from "./SidePanel";
+import { speak, useSystemVoices } from "../lib/voice";
 import { Button, Icon, Input, Label, TextArea } from "./ui";
 
 export function BotSettings({ open, botId, onClose }: { open: boolean; botId: string | null; onClose: () => void }) {
@@ -14,6 +16,10 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
   const [instructions, setInstructions] = useState("");
   const [model, setModel] = useState("");
   const [look, setLook] = useState<Look>({});
+  const [network, setNetwork] = useState(false);
+  const [readAloud, setReadAloud] = useState(false);
+  const [voice, setVoice] = useState("");
+  const voices = useSystemVoices();
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState(false);
@@ -21,6 +27,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
   useEffect(() => {
     if (!open || !bot) return;
     setName(bot.name); setTitle(bot.title); setInstructions(bot.instructions); setModel(bot.model); setLook(bot.look ?? {});
+    setNetwork(bot.computerNetwork); setReadAloud(bot.readAloud); setVoice(bot.voice);
     setError(""); setConfirm(false);
   }, [open, bot?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -29,7 +36,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
   async function save() {
     setError("");
     try {
-      const b = await api.updateBot(bot!.id, { name, title, instructions, model, look });
+      const b = await api.updateBot(bot!.id, { name, title, instructions, model, look, computerNetwork: network, readAloud, voice });
       upsertBot(b);
       setSaved(true);
       setTimeout(() => setSaved(false), 1400);
@@ -54,6 +61,35 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
         <div>
           <Label>Model</Label>
           <ModelSelect value={model} onChange={setModel} allowDefault="Account default" />
+        </div>
+        <div className="rounded-[18px] border border-line divide-y divide-line">
+          <div className="flex items-center gap-3 p-3">
+            <span className="text-ink-2"><Icon.globe /></span>
+            <div className="flex-1">
+              <div className="font-semibold text-[14px]">Internet on its computer</div>
+              <div className="text-[12.5px] text-ink-2">Off keeps its computer fully offline.</div>
+            </div>
+            <Toggle on={network} onChange={setNetwork} label="Internet access" />
+          </div>
+          <div className="flex items-center gap-3 p-3">
+            <span className="text-ink-2"><Icon.speaker /></span>
+            <div className="flex-1">
+              <div className="font-semibold text-[14px]">Read replies aloud</div>
+              <div className="text-[12.5px] text-ink-2">Uses this computer's voices.</div>
+            </div>
+            <Toggle on={readAloud} onChange={setReadAloud} label="Read replies aloud" />
+          </div>
+          {voices.length > 0 && (
+            <div className="flex items-center gap-3 p-3">
+              <span className="text-ink-2"><Icon.mic /></span>
+              <select value={voice} onChange={(e) => setVoice(e.target.value)} aria-label="Voice"
+                className="flex-1 h-9 rounded-xl bg-surface-2 px-2 text-[14px] outline-none cursor-pointer">
+                <option value="">Default voice</option>
+                {voices.map((v) => <option key={v.name} value={v.name}>{v.name}{v.localService ? "" : " (online)"}</option>)}
+              </select>
+              <Button variant="ghost" onClick={() => speak(`Hi, I'm ${name}.`, voice)}><Icon.play /></Button>
+            </div>
+          )}
         </div>
         <div>
           <div className="flex items-center justify-between mb-2"><Label>Look</Label><SurpriseButton onPick={setLook} /></div>
