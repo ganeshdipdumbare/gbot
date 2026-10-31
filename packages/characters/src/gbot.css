@@ -1,77 +1,50 @@
-/* gbot character motion. Transform/opacity only, so it stays on the
-   compositor even with a full roster on screen. */
-.gbot { overflow: visible; display: block; }
+/* gbot motion. The avatar carries the whole lifecycle: calm at rest,
+   a nod when work arrives, a steady rhythm while working, a lean when
+   it needs you, a shake when stuck, a hop when done. Transform and
+   opacity only. */
+.gbot { display: block; overflow: visible; }
 .gbot * { transform-box: fill-box; }
-.gbot-body { transform-origin: 50% 100%; animation: gbot-breathe 3.4s ease-in-out infinite; }
-.gbot-shadow { transform-origin: center; animation: gbot-shadow 3.4s ease-in-out infinite; }
-.gbot-eyes { transition: transform .09s ease-in; }
-.gbot-eyes.is-blink { transform: scaleY(.08); }
-.gbot-eye { transition: transform .45s cubic-bezier(.3,1.4,.5,1); }
-.gbot-cheek { animation: gbot-blush 4s ease-in-out infinite; transform-origin: center; }
-.gbot-ears, .gbot-sprout, .gbot-bow, .gbot-antenna { transform-origin: 50% 100%; transition: transform .3s cubic-bezier(.3,1.6,.5,1); }
-.gbot:hover .gbot-ears { animation: gbot-wiggle .5s ease-in-out 2; }
-.gbot:hover .gbot-sprout { animation: gbot-sway 1s ease-in-out infinite; }
-.gbot:hover .gbot-antenna { animation: gbot-sway .6s ease-in-out 2; }
-.gbot-antenna-ball { animation: gbot-glow 2.4s ease-in-out infinite; transform-origin: center; }
+.gbot-body { transform-origin: 50% 100%; transform: rotate(var(--tilt, 0deg)); transition: transform .5s cubic-bezier(.3,1.3,.5,1); }
+.gbot-eyes { transform-origin: center; transition: transform .08s ease-in; }
+.gbot-eyes.is-blink { transform: scaleY(.1); }
+.gbot-eye { transform-origin: center; transition: transform .32s cubic-bezier(.3,1.35,.5,1), opacity .18s ease; }
 
-.gbot[data-mood="thinking"] .gbot-body { animation: gbot-ponder 2.6s ease-in-out infinite; }
-.gbot[data-mood="working"] .gbot-body { animation: gbot-bounce .62s cubic-bezier(.4,0,.4,1) infinite; }
-.gbot[data-mood="working"] .gbot-shadow { animation: gbot-shadow-bounce .62s cubic-bezier(.4,0,.4,1) infinite; }
-.gbot[data-mood="working"] .gbot-eyes { transform: scaleY(.78); }
-.gbot[data-mood="waiting"] .gbot-body { animation: gbot-tilt 2.8s ease-in-out infinite; }
-.gbot[data-mood="waiting"] .gbot-eyes { transform: scale(1.08); }
-.gbot[data-mood="blocked"] .gbot-body { animation: gbot-wobble 2.2s ease-in-out infinite; }
-.gbot[data-mood="done"] .gbot-body, .gbot[data-mood="happy"] .gbot-body { animation: gbot-hop .8s cubic-bezier(.3,1.4,.5,1) 1, gbot-breathe 3.4s ease-in-out .8s infinite; }
-.gbot[data-mood="sleepy"] .gbot-body { animation: gbot-breathe 4.8s ease-in-out infinite; }
+.gbot[data-mood="idle"] .gbot-body { animation: gbot-breathe 4.2s ease-in-out infinite; }
+.gbot[data-mood="thinking"] .gbot-body { animation: gbot-ponder 3s ease-in-out infinite; }
+.gbot[data-mood="thinking"] .gbot-eyes { animation: gbot-scan 3s ease-in-out infinite; }
+.gbot[data-mood="working"] .gbot-body { animation: gbot-work .7s cubic-bezier(.45,0,.55,1) infinite; }
+.gbot[data-mood="waiting"] .gbot-body { animation: gbot-lean 2.4s ease-in-out infinite; }
+.gbot[data-mood="blocked"] .gbot-body { animation: gbot-shake 2.6s ease-in-out infinite; }
+.gbot[data-mood="done"] .gbot-body, .gbot[data-mood="happy"] .gbot-body { animation: gbot-hop .7s cubic-bezier(.3,1.4,.5,1) 1; }
+.gbot[data-mood="sleepy"] .gbot-body { animation: gbot-breathe 6s ease-in-out infinite; }
+.gbot-live { transform-origin: center; animation: gbot-pulse 1.8s ease-in-out infinite; }
 
-.gbot-think circle { animation: gbot-pop 1.4s ease-in-out infinite; transform-origin: center; }
-.gbot-think circle:nth-child(2) { animation-delay: .2s; }
-.gbot-think circle:nth-child(3) { animation-delay: .4s; }
-.gbot-spark path { animation: gbot-twinkle 1s ease-in-out infinite; transform-origin: center; }
-.gbot-spark path:nth-child(2) { animation-delay: .5s; }
-.gbot-ask { animation: gbot-float 1.8s ease-in-out infinite; }
-.gbot-sweat { animation: gbot-drip 2.2s ease-in infinite; }
-.gbot-confetti > * { animation: gbot-burst .9s cubic-bezier(.2,1.4,.4,1) both; transform-origin: center; }
-.gbot-confetti > *:nth-child(2n) { animation-delay: .08s; }
-.gbot-zzz text { animation: gbot-z 2.6s ease-in-out infinite; }
-.gbot-zzz text:nth-child(2) { animation-delay: 1.3s; }
-.gbot-headphones { animation: gbot-pop-in .4s cubic-bezier(.3,1.6,.5,1) both; transform-origin: center; }
+/* Roster-size bots hold still at rest; only moods move. */
+.gbot[data-small][data-mood="idle"] .gbot-body,
+.gbot[data-small][data-mood="sleepy"] .gbot-body { animation: none; }
 
-@keyframes gbot-breathe { 0%,100% { transform: scale(1,1) } 50% { transform: scale(.985,1.03) } }
-@keyframes gbot-shadow { 0%,100% { transform: scaleX(1) } 50% { transform: scaleX(.96) } }
-@keyframes gbot-blush { 0%,100% { opacity: .85 } 50% { opacity: 1 } }
-@keyframes gbot-ponder { 0%,100% { transform: rotate(-3deg) } 50% { transform: rotate(3deg) } }
-@keyframes gbot-bounce {
-  0%,100% { transform: translateY(0) scale(1.04,.95) }
-  35% { transform: translateY(-5px) scale(.97,1.04) }
-  60% { transform: translateY(-6px) scale(1,1) }
+@keyframes gbot-breathe { 0%,100% { transform: rotate(var(--tilt,0deg)) scale(1,1) } 50% { transform: rotate(var(--tilt,0deg)) scale(1.012,.985) } }
+@keyframes gbot-ponder { 0%,100% { transform: rotate(-4deg) } 50% { transform: rotate(4deg) } }
+@keyframes gbot-scan { 0%,100% { transform: translateX(-2px) } 50% { transform: translateX(2px) } }
+@keyframes gbot-work {
+  0%,100% { transform: translateY(0) scale(1.03,.97) }
+  45% { transform: translateY(-5%) scale(.98,1.02) }
 }
-@keyframes gbot-shadow-bounce { 0%,100% { transform: scaleX(1); opacity: .13 } 50% { transform: scaleX(.8); opacity: .08 } }
-@keyframes gbot-tilt { 0%,100% { transform: rotate(-5deg) } 50% { transform: rotate(-2deg) } }
-@keyframes gbot-wobble {
-  0%,60%,100% { transform: rotate(0) }
-  66% { transform: rotate(-4deg) } 72% { transform: rotate(4deg) }
-  78% { transform: rotate(-3deg) } 84% { transform: rotate(2deg) }
+@keyframes gbot-lean { 0%,100% { transform: rotate(-7deg) } 50% { transform: rotate(-4deg) } }
+@keyframes gbot-shake {
+  0%,70%,100% { transform: rotate(0) }
+  74% { transform: rotate(-5deg) } 78% { transform: rotate(5deg) }
+  82% { transform: rotate(-4deg) } 86% { transform: rotate(3deg) } 90% { transform: rotate(0) }
 }
 @keyframes gbot-hop {
   0% { transform: translateY(0) scale(1,1) }
-  20% { transform: translateY(0) scale(1.1,.88) }
-  50% { transform: translateY(-14px) scale(.94,1.08) }
-  78% { transform: translateY(0) scale(1.08,.92) }
+  20% { transform: translateY(0) scale(1.08,.9) }
+  50% { transform: translateY(-14%) scale(.95,1.06) }
+  80% { transform: translateY(0) scale(1.04,.96) }
   100% { transform: translateY(0) scale(1,1) }
 }
-@keyframes gbot-wiggle { 0%,100% { transform: rotate(0) } 25% { transform: rotate(-8deg) } 75% { transform: rotate(8deg) } }
-@keyframes gbot-sway { 0%,100% { transform: rotate(-7deg) } 50% { transform: rotate(7deg) } }
-@keyframes gbot-glow { 0%,100% { transform: scale(1) } 50% { transform: scale(1.18) } }
-@keyframes gbot-pop { 0%,100% { transform: scale(.6); opacity: .4 } 50% { transform: scale(1.1); opacity: 1 } }
-@keyframes gbot-twinkle { 0%,100% { transform: scale(.5) rotate(0); opacity: .3 } 50% { transform: scale(1.15) rotate(45deg); opacity: 1 } }
-@keyframes gbot-float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-3px) } }
-@keyframes gbot-drip { 0% { transform: translateY(-2px); opacity: 0 } 20% { opacity: 1 } 100% { transform: translateY(6px); opacity: 0 } }
-@keyframes gbot-burst { 0% { transform: scale(0) translateY(6px); opacity: 0 } 60% { opacity: 1 } 100% { transform: scale(1) translateY(0); opacity: 1 } }
-@keyframes gbot-z { 0% { transform: translate(0,0); opacity: 0 } 30% { opacity: .8 } 100% { transform: translate(5px,-10px); opacity: 0 } }
-@keyframes gbot-pop-in { 0% { transform: scale(.4); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }
+@keyframes gbot-pulse { 0%,100% { transform: scale(1) } 50% { transform: scale(.82) } }
 
 @media (prefers-reduced-motion: reduce) {
-  .gbot *, .gbot-body, .gbot-shadow { animation: none !important; }
-  .gbot-eye { transition: none; }
+  .gbot *, .gbot-body { animation: none !important; transition: none !important; }
 }

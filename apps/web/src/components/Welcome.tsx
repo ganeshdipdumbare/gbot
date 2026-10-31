@@ -7,11 +7,11 @@ import { useGaze } from "../lib/hooks";
 import { bouncy, Button, Input } from "./ui";
 
 const crew: { look: Look; x: number; size: number; delay: number }[] = [
-  { look: { shape: "mochi", hue: "lilac", accessory: "sprout", eyes: "sparkle", mouth: "smile" }, x: 0, size: 120, delay: 0 },
-  { look: { shape: "bun", hue: "peach", accessory: "cat", eyes: "round", mouth: "cat" }, x: -128, size: 92, delay: 0.08 },
-  { look: { shape: "ghost", hue: "mint", accessory: "none", eyes: "tall", mouth: "grin" }, x: 126, size: 92, delay: 0.16 },
-  { look: { shape: "bean", hue: "butter", accessory: "antenna", eyes: "round", mouth: "smile" }, x: -228, size: 70, delay: 0.24 },
-  { look: { shape: "blob", hue: "rose", accessory: "bow", eyes: "sparkle", mouth: "cat" }, x: 222, size: 70, delay: 0.32 },
+  { look: { shape: "circle", hue: "grape", eyes: "pill" }, x: 0, size: 112, delay: 0 },
+  { look: { shape: "triangle", hue: "coral", eyes: "dot" }, x: -124, size: 88, delay: 0.08 },
+  { look: { shape: "hexagon", hue: "cobalt", eyes: "pill" }, x: 124, size: 88, delay: 0.16 },
+  { look: { shape: "cloud", hue: "sun", eyes: "wide" }, x: -220, size: 68, delay: 0.24 },
+  { look: { shape: "square", hue: "mint", eyes: "dot" }, x: 220, size: 68, delay: 0.32 },
 ];
 
 function Crew({ mood }: { mood: Mood }) {
@@ -82,13 +82,9 @@ export function Welcome() {
           <br />Running 100% on your own machine.
         </p>
         <form onSubmit={submit} className="mt-7 space-y-3 bg-surface rounded-[28px] p-5 shadow-soft border border-line">
-          <AnimatePresence initial={false}>
-            {mode === "signup" && (
-              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                <Input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {mode === "signup" && (
+            <Input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+          )}
           <Input type="email" required placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" onFocus={() => setMood("waiting")} onBlur={() => setMood("idle")} />
           <Input type="password" required minLength={10} placeholder={mode === "signup" ? "Password (10+ characters)" : "Password"} value={password}
             onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "signup" ? "new-password" : "current-password"}
@@ -101,7 +97,7 @@ export function Welcome() {
             )}
           </AnimatePresence>
           <Button type="submit" disabled={busy} className="w-full h-12 text-[16px]">
-            {mode === "signup" ? "Hatch my first bot" : "Sign in"}
+            {mode === "signup" ? "Create account" : "Sign in"}
           </Button>
         </form>
         <p className="text-center text-[14px] text-ink-2 mt-4">

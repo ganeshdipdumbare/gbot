@@ -26,10 +26,10 @@ export function Chat({ botId, onMenu, onSettings, onHatch }: { botId: string | n
         <div className="flex-1 grid place-items-center p-6 text-center">
           {loaded && (
             <div>
-              <Gbot seed="empty" look={{ shape: "bun", hue: "butter", accessory: "bear" }} mood="sleepy" size={120} className="mx-auto" />
+              <Gbot seed="empty" look={{ shape: "arch", hue: "sun", eyes: "wide" }} mood="sleepy" size={120} className="mx-auto" />
               <h2 className="font-display font-black text-2xl mt-4">It's quiet in here</h2>
-              <p className="text-ink-2 mt-1">Hatch a bot to get started.</p>
-              <Button className="mt-5" onClick={onHatch}><Icon.plus /> Hatch a bot</Button>
+              <p className="text-ink-2 mt-1">Create a bot to get started.</p>
+              <Button className="mt-5" onClick={onHatch}><Icon.plus /> New bot</Button>
             </div>
           )}
         </div>
@@ -45,7 +45,7 @@ export function Chat({ botId, onMenu, onSettings, onHatch }: { botId: string | n
       <header className="flex items-center gap-2 px-3 sm:px-5 h-16 shrink-0 border-b border-line/70 bg-bg/80 backdrop-blur-md z-10">
         {onMenu && <IconButton label="Bots" onClick={onMenu}><Icon.menu /></IconButton>}
         <button onClick={onSettings} className="flex items-center gap-3 min-w-0 rounded-2xl pr-3 hover:bg-surface-2 transition-colors cursor-pointer">
-          <Gbot look={bot.look} seed={bot.id} size={40} mood={mood} props={false} />
+          <Gbot look={bot.look} seed={bot.id} size={40} mood={mood} />
           <div className="min-w-0 text-left">
             <div className="font-display font-black text-[17px] leading-tight truncate">{bot.name}</div>
             <AnimatePresence mode="wait" initial={false}>
@@ -63,13 +63,13 @@ export function Chat({ botId, onMenu, onSettings, onHatch }: { botId: string | n
         <IconButton label="Bot settings" onClick={onSettings}><Icon.gear /></IconButton>
       </header>
 
-      <Transcript bot={bot} messages={messages} presence={presence?.state} error={error} />
+      <Transcript bot={bot} messages={messages} presence={presence?.state} detail={presence?.detail} error={error} />
       <Composer bot={bot} busy={busy} />
     </div>
   );
 }
 
-function Transcript({ bot, messages, presence, error }: { bot: Bot; messages?: Message[]; presence?: string; error: string }) {
+function Transcript({ bot, messages, presence, detail, error }: { bot: Bot; messages?: Message[]; presence?: string; detail?: string; error: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const streaming = messages?.some((m) => m.streaming);
@@ -113,13 +113,8 @@ function Transcript({ bot, messages, presence, error }: { bot: Bot; messages?: M
               initial={{ opacity: 0, y: 10, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={bouncy}
               className="flex items-end gap-2 mt-3"
             >
-              <Gbot look={bot.look} seed={bot.id} size={34} mood={presence === "working" ? "working" : "thinking"} props={false} />
-              <div className="bg-surface border border-line rounded-[20px] rounded-bl-md px-4 py-3 shadow-soft flex gap-1.5" aria-label={`${bot.name} is typing`}>
-                {[0, 1, 2].map((i) => (
-                  <motion.span key={i} className="size-2 rounded-full bg-ink-2/60"
-                    animate={{ y: [0, -5, 0], opacity: [0.5, 1, 0.5] }} transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.14, ease: "easeInOut" }} />
-                ))}
-              </div>
+              <Gbot look={bot.look} seed={bot.id} size={40} mood={presence === "working" ? "working" : "thinking"} />
+              <span className="text-[13px] text-ink-2 pb-2">{detail || (presence === "working" ? "Working…" : "Thinking…")}</span>
             </motion.div>
           )}
         </AnimatePresence>
@@ -150,7 +145,7 @@ const Row = memo(function Row({ m, bot, first, last }: { m: Message; bot: Bot; f
     return (
       <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={bouncy} className="flex justify-center my-3">
         <div className={`flex items-center gap-2 text-[13px] px-3.5 py-2 rounded-full max-w-[90%] ${err ? "bg-danger/10 text-danger" : "bg-surface-2 text-ink-2"}`}>
-          {err && <Gbot look={bot.look} seed={bot.id} size={22} mood="blocked" props={false} />}
+          {err && <Gbot look={bot.look} seed={bot.id} size={22} mood="blocked" />}
           <span className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
         </div>
       </motion.div>
@@ -166,7 +161,7 @@ const Row = memo(function Row({ m, bot, first, last }: { m: Message; bot: Bot; f
       className={`flex items-end gap-2 ${first ? "mt-4" : "mt-1"} ${mine ? "justify-end" : ""}`}
       style={{ transformOrigin: mine ? "bottom right" : "bottom left" }}
     >
-      {!mine && <div className="w-[34px] shrink-0">{last && <Gbot look={bot.look} seed={bot.id} size={34} props={false} mood={m.streaming ? "working" : "idle"} />}</div>}
+      {!mine && <div className="w-[34px] shrink-0">{last && <Gbot look={bot.look} seed={bot.id} size={34} mood={m.streaming ? "working" : "idle"} />}</div>}
       <div
         className={`max-w-[min(82%,620px)] px-4 py-2.5 text-[15px] ${
           mine

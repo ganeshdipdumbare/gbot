@@ -40,7 +40,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
 
   return (
     <Modal open={open} onClose={onClose} side width={460} title={
-      <span className="flex items-center gap-2"><Gbot look={look} seed={bot.id} size={34} props={false} mood={saved ? "happy" : "idle"} />{bot.name}</span>
+      <span className="flex items-center gap-2"><Gbot look={look} seed={bot.id} size={34} mood={saved ? "happy" : "idle"} />{bot.name}</span>
     }>
       <div className="px-5 pb-6 space-y-5">
         <div className="grid grid-cols-2 gap-3">

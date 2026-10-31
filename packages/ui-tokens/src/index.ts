@@ -25,14 +25,17 @@ export const dark = {
   bubbleMeInk: "#17131F",
 };
 
-// Character hues: body fill + a contrast-safe ink for faces and accents.
+// Character colors: one flat fill plus the eye color that reads on it.
 export const hues = {
-  peach: { body: "#FFC4A8", shade: "#F7A285", ink: "#5B2A1A" },
-  mint: { body: "#B8EBD3", shade: "#8FD9B8", ink: "#1E4A39" },
-  lilac: { body: "#D9C8FF", shade: "#BBA2FA", ink: "#3A2770" },
-  butter: { body: "#FFE7A3", shade: "#F9D46E", ink: "#5A4310" },
-  sky: { body: "#BFE3FF", shade: "#93CBF7", ink: "#173C5E" },
-  rose: { body: "#FFC6DA", shade: "#F9A1C1", ink: "#5E1F38" },
+  cobalt: { body: "#3B6CF6", eye: "#16131C" },
+  coral: { body: "#FF6A4D", eye: "#16131C" },
+  sun: { body: "#FFC233", eye: "#16131C" },
+  mint: { body: "#2EC78E", eye: "#16131C" },
+  grape: { body: "#8B5CF6", eye: "#16131C" },
+  bubblegum: { body: "#FF66B3", eye: "#16131C" },
+  sky: { body: "#3DBEF5", eye: "#16131C" },
+  cream: { body: "#F1E7D6", eye: "#16131C" },
+  ink: { body: "#26222E", eye: "#FFFFFF" },
 } as const;
 
 export type Hue = keyof typeof hues;

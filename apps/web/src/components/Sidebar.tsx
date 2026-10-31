@@ -16,7 +16,7 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch }: {
     <div className="h-full flex flex-col">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3">
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          <Gbot seed="brand" look={{ shape: "mochi", hue: "lilac", eyes: "sparkle", accessory: "sprout", mouth: "smile" }} size={30} props={false} />
+          <Gbot seed="brand" look={{ shape: "circle", hue: "grape", eyes: "pill" }} size={30} />
           <span className="font-display font-black text-[22px] tracking-tight">gbot</span>
         </div>
         <IconButton label="Search (⌘K)" onClick={onSearch}><Icon.search /></IconButton>
@@ -48,7 +48,7 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch }: {
                     aria-current={active ? "page" : undefined}
                   >
                     <div className="relative shrink-0">
-                      <Gbot look={b.look} seed={b.id} size={44} mood={moodOf(p, b)} props={false} title={b.name} />
+                      <Gbot look={b.look} seed={b.id} size={44} mood={moodOf(p, b)} title={b.name} />
                       {busy && p.state === "waiting" && <span className="absolute -top-0.5 -right-0.5 size-3 rounded-full bg-live ring-2 ring-bg" />}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -67,7 +67,7 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch }: {
         </motion.ul>
         {bots.length > 0 && bots.length < 3 && (
           <button onClick={onHatch} className="w-full mt-2 rounded-[20px] border-2 border-dashed border-line px-3 py-3 text-[13px] text-ink-2 hover:text-ink hover:border-ink-2/40 transition-colors cursor-pointer">
-            One bot per job works best. <span className="font-bold">Hatch another →</span>
+            One bot per job works best. <span className="font-bold">Add another →</span>
           </button>
         )}
       </nav>

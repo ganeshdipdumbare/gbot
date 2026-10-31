@@ -1,25 +1,19 @@
 import { hues, type Hue } from "@gbot/ui-tokens";
 
-// A gbot's look is a few discrete traits picked from a seed, so every
-// bot is unique but all of them feel like one family.
+// A gbot's look is three discrete traits picked from a seed: every bot is
+// recognizable, and all of them read as one family.
 
-export const shapes = ["mochi", "bun", "bean", "ghost", "blob", "drop"] as const;
-export const eyeStyles = ["round", "tall", "sparkle"] as const;
-export const accessories = ["none", "sprout", "antenna", "cat", "bear", "bow"] as const;
-export const mouths = ["smile", "cat", "grin"] as const;
+export const shapes = ["circle", "square", "triangle", "hexagon", "cloud", "pill", "arch", "diamond"] as const;
+export const eyeStyles = ["dot", "pill", "wide"] as const;
 export const hueNames = Object.keys(hues) as Hue[];
 
 export type Shape = (typeof shapes)[number];
 export type EyeStyle = (typeof eyeStyles)[number];
-export type Accessory = (typeof accessories)[number];
-export type Mouth = (typeof mouths)[number];
 
 export interface Traits {
   shape: Shape;
   hue: Hue;
   eyes: EyeStyle;
-  accessory: Accessory;
-  mouth: Mouth;
 }
 
 export type Look = Partial<Traits> & { seed?: string };
@@ -52,21 +46,16 @@ const pick = <T,>(r: () => number, list: readonly T[]) => list[Math.floor(r() * 
 
 export function traitsFromSeed(seed: string): Traits {
   const r = rng(seed);
-  const shape = pick(r, shapes);
-  let accessory = pick(r, accessories);
-  // A drop's pointy top has no room for ears.
-  if (shape === "drop" && (accessory === "cat" || accessory === "bear" || accessory === "antenna")) accessory = "sprout";
-  return { shape, hue: pick(r, hueNames), eyes: pick(r, eyeStyles), accessory, mouth: pick(r, mouths) };
+  return { shape: pick(r, shapes), hue: pick(r, hueNames), eyes: pick(r, eyeStyles) };
 }
 
+// Unknown values (including looks saved by older versions) fall back to
+// the seed, so every stored bot still renders.
 export function resolveLook(look: Look | undefined, fallbackSeed: string): Traits {
-  const base = traitsFromSeed(look?.seed || fallbackSeed);
-  const t = { ...base };
+  const t = traitsFromSeed(look?.seed || fallbackSeed);
   if (look?.shape && shapes.includes(look.shape)) t.shape = look.shape;
   if (look?.hue && look.hue in hues) t.hue = look.hue;
   if (look?.eyes && eyeStyles.includes(look.eyes)) t.eyes = look.eyes;
-  if (look?.accessory && accessories.includes(look.accessory)) t.accessory = look.accessory;
-  if (look?.mouth && mouths.includes(look.mouth)) t.mouth = look.mouth;
   return t;
 }
 

@@ -30,7 +30,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
 
         {models && !hasLocal && (
           <div className="rounded-[22px] bg-surface-2 p-4 flex gap-3">
-            <Gbot seed="plug" look={{ shape: "bean", hue: "sky", accessory: "antenna" }} mood="waiting" size={64} />
+            <Gbot seed="plug" look={{ shape: "pill", hue: "sky", eyes: "dot" }} mood="waiting" size={64} />
             <div className="text-[14px]">
               <div className="font-display font-extrabold text-[15px]">Run models on your own machine</div>
               <p className="text-ink-2 mt-1">Install <a className="underline" href="https://ollama.com" target="_blank" rel="noreferrer">Ollama</a>, then pull a small model with tools:</p>
