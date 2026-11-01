@@ -68,14 +68,14 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
         {onMenu && <IconButton label="Bots" onClick={onMenu}><Icon.menu /></IconButton>}
         {bot ? (
           <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-8 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
-            <Gbot look={bot.look} seed={bot.id} size={22} mood={moodOf(p, bot)} />
-            <span className="text-[14px] font-medium truncate">{bot.name}</span>
+            <Gbot look={bot.look} seed={bot.id} size={24} mood={moodOf(p, bot)} />
+            <span className="text-[15px] font-semibold tracking-[-0.2px] truncate">{bot.name}</span>
             <Status p={p} fallback={bot.title} />
           </button>
         ) : (
           <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-8 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
             <Stack bots={members} size={20} presence={presence} />
-            <span className="text-[14px] font-medium truncate">{group!.name}</span>
+            <span className="text-[15px] font-semibold tracking-[-0.2px] truncate">{group!.name}</span>
             <span className="text-[13px] text-ink-3 truncate">{members.map((b) => b.name).join(", ")}</span>
           </button>
         )}
@@ -314,6 +314,7 @@ function GroupHello({ group, members }: { group: Group; members: Bot[] }) {
 
 const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animate }: { m: Message; author?: Bot; first: boolean; last: boolean; inGroup: boolean; chatKey: ChatKey; animate: boolean }) {
   const enter = animate ? "entry-in" : "";
+  if (m.role === "event" && m.data?.kind === "activity") return <Activity m={m} enter={enter} />;
   if (m.role === "event") {
     const err = m.data?.kind === "error";
     return (
@@ -335,7 +336,7 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
       {!mine && inGroup && <div className="w-6 shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={24} mood={m.streaming ? "working" : "idle"} />}</div>}
       <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[min(85%,560px)]`}>
         {inGroup && first && !mine && author && <span className="text-[12px] text-ink-3 mb-1 ml-1">{author.name}</span>}
-        <div className={`px-3 py-2 text-[14px] leading-[21px] ${shape} ${mine
+        <div className={`px-3.5 py-2 text-[15px] leading-[22px] ${shape} ${mine
           ? `bg-[var(--bubble-me)] text-[var(--bubble-me-ink)] ${m.pending ? "opacity-60" : ""} ${failed ? "ring-1 ring-danger" : ""}`
           : "bg-surface text-ink"}`}>
           {mine ? (
@@ -350,6 +351,25 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
     </div>
   );
 });
+
+type Step = { label: string; detail?: string; ok: boolean };
+
+// What the bot did, as a quiet checklist above its reply (like Grok Bot
+// and Rakazo): "✓ Ran → python3 fib.py · exit 0".
+function Activity({ m, enter }: { m: Message; enter: string }) {
+  const steps = (m.data?.steps as Step[] | undefined) ?? [];
+  return (
+    <div className={`${enter} mt-3 max-w-[min(85%,560px)] rounded-2xl bg-surface px-3.5 py-2.5 text-[14px] leading-[22px]`}>
+      {steps.map((s, i) => (
+        <div key={i} className="flex items-baseline gap-2 min-w-0">
+          <span className={`shrink-0 [&_svg]:size-3.5 translate-y-[2px] ${s.ok ? "text-success" : "text-danger"}`}>{s.ok ? <Icon.check /> : <Icon.close />}</span>
+          <span className="font-medium shrink-0">{s.label}</span>
+          {s.detail && <><span className="text-ink-3 shrink-0">→</span><span className="text-ink-2 truncate font-mono text-[12.5px]">{s.detail}</span></>}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // Hover actions on a message: copy, read aloud, or retry a failed send.
 function Actions({ m, chatKey, voice, failed }: { m: Message; chatKey: ChatKey; voice?: string; failed?: boolean }) {

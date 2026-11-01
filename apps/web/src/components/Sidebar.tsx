@@ -9,7 +9,7 @@ import { Skeleton } from "./Feedback";
 const clean = (s: string) => s.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim();
 
 export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch, onNewGroup }: {
-  activeId: string | null; onSelect: (id: string) => void; onHatch: () => void; onSettings: () => void; onSearch: () => void; onNewGroup: () => void;
+  activeId: string | null; onSelect: (id: string) => void; onHatch: () => void; onSettings: (tab?: "integrations") => void; onSearch: () => void; onNewGroup: () => void;
 }) {
   const bots = useStore((s) => s.bots);
   const groups = useStore((s) => s.groups);
@@ -78,7 +78,7 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch, onN
                     <Row
                       active={groupKey(g.id) === activeId}
                       onClick={() => onSelect(groupKey(g.id))}
-                      avatar={<div className="size-8 grid place-items-center"><Stack bots={members} size={20} presence={presence} /></div>}
+                      avatar={<div className="size-9 grid place-items-center"><Stack bots={members} size={22} presence={presence} /></div>}
                       name={g.name}
                       time={timeAgo(g.lastMessage?.createdAt)}
                       preview={working ? `${working.name} is ${presence[working.id]?.state}…` : g.lastMessage ? clean(g.lastMessage.content) : members.map((b) => b.name).join(", ")}
@@ -93,11 +93,19 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch, onN
         )}
       </nav>
 
-      <div className="flex items-center gap-2 px-3.5 pt-2 pb-3 shrink-0">
-        <div className="size-7 rounded-full bg-surface-2 grid place-items-center text-[11px] font-medium text-ink-2">{initials}</div>
-        <span className="text-[13px] truncate flex-1">{me?.name}</span>
-        {!connected && <span className="text-[11px] text-warning">Reconnecting</span>}
-        <IconButton label="Settings" onClick={onSettings} className="size-7!"><Icon.gear /></IconButton>
+      <div className="px-2.5 pt-1 pb-3 shrink-0 space-y-px">
+        <button onClick={() => onSettings("integrations")}
+          className="w-full flex items-center gap-3 h-10 px-2.5 rounded-xl text-[14px] text-ink-2 hover:text-ink hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
+          <span className="size-7 rounded-full hairline grid place-items-center [&_svg]:size-3.5"><Icon.plug /></span>
+          Integrations
+        </button>
+        <button onClick={() => onSettings()}
+          className="w-full flex items-center gap-3 h-10 px-2.5 rounded-xl text-[14px] hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
+          <span className="size-7 rounded-full bg-surface-2 grid place-items-center text-[11px] font-medium text-ink-2">{initials}</span>
+          <span className="truncate flex-1 text-left">{me?.name}</span>
+          {!connected && <span className="text-[11px] text-warning">Reconnecting</span>}
+          <span className="text-ink-3 [&_svg]:size-4"><Icon.gear /></span>
+        </button>
       </div>
     </div>
   );
@@ -112,7 +120,7 @@ function preview(b: Bot, p?: Presence) {
 function BotAvatar({ bot, p }: { bot: Bot; p?: Presence }) {
   return (
     <div className="relative shrink-0">
-      <Gbot look={bot.look} seed={bot.id} size={32} mood={moodOf(p, bot)} title={bot.name} />
+      <Gbot look={bot.look} seed={bot.id} size={36} mood={moodOf(p, bot)} title={bot.name} />
       {p?.state === "waiting" && <span className="absolute -top-px -right-px size-2.5 rounded-full bg-danger ring-2 ring-[var(--chrome)]" title="Needs you" />}
       {p?.live && p.state !== "waiting" && <span className="absolute -bottom-px -right-px size-2.5 rounded-full bg-live ring-2 ring-[var(--chrome)]" title="Its computer is active" />}
     </div>
@@ -126,12 +134,12 @@ function Row({ active, onClick, avatar, name, pinned, time, preview, busy, unrea
     <button
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`w-full flex items-center gap-2.5 rounded-[10px] p-2 text-left transition-colors duration-[120ms] cursor-pointer ${active ? "bg-selected" : "hover:bg-hover"}`}
+      className={`w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors duration-[120ms] cursor-pointer ${active ? "bg-selected" : "hover:bg-hover"}`}
     >
       {avatar}
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className={`text-[14px] leading-5 truncate ${unread ? "font-semibold" : ""}`}>{name}</span>
+          <span className={`text-[15px] leading-5 truncate ${unread ? "font-semibold" : "font-medium"}`}>{name}</span>
           {pinned && <span className="text-ink-3 shrink-0 [&_svg]:size-3"><Icon.pin /></span>}
           <span className="ml-auto text-[12px] leading-4 text-ink-3 shrink-0">{time}</span>
         </div>

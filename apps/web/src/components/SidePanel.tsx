@@ -4,30 +4,27 @@ import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
 import { set, useStore } from "../lib/store";
 import { attempt } from "../lib/toast";
-import { moodOf } from "../lib/hooks";
 import { bouncy, Button, Icon, IconButton, Input, Label, TextArea } from "./ui";
 
 // The bot's own place: its computer (status → preview → takeover) and
 // the routines it runs by itself.
 
-export function SidePanel({ bot, tab, onTab, onClose, takeover, setTakeover }: {
-  bot: Bot; tab: "computer" | "routines"; onTab: (t: "computer" | "routines") => void; onClose: () => void;
+export function SidePanel({ bot, onClose, takeover, setTakeover }: {
+  bot: Bot; onClose: () => void;
   takeover: boolean; setTakeover: (v: boolean) => void;
 }) {
+  const status = useStore((s) => s.computers[bot.id]);
+  const label = status?.state === "on" ? (status.controller === "user" ? "You have control" : "Running")
+    : status?.state === "starting" ? "Starting" : "Asleep";
   return (
     <div className="h-full flex flex-col bg-bg">
-      <div className="flex items-center gap-0.5 px-2 h-11 shrink-0 hairline-b">
-        {(["computer", "routines"] as const).map((t) => (
-          <button key={t} onClick={() => onTab(t)}
-            className={`h-7 px-2.5 rounded-lg text-[13px] cursor-pointer transition-colors duration-[120ms] ${tab === t ? "bg-selected text-ink" : "text-ink-3 hover:text-ink"}`}>
-            {t === "computer" ? "Computer" : "Routines"}
-          </button>
-        ))}
-        <div className="flex-1" />
+      <div className="flex items-center gap-1 pl-4 pr-2 h-11 shrink-0">
+        <span className="text-[14px] text-ink-2 truncate flex-1">{bot.name}'s computer <span className="text-ink-3">· {label}</span></span>
         <IconButton label="Close panel" onClick={onClose}><Icon.close /></IconButton>
       </div>
       <div className="flex-1 overflow-y-auto scroll-soft">
-        {tab === "computer" ? <ComputerTab bot={bot} onTakeover={() => setTakeover(true)} /> : <RoutinesTab bot={bot} />}
+        <ComputerTab bot={bot} onTakeover={() => setTakeover(true)} />
+        <RoutinesTab bot={bot} />
       </div>
       <Takeover bot={bot} open={takeover} onClose={() => setTakeover(false)} />
     </div>
@@ -105,7 +102,6 @@ function AppDock({ current, onShow }: { current: DeskApp; onShow: (app: DeskApp)
 
 function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) {
   const [status, update] = useComputer(bot);
-  const presence = useStore((s) => s.presence[bot.id]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [app, setApp] = useState<DeskApp>("browser");
@@ -126,37 +122,18 @@ function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) 
   }
 
   return (
-    <div className="p-3 space-y-3">
-      <div className="flex items-center gap-3">
-        <Gbot look={bot.look} seed={bot.id} size={36} mood={moodOf(presence, bot)} live={on} />
-        <div className="min-w-0 flex-1">
-          <div className="font-medium text-[14px]">{bot.name}'s computer</div>
-          <div className="text-[12px] text-ink-3 flex items-center gap-1.5">
-            <span className={`size-1.5 rounded-full ${on ? "bg-live" : status?.state === "starting" ? "bg-amber-400" : "bg-ink-2/40"}`} />
-            {status?.state === "starting" ? "Starting…" : on ? (status.controller === "user" ? "You have control" : "On") : "Asleep"}
-            <span className="opacity-50">·</span>
-            <Icon.globe />
-            {bot.computerNetwork ? "Online" : "No network"}
-          </div>
-        </div>
-        {on ? (
-          <Button variant="ghost" disabled={busy} onClick={() => act("stop")}>Sleep</Button>
-        ) : (
-          <Button variant="soft" disabled={busy || status?.state === "starting" || status?.available === false} onClick={() => act("start")}>Wake</Button>
-        )}
-      </div>
-
-      <div className="relative aspect-[16/10] rounded-xl overflow-hidden bg-surface hairline">
+    <div className="px-4 pb-2 space-y-3">
+      <div className="relative aspect-[16/10] rounded-2xl overflow-hidden bg-surface hairline">
         <AnimatePresence>
           {src ? (
             <motion.img key="screen" src={src} alt={`${bot.name}'s screen`} className="absolute inset-0 size-full object-cover" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
           ) : (
             <motion.div key="off" className="absolute inset-0 grid place-items-center text-center p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
               <div>
-                <Gbot look={bot.look} seed={bot.id} size={56} mood={status?.state === "starting" ? "working" : "sleepy"} className="mx-auto" />
-                <p className="text-[13px] text-ink-2 mt-2">
-                  {status?.available === false ? "The computer image isn't built yet. Run `make computer`." :
-                    status?.state === "starting" ? "Waking up…" : "Its computer wakes when it needs it."}
+                <Gbot look={bot.look} seed={bot.id} size={40} mood={status?.state === "starting" ? "working" : "sleepy"} className="mx-auto" />
+                <p className="text-[13px] text-ink-3 mt-2">
+                  {status?.available === false ? "The computer image isn't built yet. Run make computer." :
+                    status?.state === "starting" ? "Waking up…" : "Wakes up when it needs it."}
                 </p>
               </div>
             </motion.div>
@@ -165,14 +142,25 @@ function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) 
         {on && <AppDock current={app} onShow={show} />}
       </div>
 
-      {on && (
-        <Button className="w-full" onClick={onTakeover}><Icon.screen /> Take control</Button>
-      )}
+      <div className="flex items-center gap-2">
+        <span className="text-[14px] text-ink-2 flex-1 truncate">{bot.name}'s screen</span>
+        {on ? (
+          <>
+            <button onClick={() => act("stop")} disabled={busy} className="h-8 px-3 rounded-full text-[13px] text-ink-3 hover:text-ink hover:bg-hover cursor-pointer transition-colors duration-[120ms]">Sleep</button>
+            <button onClick={onTakeover} className="h-8 px-3.5 rounded-full hairline text-[13px] font-medium hover:bg-hover cursor-pointer transition-colors duration-[120ms]">Take control</button>
+          </>
+        ) : (
+          <button onClick={() => act("start")} disabled={busy || status?.state === "starting" || status?.available === false}
+            className="h-8 px-3.5 rounded-full hairline text-[13px] font-medium hover:bg-hover cursor-pointer transition-colors duration-[120ms] disabled:opacity-40">Wake</button>
+        )}
+      </div>
       {error && <p className="text-danger text-[13px]">{error}</p>}
-      <p className="text-[12px] text-ink-3 leading-relaxed">
-        A private Linux desktop with a browser, terminal and files, running on this machine
-        {status?.backend === "microsandbox" ? " in its own microVM." : " in a Docker container."}
-        {bot.computerNetwork ? " It can reach the internet." : " It has no network until you allow it in the bot's settings."}
+      <p className="text-[12px] text-ink-3 leading-relaxed flex items-start gap-1.5">
+        <span className="[&_svg]:size-3.5 mt-px"><Icon.globe /></span>
+        <span>
+          {status?.backend === "microsandbox" ? "Its own microVM on this machine." : "A container on this machine."}
+          {bot.computerNetwork ? " Online." : " Offline until you allow internet in its settings."}
+        </span>
       </p>
     </div>
   );
@@ -272,56 +260,47 @@ function RoutinesTab({ bot }: { bot: Bot }) {
   useEffect(() => { load(); }, [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="p-3 space-y-2.5">
-      <div className="flex items-center">
-        <div className="flex-1">
-          <div className="font-medium text-[14px]">Routines</div>
-          <div className="text-[12px] text-ink-3">Prompts {bot.name} runs by itself. Or just ask in chat.</div>
+    <div className="px-4 pt-4 pb-6">
+      <div className="text-[14px] text-ink-2 mb-1">Routines</div>
+
+      {secret && (
+        <div className="rounded-2xl bg-surface p-3 text-[13px] space-y-2 my-2">
+          <div className="font-medium">Webhook ready. Copy the key now; it won't be shown again.</div>
+          <code className="block break-all bg-bg rounded-lg px-2.5 py-2 font-mono text-[12px]">POST {secret.webhookUrl}</code>
+          <code className="block break-all bg-bg rounded-lg px-2.5 py-2 font-mono text-[12px]">Authorization: Bearer {secret.secret}</code>
+          <button className="text-ink-2 hover:text-ink cursor-pointer" onClick={() => setSecret(null)}>Done</button>
         </div>
-        {!adding && <Button variant="soft" onClick={() => setAdding(true)}><Icon.plus /> New</Button>}
-      </div>
+      )}
+
+      <ul>
+        {list?.map((r) => (
+          <li key={r.id} className="group">
+            <div className="flex items-center gap-2.5 h-10 -mx-2 px-2 rounded-xl hover:bg-hover transition-colors duration-[120ms]">
+              <span className={`[&_svg]:size-3.5 ${r.active ? "text-warning" : "text-ink-3"}`}><Icon.clock /></span>
+              <span className={`text-[14px] truncate flex-1 ${r.active ? "" : "text-ink-3"}`} title={r.prompt}>{r.name}</span>
+              <span className="text-[12px] text-ink-3 shrink-0 group-hover:hidden">{r.active ? r.when : "Paused"}</span>
+              <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                <IconButton label="Run now" className="size-7! [&_svg]:size-3.5" onClick={() => attempt(() => api.runRoutine(bot.id, r.id), "Running now")}><Icon.play /></IconButton>
+                <IconButton label={r.active ? "Pause" : "Resume"} className="size-7! [&_svg]:size-3.5"
+                  onClick={async () => { await attempt(() => api.updateRoutine(bot.id, r.id, { active: !r.active }), r.active ? "Routine paused" : "Routine resumed"); load(); }}>
+                  {r.active ? <Icon.stop /> : <Icon.play />}
+                </IconButton>
+                <IconButton label="Delete" className="size-7! hover:text-danger! [&_svg]:size-3.5" onClick={async () => { await attempt(() => api.deleteRoutine(bot.id, r.id), "Routine deleted"); load(); }}><Icon.trash /></IconButton>
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
 
       <AnimatePresence initial={false}>
         {adding && <NewRoutine bot={bot} onDone={(r) => { setAdding(false); if (r) { load(); if (r.secret) setSecret(r); } }} />}
       </AnimatePresence>
-
-      {secret && (
-        <div className="rounded-2xl bg-surface p-3 text-[13px] space-y-2">
-          <div className="font-semibold">Webhook ready. Copy the key now; it won't be shown again.</div>
-          <code className="block break-all bg-surface rounded-xl px-2.5 py-2">POST {secret.webhookUrl}</code>
-          <code className="block break-all bg-surface rounded-xl px-2.5 py-2">Authorization: Bearer {secret.secret}</code>
-          <button className="text-ink-2 font-semibold cursor-pointer" onClick={() => setSecret(null)}>Done</button>
-        </div>
+      {!adding && (
+        <button onClick={() => setAdding(true)} className="flex items-center gap-2 h-10 -mx-2 px-2 w-[calc(100%+16px)] rounded-xl text-[14px] text-ink-3 hover:text-ink hover:bg-hover cursor-pointer transition-colors duration-[120ms] [&_svg]:size-3.5">
+          <Icon.plus /> New routine
+        </button>
       )}
-
-      {list?.length === 0 && !adding && (
-        <div className="text-center py-8">
-          <Gbot look={bot.look} seed={bot.id} size={56} mood="sleepy" className="mx-auto" />
-          <p className="text-[13px] text-ink-2 mt-2">No routines yet. Try “Every weekday at 8am, summarize the news.”</p>
-        </div>
-      )}
-
-      <ul className="space-y-2">
-        {list?.map((r) => (
-          <motion.li key={r.id} layout className="rounded-2xl bg-surface px-3 pt-2.5 pb-2">
-            <div className="flex items-start gap-3">
-              <span className={`mt-0.5 ${r.active ? "text-live" : "text-ink-2/50"}`}><Icon.clock /></span>
-              <div className="min-w-0 flex-1">
-                <div className="font-medium text-[14px] truncate">{r.name}</div>
-                <div className="text-[12px] text-ink-3">{r.active ? r.when : "Paused"}{r.active && r.nextRunAt && r.kind === "schedule" ? ` · next ${new Date(r.nextRunAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : ""}</div>
-                <div className="text-[13px] mt-1.5 line-clamp-2">{r.prompt}</div>
-              </div>
-              <Toggle on={r.active} label={r.active ? "Pause" : "Resume"} onChange={async (v) => { await attempt(() => api.updateRoutine(bot.id, r.id, { active: v }), v ? "Routine resumed" : "Routine paused"); load(); }} />
-            </div>
-            <div className="flex gap-1 mt-2 -mb-1 -ml-1">
-              <button className="h-7 px-2 rounded-lg text-[12px] text-ink-3 hover:text-ink hover:bg-hover cursor-pointer inline-flex items-center gap-1"
-                onClick={() => attempt(() => api.runRoutine(bot.id, r.id), "Running now")}><Icon.play /> Run now</button>
-              <button className="h-7 px-2 rounded-lg text-[12px] text-ink-3 hover:text-danger hover:bg-hover cursor-pointer inline-flex items-center gap-1"
-                onClick={async () => { await attempt(() => api.deleteRoutine(bot.id, r.id), "Routine deleted"); load(); }}><Icon.trash /> Delete</button>
-            </div>
-          </motion.li>
-        ))}
-      </ul>
+      {list?.length === 0 && !adding && <p className="text-[12px] text-ink-3 mt-1">Or ask in chat: “every weekday at 8am, summarize the news.”</p>}
     </div>
   );
 }

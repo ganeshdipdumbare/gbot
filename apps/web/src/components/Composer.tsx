@@ -19,6 +19,7 @@ export function Composer({ placeholder, busy, members, onSend, onStop, autoFocus
   const [hop, setHop] = useState(0);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [pick, setPick] = useState(0);
+  const [menu, setMenu] = useState(false);
   const ta = useRef<HTMLTextAreaElement>(null);
   const dictation = useDictation((t) => setText((x) => (x ? x.trimEnd() + " " : "") + t));
 
@@ -105,7 +106,23 @@ export function Composer({ placeholder, busy, members, onSend, onStop, autoFocus
             </motion.ul>
           )}
         </AnimatePresence>
-        <div className="flex items-end gap-1 rounded-[20px] p-1.5 pl-3.5 hairline bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] backdrop-blur-xl focus-within:shadow-[inset_0_0_0_1px_var(--ink-3)] transition-shadow duration-[120ms]">
+        <div className="flex items-end gap-1.5 rounded-[26px] p-[7px] hairline bg-surface backdrop-blur-xl focus-within:shadow-[inset_0_0_0_1px_var(--ink-3)] transition-shadow duration-[120ms]">
+          <div className="relative">
+            <button onClick={() => setMenu((v) => !v)} aria-label="More" aria-expanded={menu} title="Skills and mentions"
+              className="size-[34px] rounded-full grid place-items-center hairline text-ink-2 hover:text-ink hover:bg-hover cursor-pointer transition-colors duration-[120ms] [&_svg]:size-4">
+              <Icon.plus />
+            </button>
+            <AnimatePresence>
+              {menu && (
+                <motion.div initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, transition: { duration: 0.1 } }} transition={{ duration: 0.16 }}
+                  className="absolute bottom-full mb-2 left-0 w-56 rounded-xl bg-bg shadow-pop p-1 z-20" role="menu">
+                  <MenuItem icon={<Icon.spark />} label="Use a skill" hint="/" onClick={() => { setMenu(false); setText("/"); ta.current?.focus(); }} />
+                  {members && <MenuItem icon={<Icon.users />} label="Mention a teammate" hint="@" onClick={() => { setMenu(false); setText((t) => (t ? t.trimEnd() + " @" : "@")); ta.current?.focus(); }} />}
+                  {dictation.mode !== "none" && <MenuItem icon={<Icon.mic />} label="Dictate" onClick={() => { setMenu(false); dictation.toggle(); }} />}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
           <textarea
             ref={ta}
             rows={1}
@@ -114,13 +131,13 @@ export function Composer({ placeholder, busy, members, onSend, onStop, autoFocus
             onKeyDown={onKey}
             placeholder={listening ? "Listening…" : placeholder}
             aria-label={placeholder}
-            className="flex-1 resize-none bg-transparent outline-none focus-visible:outline-none py-1.5 text-[14px] leading-5 max-h-[200px] placeholder:text-ink-3"
+            className="flex-1 resize-none bg-transparent outline-none focus-visible:outline-none py-[6px] px-1 text-[15px] leading-[22px] max-h-[200px] placeholder:text-ink-3"
           />
-          {dictation.mode !== "none" && (
+          {dictation.state !== "idle" && (
             <motion.button
               whileTap={{ scale: 0.88 }} transition={bouncy}
               onClick={dictation.toggle}
-              className={`relative size-8 rounded-full grid place-items-center cursor-pointer transition-colors duration-[120ms] ${listening ? "bg-live text-white" : "text-ink-3 hover:text-ink hover:bg-hover"}`}
+              className={`relative size-[34px] rounded-full grid place-items-center cursor-pointer transition-colors duration-[120ms] ${listening ? "bg-live text-white" : "text-ink-3 hover:text-ink hover:bg-hover"}`}
               aria-label={listening ? "Stop dictation" : "Dictate"}
               title={dictation.mode === "browser" ? "Dictate (your browser's speech service)" : "Dictate (on this machine)"}
             >
@@ -131,7 +148,7 @@ export function Composer({ placeholder, busy, members, onSend, onStop, autoFocus
           <AnimatePresence mode="popLayout" initial={false}>
             {busy && !text.trim() ? (
               <motion.button key="stop" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={bouncy} whileTap={{ scale: 0.85 }}
-                onClick={onStop} className="size-8 rounded-full bg-emphasis text-on-emphasis grid place-items-center cursor-pointer [&_svg]:size-3.5" aria-label="Stop" title="Stop">
+                onClick={onStop} className="size-[34px] rounded-full bg-emphasis text-on-emphasis grid place-items-center cursor-pointer [&_svg]:size-3.5" aria-label="Stop" title="Stop">
                 <Icon.stop />
               </motion.button>
             ) : (
@@ -141,15 +158,26 @@ export function Composer({ placeholder, busy, members, onSend, onStop, autoFocus
                 whileTap={{ scale: 0.85 }}
                 onClick={send}
                 disabled={!text.trim()}
-                className="size-8 rounded-full bg-emphasis text-on-emphasis grid place-items-center disabled:bg-surface-2 disabled:text-ink-3 cursor-pointer transition-colors duration-[120ms] [&_svg]:size-4"
+                className="size-[34px] rounded-full bg-emphasis text-on-emphasis grid place-items-center disabled:bg-surface-2 disabled:text-ink-3 cursor-pointer transition-colors duration-[120ms] [&_svg]:size-[18px]"
                 aria-label="Send" title="Send"
               >
-                <Icon.send />
+                <Icon.up />
               </motion.button>
             )}
           </AnimatePresence>
         </div>
       </div>
     </div>
+  );
+}
+
+function MenuItem({ icon, label, hint, onClick }: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void }) {
+  return (
+    <button role="menuitem" onClick={onClick}
+      className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[14px] hover:bg-hover cursor-pointer [&_svg]:size-4 text-ink">
+      <span className="text-ink-2">{icon}</span>
+      <span className="flex-1">{label}</span>
+      {hint && <kbd className="text-[12px] text-ink-3 font-sans">{hint}</kbd>}
+    </button>
   );
 }

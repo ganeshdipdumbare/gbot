@@ -63,7 +63,7 @@ body {
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 .fade-in { animation: fade-in 0.16s ease-out both; }
 
-.prose-bot { line-height: 21px; overflow-wrap: anywhere; }
+.prose-bot { line-height: 22px; overflow-wrap: anywhere; }
 .prose-bot > :first-child { margin-top: 0; }
 .prose-bot > :last-child { margin-bottom: 0; }
 .prose-bot p { margin: 0.4em 0; }

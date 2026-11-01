@@ -18,8 +18,9 @@ export type Panel = null | "hatch" | "bot" | "group" | "settings" | "search" | "
 export function Shell() {
   const [panel, setPanel] = useState<Panel>(null);
   const [drawer, setDrawer] = useState(false);
-  const [side, setSide] = useState<null | "computer" | "routines">(null);
+  const [side, setSide] = useState<null | "computer">(null);
   const [takeover, setTakeover] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"general" | "integrations">("general");
   const wide = useMediaQuery("(min-width: 820px)");
   const roomy = useMediaQuery("(min-width: 1180px)");
   const activeId = useStore((s) => s.activeId);
@@ -59,14 +60,14 @@ export function Shell() {
       activeId={activeId}
       onSelect={select}
       onHatch={() => { setPanel("hatch"); setDrawer(false); }}
-      onSettings={() => { setPanel("settings"); setDrawer(false); }}
+      onSettings={(tab) => { setSettingsTab(tab ?? "general"); setPanel("settings"); setDrawer(false); }}
       onSearch={() => setPanel("search")}
       onNewGroup={() => { setPanel("newGroup"); setDrawer(false); }}
     />
   );
 
   const sidePanel = activeBot && side && (
-    <SidePanel bot={activeBot} tab={side} onTab={setSide} onClose={() => setSide(null)} takeover={takeover} setTakeover={setTakeover} />
+    <SidePanel bot={activeBot} onClose={() => setSide(null)} takeover={takeover} setTakeover={setTakeover} />
   );
 
   return (
@@ -126,7 +127,7 @@ export function Shell() {
       <BotSettings open={panel === "bot"} botId={activeBot?.id ?? null} onClose={() => setPanel(null)} />
       <GroupSettings open={panel === "group"} group={activeGroup} onClose={() => setPanel(null)} />
       <NewGroup open={panel === "newGroup"} onClose={() => setPanel(null)} onCreated={(g) => { setPanel(null); select(groupKey(g.id)); }} />
-      <Settings open={panel === "settings"} onClose={() => setPanel(null)} />
+      <Settings open={panel === "settings"} onClose={() => setPanel(null)} initialTab={settingsTab} />
       <CommandK open={panel === "search"} onClose={() => setPanel(null)} onPick={(id) => { setPanel(null); select(id); }} onHatch={() => setPanel("hatch")} />
     </div>
   );

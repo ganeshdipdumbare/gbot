@@ -58,9 +58,13 @@ export const bodies: Record<Shape, Body> = {
   diamond: { d: rounded([[50, 7], [93, 50], [50, 93], [7, 50]], 13), face: [50, 49], eyeScale: 0.85 },
 };
 
-// Eye styles as [width, height] before mood shaping.
+// Eye styles as [width, height] before mood shaping. Eyes sit inside the
+// visor, so they're small.
 export const eyeSizes = {
-  dot: [11, 11],
-  pill: [9.5, 17],
-  wide: [15, 9.5],
+  dot: [7.5, 7.5],
+  pill: [6.5, 11],
+  wide: [10, 6.5],
 } as const;
+
+// The visor: a dark capsule across the face that holds the eyes.
+export const visorSize = { w: 50, h: 27 };

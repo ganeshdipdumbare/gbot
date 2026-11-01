@@ -44,9 +44,13 @@ export function rng(seed: string) {
 
 const pick = <T,>(r: () => number, list: readonly T[]) => list[Math.floor(r() * list.length)];
 
+// Circles are the house shape (as in Grok Bot's roster); the others add
+// variety without breaking the family look.
+const weightedShapes: Shape[] = ["circle", "circle", "circle", "circle", ...shapes.filter((s) => s !== "circle")];
+
 export function traitsFromSeed(seed: string): Traits {
   const r = rng(seed);
-  return { shape: pick(r, shapes), hue: pick(r, hueNames), eyes: pick(r, eyeStyles) };
+  return { shape: pick(r, weightedShapes), hue: pick(r, hueNames), eyes: pick(r, eyeStyles) };
 }
 
 // Unknown values (including looks saved by older versions) fall back to

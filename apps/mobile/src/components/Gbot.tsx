@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing } from "react-native";
 import Svg, { G, Path, Rect, Circle } from "react-native-svg";
-import { hues } from "@gbot/ui-tokens";
-import { bodies, eyeSizes, pose, resolveLook, type Look, type Mood } from "@gbot/characters/core";
+import { hues, visor } from "@gbot/ui-tokens";
+import { bodies, eyeSizes, pose, resolveLook, visorSize, type Look, type Mood } from "@gbot/characters/core";
 
 export type { Look, Mood };
 
@@ -59,17 +59,19 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, live }: {
   const [fx, fy] = body.face;
   const s = body.eyeScale;
   const [ew, eh] = eyeSizes[t.eyes];
-  const w = ew * s, h = eh * s, gap = 13.5 * s;
+  const w = ew * s, h = eh * s, gap = 9.5 * s;
+  const vw = visorSize.w * s, vh = visorSize.h * s;
 
   return (
     <Animated.View style={{ width: size, height: size, transform }}>
       <Svg width={size} height={size} viewBox="0 0 100 100">
         <Path d={body.d} fill={color.body} stroke={t.hue === "ink" ? "rgba(255,255,255,.14)" : "none"} strokeWidth={1.5} />
+        <Rect x={fx - vw / 2} y={fy - vh / 2} width={vw} height={vh} rx={vh / 2} fill={visor} stroke={t.hue === "ink" ? "rgba(255,255,255,.16)" : "none"} strokeWidth={1} />
         {([-1, 1] as const).map((side) => {
           const cx = fx + side * gap;
           const p = pose(mood, side, 0, 0);
           if (happy) {
-            return <Path key={side} d={`M${cx - 6.5 * s} ${fy + 3}Q${cx} ${fy - 6.5 * s} ${cx + 6.5 * s} ${fy + 3}`} stroke={color.eye} strokeWidth={4.6 * s} strokeLinecap="round" fill="none" />;
+            return <Path key={side} d={`M${cx - 4.5 * s} ${fy + 2.2}Q${cx} ${fy - 4.5 * s} ${cx + 4.5 * s} ${fy + 2.2}`} stroke={color.eye} strokeWidth={3.2 * s} strokeLinecap="round" fill="none" />;
           }
           const sy = blink ? 0.1 : p.sy;
           return (

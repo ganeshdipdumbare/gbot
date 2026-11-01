@@ -357,6 +357,20 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		text.Reset()
 	}
 	var final strings.Builder
+	// Tool steps since the last reply, posted as one activity summary
+	// just before the next reply (or at the end of the run).
+	var steps []step
+	flushSteps := func() {
+		if len(steps) == 0 {
+			return
+		}
+		m := &store.Message{BotID: b.ID, GroupID: c.GroupID, Role: "event", Content: stepsText(steps),
+			Data: map[string]any{"kind": "activity", "steps": steps}, RunID: &runID}
+		if err := r.store.AddMessage(bg, m, nil); err == nil {
+			r.hub.Publish(c.SpaceID, Event{Type: "message", BotID: b.ID, GroupID: c.GroupID, Data: m})
+		}
+		steps = nil
+	}
 	onEvent := func(e sdk.Event) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -370,6 +384,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 				return
 			}
 			if cur == nil {
+				flushSteps()
 				cur = &store.Message{BotID: b.ID, GroupID: c.GroupID, Role: "bot", RunID: &runID}
 				if err := r.store.AddMessage(bg, cur, nil); err != nil {
 					r.log.Error("add message", "err", err)
@@ -387,6 +402,10 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 			flush()
 			if e.ToolCall != nil {
 				r.setPresence(c, b, Presence{State: "working", Detail: toolLabel(e.ToolCall.Name)})
+			}
+		case "tool_result":
+			if st, ok := describeStep(e.ToolCall, e.Result); ok {
+				steps = append(steps, st)
 			}
 		}
 	}
@@ -430,6 +449,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	}
 	mu.Lock()
 	flush()
+	flushSteps()
 	mu.Unlock()
 
 	tokens := 0

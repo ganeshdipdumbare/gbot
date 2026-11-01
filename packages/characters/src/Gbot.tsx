@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { hues } from "@gbot/ui-tokens";
-import { bodies, eyeSizes } from "./parts";
+import { hues, visor } from "@gbot/ui-tokens";
+import { bodies, eyeSizes, visorSize } from "./parts";
 import { resolveLook, type Look } from "./traits";
 import { pose, type Mood } from "./pose";
 
@@ -65,15 +65,18 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
   }, [mood]);
 
   const gaze = lookAt ? { x: clamp(lookAt.x), y: clamp(lookAt.y) } : drift;
-  const gx = gaze.x * 3.4;
-  const gy = gaze.y * 2.4;
+  // Eyes move within the visor.
+  const gx = gaze.x * 4.5;
+  const gy = gaze.y * 2.5;
 
   const [fx, fy] = body.face;
   const s = body.eyeScale;
   const [ew, eh] = eyeSizes[t.eyes];
   const w = ew * s;
   const h = eh * s;
-  const gap = 13.5 * s;
+  const gap = 9.5 * s;
+  const vw = visorSize.w * s;
+  const vh = visorSize.h * s;
   const edge = t.hue === "ink" ? "rgba(255,255,255,.14)" : t.hue === "cream" ? "rgba(30,26,22,.08)" : "none";
 
   return (
@@ -90,6 +93,8 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
     >
       <g className="gbot-body" style={{ "--tilt": `${gaze.x * 3}deg` } as CSSProperties}>
         <path d={body.d} fill={color.body} stroke={edge} strokeWidth="1.5" />
+        <rect className="gbot-visor" x={fx - vw / 2} y={fy - vh / 2} width={vw} height={vh} rx={vh / 2} fill={visor}
+          stroke={t.hue === "ink" ? "rgba(255,255,255,.16)" : "none"} strokeWidth="1" />
         <g className={`gbot-eyes${blink ? " is-blink" : ""}`}>
           {([-1, 1] as const).map((side) => {
             const cx = fx + side * gap;
@@ -111,10 +116,10 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
                 />
                 <path
                   className="gbot-eye"
-                  d={`M${cx - 6.5 * s} ${fy + 3}Q${cx} ${fy - 6.5 * s} ${cx + 6.5 * s} ${fy + 3}`}
+                  d={`M${cx - 4.5 * s} ${fy + 2.2}Q${cx} ${fy - 4.5 * s} ${cx + 4.5 * s} ${fy + 2.2}`}
                   fill="none"
                   stroke={color.eye}
-                  strokeWidth={4.6 * s}
+                  strokeWidth={3.2 * s}
                   strokeLinecap="round"
                   style={{ opacity: happy ? 1 : 0 }}
                 />

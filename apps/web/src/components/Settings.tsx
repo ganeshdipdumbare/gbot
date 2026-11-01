@@ -19,8 +19,9 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "voice", label: "Voice" },
 ];
 
-export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [tab, setTab] = useState<Tab>("general");
+export function Settings({ open, onClose, initialTab = "general" }: { open: boolean; onClose: () => void; initialTab?: Tab }) {
+  const [tab, setTab] = useState<Tab>(initialTab);
+  useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
   return (
     <Modal open={open} onClose={onClose} title="Settings" width={600}>
       <div className="px-5">

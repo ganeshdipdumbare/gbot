@@ -31,20 +31,22 @@ export const dark = {
   bubbleBot: "rgba(255,255,255,0.06)",
 };
 
-// Character colors: one flat fill plus the eye color that reads on it.
+// Character colors: one flat fill; faces are a dark visor with light eyes.
 export const hues = {
-  cobalt: { body: "#3B6CF6", eye: "#16131C" },
-  coral: { body: "#FF6A4D", eye: "#16131C" },
-  sun: { body: "#FFC233", eye: "#16131C" },
-  mint: { body: "#2EC78E", eye: "#16131C" },
-  grape: { body: "#8B5CF6", eye: "#16131C" },
-  bubblegum: { body: "#FF66B3", eye: "#16131C" },
-  sky: { body: "#3DBEF5", eye: "#16131C" },
-  cream: { body: "#F1E7D6", eye: "#16131C" },
+  cobalt: { body: "#3B6CF6", eye: "#FFFFFF" },
+  coral: { body: "#FF6A4D", eye: "#FFFFFF" },
+  sun: { body: "#FFC233", eye: "#FFFFFF" },
+  mint: { body: "#2EC78E", eye: "#FFFFFF" },
+  grape: { body: "#8B5CF6", eye: "#FFFFFF" },
+  bubblegum: { body: "#FF66B3", eye: "#FFFFFF" },
+  sky: { body: "#3DBEF5", eye: "#FFFFFF" },
+  cream: { body: "#F1E7D6", eye: "#FFFFFF" },
   ink: { body: "#26222E", eye: "#FFFFFF" },
 } as const;
 
 export type Hue = keyof typeof hues;
+
+export const visor = "#15131A";
 
 // Snappy, like Grok Bot: 120ms hovers, a 280ms pop-in for new entries.
 export const motion = {
