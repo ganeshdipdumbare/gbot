@@ -1,9 +1,11 @@
-import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
+import type { Bot, Presence } from "../lib/api";
 import { groupKey, useStore } from "../lib/store";
 import { Stack } from "./Chat";
 import { moodOf, presenceText, timeAgo } from "../lib/hooks";
-import { Icon, IconButton, spring } from "./ui";
+import { Icon, IconButton } from "./ui";
+
+const clean = (s: string) => s.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim();
 
 export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch, onNewGroup }: {
   activeId: string | null; onSelect: (id: string) => void; onHatch: () => void; onSettings: () => void; onSearch: () => void; onNewGroup: () => void;
@@ -13,112 +15,113 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch, onN
   const presence = useStore((s) => s.presence);
   const me = useStore((s) => s.me);
   const connected = useStore((s) => s.connected);
+  const initials = (me?.name ?? "").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex items-center gap-2 px-4 pt-4 pb-3">
-        <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          <Gbot seed="brand" look={{ shape: "circle", hue: "grape", eyes: "pill" }} size={30} />
-          <span className="font-display font-black text-[22px] tracking-tight">gbot</span>
-        </div>
-        <IconButton label="Search (⌘K)" onClick={onSearch}><Icon.search /></IconButton>
-        <IconButton label="New bot" onClick={onHatch} className="bg-ink! text-bg! hover:text-bg!"><Icon.plus /></IconButton>
+    <div className="h-full flex flex-col bg-chrome select-none">
+      <div className="flex items-center gap-1 h-11 pl-4 pr-2 shrink-0">
+        <span className="text-[14px] font-semibold tracking-[-0.2px] flex-1">gbot</span>
+        <IconButton label="New group" onClick={onNewGroup} className="size-7!"><Icon.users /></IconButton>
+        <IconButton label="New bot" onClick={onHatch} className="size-7!"><Icon.plus /></IconButton>
       </div>
 
-      <nav className="flex-1 overflow-y-auto scroll-soft px-2 pb-2" aria-label="Bots">
-        <motion.ul layout className="space-y-0.5">
-          <AnimatePresence initial={false}>
-            {bots.map((b) => {
-              const p = presence[b.id];
-              const busy = p && p.state !== "idle";
-              const active = b.id === activeId;
-              const preview = busy ? presenceText[p.state] + (p.detail && p.state === "working" ? ` ${p.detail}` : "") :
-                b.lastMessage ? (b.lastMessage.role === "user" ? "You: " : "") + b.lastMessage.content.replace(/[#*_`>]/g, "") : b.title || "Say hi!";
-              return (
-                <motion.li
-                  key={b.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={spring}
-                >
-                  <motion.button
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => onSelect(b.id)}
-                    className={`w-full flex items-center gap-3 rounded-[20px] px-2.5 py-2 text-left transition-colors cursor-pointer ${active ? "bg-surface shadow-soft" : "hover:bg-surface-2"}`}
-                    aria-current={active ? "page" : undefined}
-                  >
-                    <div className="relative shrink-0">
-                      <Gbot look={b.look} seed={b.id} size={44} mood={moodOf(p, b)} title={b.name} />
-                      {busy && p.state === "waiting" && <span className="absolute -top-0.5 -right-0.5 size-3 rounded-full bg-live ring-2 ring-bg" />}
-                      {p?.live && p.state !== "waiting" && <span className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full bg-live ring-2 ring-bg" title="Its computer is active" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-display font-extrabold text-[15px] truncate">{b.name}</span>
-                        {b.pinned && <span className="text-ink-2 opacity-60 scale-75"><Icon.pin /></span>}
-                        <span className="ml-auto text-[11px] text-ink-2 shrink-0">{timeAgo(b.lastMessage?.createdAt)}</span>
-                      </div>
-                      <div className={`text-[13px] truncate ${busy ? "text-live font-semibold" : "text-ink-2"}`}>{preview}</div>
-                    </div>
-                  </motion.button>
-                </motion.li>
-              );
-            })}
-          </AnimatePresence>
-        </motion.ul>
-        {(groups.length > 0 || bots.length >= 2) && (
-          <div className="mt-4">
-            <div className="flex items-center px-2.5 mb-1">
-              <span className="text-[11.5px] font-semibold uppercase tracking-[.08em] text-ink-2 flex-1">Groups</span>
-              <IconButton label="New group" onClick={onNewGroup} className="size-7!"><Icon.plus /></IconButton>
-            </div>
-            <ul className="space-y-0.5">
+      <div className="px-2.5 pb-2">
+        <button onClick={onSearch}
+          className="w-full flex items-center gap-2 h-8 px-2.5 rounded-lg bg-surface hairline text-ink-3 text-[13px] hover:text-ink-2 transition-colors duration-[120ms] cursor-pointer">
+          <Icon.search />
+          <span className="flex-1 text-left">Search</span>
+          <kbd className="text-[11px] font-sans text-ink-3">⌘K</kbd>
+        </button>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto scroll-soft px-2.5 pb-2" aria-label="Bots">
+        <ul className="space-y-px">
+          {bots.map((b) => (
+            <li key={b.id}>
+              <Row
+                active={b.id === activeId}
+                onClick={() => onSelect(b.id)}
+                avatar={<BotAvatar bot={b} p={presence[b.id]} />}
+                name={b.name}
+                pinned={b.pinned}
+                time={timeAgo(b.lastMessage?.createdAt)}
+                preview={preview(b, presence[b.id])}
+                busy={!!presence[b.id] && presence[b.id].state !== "idle"}
+              />
+            </li>
+          ))}
+        </ul>
+
+        {groups.length > 0 && (
+          <>
+            <div className="px-2 pt-4 pb-1 text-[12px] text-ink-3">Groups</div>
+            <ul className="space-y-px">
               {groups.map((g) => {
-                const members = g.botIds.map((id) => bots.find((b) => b.id === id)).filter(Boolean) as typeof bots;
-                const k = groupKey(g.id);
-                const active = k === activeId;
+                const members = g.botIds.map((id) => bots.find((b) => b.id === id)).filter(Boolean) as Bot[];
                 const working = members.find((b) => ["thinking", "working"].includes(presence[b.id]?.state ?? ""));
                 return (
                   <li key={g.id}>
-                    <motion.button whileTap={{ scale: 0.97 }} onClick={() => onSelect(k)}
-                      className={`w-full flex items-center gap-3 rounded-[20px] px-2.5 py-2 text-left transition-colors cursor-pointer ${active ? "bg-surface shadow-soft" : "hover:bg-surface-2"}`}>
-                      <div className="w-11 grid place-items-center"><Stack bots={members} size={26} presence={presence} /></div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-display font-extrabold text-[15px] truncate">{g.name}</span>
-                          <span className="ml-auto text-[11px] text-ink-2 shrink-0">{timeAgo(g.lastMessage?.createdAt)}</span>
-                        </div>
-                        <div className={`text-[13px] truncate ${working ? "text-live font-semibold" : "text-ink-2"}`}>
-                          {working ? `${working.name} is ${presence[working.id]?.state}…` : g.lastMessage ? g.lastMessage.content.replace(/[#*_`>]/g, "") : members.map((b) => b.name).join(", ")}
-                        </div>
-                      </div>
-                    </motion.button>
+                    <Row
+                      active={groupKey(g.id) === activeId}
+                      onClick={() => onSelect(groupKey(g.id))}
+                      avatar={<div className="size-8 grid place-items-center"><Stack bots={members} size={20} presence={presence} /></div>}
+                      name={g.name}
+                      time={timeAgo(g.lastMessage?.createdAt)}
+                      preview={working ? `${working.name} is ${presence[working.id]?.state}…` : g.lastMessage ? clean(g.lastMessage.content) : members.map((b) => b.name).join(", ")}
+                      busy={!!working}
+                    />
                   </li>
                 );
               })}
             </ul>
-          </div>
-        )}
-        {bots.length > 0 && bots.length < 3 && (
-          <button onClick={onHatch} className="w-full mt-2 rounded-[20px] border-2 border-dashed border-line px-3 py-3 text-[13px] text-ink-2 hover:text-ink hover:border-ink-2/40 transition-colors cursor-pointer">
-            One bot per job works best. <span className="font-bold">Add another →</span>
-          </button>
+          </>
         )}
       </nav>
 
-      <div className="border-t border-line px-3 py-2.5 flex items-center gap-2">
-        <div className="size-8 rounded-full bg-surface-2 grid place-items-center font-display font-black text-[14px]">{me?.name?.[0]?.toUpperCase()}</div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-semibold truncate">{me?.name}</div>
-          <div className="text-[11px] text-ink-2 flex items-center gap-1.5">
-            <span className={`size-1.5 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400"}`} />
-            {connected ? "Live · on this machine" : "Reconnecting…"}
-          </div>
-        </div>
-        <IconButton label="Settings" onClick={onSettings}><Icon.gear /></IconButton>
+      <div className="flex items-center gap-2 px-3.5 pt-2 pb-3 shrink-0">
+        <div className="size-7 rounded-full bg-surface-2 grid place-items-center text-[11px] font-medium text-ink-2">{initials}</div>
+        <span className="text-[13px] truncate flex-1">{me?.name}</span>
+        {!connected && <span className="text-[11px] text-warning">Reconnecting</span>}
+        <IconButton label="Settings" onClick={onSettings} className="size-7!"><Icon.gear /></IconButton>
       </div>
     </div>
+  );
+}
+
+function preview(b: Bot, p?: Presence) {
+  if (p && p.state !== "idle") return p.state === "working" && p.detail ? p.detail : presenceText[p.state];
+  if (b.lastMessage) return (b.lastMessage.role === "user" ? "You: " : "") + clean(b.lastMessage.content);
+  return b.title || "New bot";
+}
+
+function BotAvatar({ bot, p }: { bot: Bot; p?: Presence }) {
+  return (
+    <div className="relative shrink-0">
+      <Gbot look={bot.look} seed={bot.id} size={32} mood={moodOf(p, bot)} title={bot.name} />
+      {p?.state === "waiting" && <span className="absolute -top-px -right-px size-2.5 rounded-full bg-danger ring-2 ring-[var(--chrome)]" title="Needs you" />}
+      {p?.live && p.state !== "waiting" && <span className="absolute -bottom-px -right-px size-2.5 rounded-full bg-live ring-2 ring-[var(--chrome)]" title="Its computer is active" />}
+    </div>
+  );
+}
+
+function Row({ active, onClick, avatar, name, pinned, time, preview, busy }: {
+  active: boolean; onClick: () => void; avatar: React.ReactNode; name: string; pinned?: boolean; time: string; preview: string; busy: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      className={`w-full flex items-center gap-2.5 rounded-[10px] p-2 text-left transition-colors duration-[120ms] cursor-pointer ${active ? "bg-selected" : "hover:bg-hover"}`}
+    >
+      {avatar}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[14px] leading-5 truncate">{name}</span>
+          {pinned && <span className="text-ink-3 shrink-0 [&_svg]:size-3"><Icon.pin /></span>}
+          <span className="ml-auto text-[12px] leading-4 text-ink-3 shrink-0">{time}</span>
+        </div>
+        <div className={`text-[13px] leading-[18px] truncate ${busy ? "text-ink-2" : "text-ink-3"}`}>{preview}</div>
+      </div>
+    </button>
   );
 }

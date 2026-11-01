@@ -62,7 +62,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
           <Label>Model</Label>
           <ModelSelect value={model} onChange={setModel} allowDefault="Account default" />
         </div>
-        <div className="rounded-[18px] border border-line divide-y divide-line">
+        <div className="rounded-2xl border border-line divide-y divide-line">
           <div className="flex items-center gap-3 p-3">
             <span className="text-ink-2"><Icon.globe /></span>
             <div className="flex-1">

@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type Message } from "../lib/api";
 import { patchMessage, keyOf } from "../lib/store";
-import { bouncy, Button, Icon } from "./ui";
+import { Icon } from "./ui";
 
 // Cards are where a bot asks for something: approval, an answer, or a
 // hand on its computer. They never block the chat; once answered they
@@ -50,93 +49,86 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
 
   if (st !== "pending") {
     const s = status[st] ?? { label: st, tone: "text-ink-2" };
+    const ok = st !== "denied" && st !== "skipped";
     return (
-      <motion.div layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-center my-2">
-        <div className="flex items-center gap-2 text-[13px] px-3 py-1.5 rounded-full bg-surface-2/70">
-          <Gbot look={bot.look} seed={bot.id} size={18} mood={st === "denied" || st === "skipped" ? "idle" : "done"} />
-          <span className={`font-semibold ${s.tone}`}>{s.label}</span>
-          <span className="text-ink-2 truncate max-w-[340px]">
-            {kind === "question" && d.answer ? `· “${d.answer}”` : `· ${m.content}`}
-          </span>
-        </div>
-      </motion.div>
+      <div className="entry-in flex justify-center items-center gap-1.5 my-2 text-[13px] text-ink-2">
+        <span className={`receipt-check grid place-items-center size-4 rounded-full [&_svg]:size-3 ${ok ? "bg-[color-mix(in_srgb,var(--success)_16%,transparent)] text-success" : "bg-surface-2 text-ink-3"}`}>
+          {ok ? <Icon.check /> : <Icon.close />}
+        </span>
+        <span className="text-ink">{s.label}</span>
+        <span className="truncate max-w-[380px]">{kind === "question" && d.answer ? `“${d.answer}”` : m.content}</span>
+      </div>
     );
   }
 
   const preview = kind === "approval" ? argsPreview(String(d.tool), d.args as Record<string, unknown>) : null;
   const options = (d.options as string[] | undefined) ?? [];
+  const label = kind === "approval" ? "Needs approval" : kind === "question" ? "Question" : "Needs you";
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 12, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={bouncy}
-      className="my-4 ml-[42px] max-w-[min(88%,560px)] rounded-[22px] bg-surface border border-line shadow-pop overflow-hidden"
-      role="group"
-      aria-label={`${bot.name} needs you`}
-    >
-      <div className="flex items-start gap-3 px-4 pt-4">
-        <Gbot look={bot.look} seed={bot.id} size={36} mood="waiting" />
-        <div className="min-w-0 flex-1 pt-0.5">
-          <div className="text-[12px] font-semibold uppercase tracking-[.08em] text-live">
-            {kind === "approval" ? "Needs your OK" : kind === "question" ? "Question" : "Needs you on its computer"}
-          </div>
-          <div className="font-display font-extrabold text-[17px] leading-snug mt-0.5 break-words">{m.content || "Take over for a moment"}</div>
-        </div>
+    <div className="entry-in my-3 max-w-[min(100%,520px)] rounded-2xl bg-surface px-3 pt-2.5 pb-3 text-[14px] leading-5"
+      role="group" aria-label={`${bot.name} needs you`}>
+      <div className="flex items-center gap-2">
+        <Gbot look={bot.look} seed={bot.id} size={18} mood="waiting" />
+        <span className="font-semibold truncate">{bot.name}</span>
+        <span className="ml-auto inline-flex items-center gap-1 rounded-full px-[7px] text-[12px] leading-[19px] bg-[color-mix(in_srgb,var(--warning)_14%,transparent)] text-warning shrink-0">
+          <span className="size-1.5 rounded-full bg-current" />{label}
+        </span>
       </div>
+      <div className="mt-1.5 break-words">{m.content || "Take over for a moment"}</div>
 
       {preview && (
-        <pre className="mx-4 mt-3 max-h-48 overflow-auto scroll-soft rounded-2xl bg-surface-2 px-3 py-2.5 text-[12.5px] leading-relaxed font-mono whitespace-pre-wrap break-words">
+        <pre className="mt-2 max-h-44 overflow-auto scroll-soft rounded-[10px] bg-bg hairline px-2.5 py-2 text-[12px] leading-[18px] font-mono whitespace-pre-wrap break-words text-ink-2">
           {preview}
         </pre>
       )}
 
-      <div className="px-4 pt-3 pb-4">
+      <div className="mt-2.5">
         {kind === "approval" && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button disabled={busy} onClick={() => answer("approve")}>Approve</Button>
-            <Button disabled={busy} variant="soft" onClick={() => answer("reject")}>Decline</Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Pill primary disabled={busy} onClick={() => answer("approve")}>Approve</Pill>
+            <Pill disabled={busy} onClick={() => answer("reject")}>Decline</Pill>
             <button disabled={busy} onClick={() => answer("approve", undefined, true)}
-              className="ml-auto text-[13px] font-semibold text-ink-2 hover:text-ink cursor-pointer disabled:opacity-50">
-              Always allow {String(d.tool).replace(/^m[0-9a-f]{8}__/, "").replace(/_/g, " ")}
+              className="ml-auto text-[12px] text-ink-3 hover:text-ink transition-colors duration-[120ms] cursor-pointer disabled:opacity-40">
+              Always allow
             </button>
           </div>
         )}
 
         {kind === "question" && (
-          <>
-            {options.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-3">
-                {options.map((o) => (
-                  <motion.button key={o} whileTap={{ scale: 0.94 }} transition={bouncy} disabled={busy} onClick={() => answer("answer", o)}
-                    className="h-10 px-4 rounded-full border-2 border-line hover:border-ink font-semibold text-[14px] cursor-pointer transition-colors disabled:opacity-50">
-                    {o}
-                  </motion.button>
-                ))}
-              </div>
-            )}
-            <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (text.trim()) answer("answer", text.trim()); }}>
-              <input value={text} onChange={(e) => setText(e.target.value)} placeholder={options.length ? "Or type an answer" : "Type your answer"}
-                className="flex-1 h-10 rounded-full bg-surface-2 px-4 text-[14px] outline-none focus:ring-2 focus:ring-live/50" aria-label="Your answer" />
-              <button disabled={busy || !text.trim()} className="size-10 grid place-items-center rounded-full bg-ink text-bg disabled:opacity-30 cursor-pointer" aria-label="Send answer">
-                <Icon.send />
+          <div className="space-y-1.5">
+            {options.map((o) => (
+              <button key={o} disabled={busy} onClick={() => answer("answer", o)}
+                className="w-full text-left rounded-[10px] bg-bg hairline px-2.5 py-2 text-[14px] hover:bg-hover transition-colors duration-[120ms] cursor-pointer disabled:opacity-40">
+                {o}
               </button>
+            ))}
+            <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (text.trim()) answer("answer", text.trim()); }}>
+              <input value={text} onChange={(e) => setText(e.target.value)} placeholder={options.length ? "Something else…" : "Your answer"}
+                className="flex-1 rounded-[10px] bg-bg hairline px-2.5 py-2 text-[14px] outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)] placeholder:text-ink-3" aria-label="Your answer" />
+              <Pill primary disabled={busy || !text.trim()}>Send</Pill>
             </form>
-          </>
-        )}
-
-        {kind === "takeover" && (
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={onTakeover}><Icon.screen /> Take control</Button>
-            <Button variant="soft" disabled={busy} onClick={() => answer("answer")}>I'm done</Button>
           </div>
         )}
 
-        <AnimatePresence>
-          {error && <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-danger text-[13px] mt-2">{error}</motion.p>}
-        </AnimatePresence>
+        {kind === "takeover" && (
+          <div className="flex flex-wrap gap-1.5">
+            <Pill primary onClick={onTakeover}>Take control</Pill>
+            <Pill disabled={busy} onClick={() => answer("answer")}>I'm done</Pill>
+          </div>
+        )}
+
+        {error && <p className="text-danger text-[13px] mt-2">{error}</p>}
       </div>
-    </motion.div>
+    </div>
+  );
+}
+
+function Pill({ primary, children, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement> & { primary?: boolean }) {
+  return (
+    <button {...rest}
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-[5px] text-[13px] leading-[18px] font-medium transition-[background-color,opacity] duration-[120ms] cursor-pointer disabled:opacity-40 active:scale-[0.97] ${primary ? "bg-emphasis text-on-emphasis hover:opacity-90" : "bg-surface-2 text-ink hover:bg-selected"}`}>
+      {children}
+    </button>
   );
 }

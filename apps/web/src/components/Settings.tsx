@@ -67,7 +67,7 @@ function General() {
         <Label hint="Bots use this unless you pick one for them">Default model</Label>
         <ModelSelect value={me?.defaultModel ?? ""} onChange={(v) => update({ defaultModel: v })} allowDefault="Best available" />
         {models && !hasLocal && (
-          <div className="mt-3 rounded-[20px] bg-surface-2 p-4 flex gap-3">
+          <div className="mt-3 rounded-[10px] bg-surface-2 p-4 flex gap-3">
             <Gbot seed="plug" look={{ shape: "pill", hue: "sky", eyes: "dot" }} mood="waiting" size={52} />
             <div className="text-[14px]">
               <div className="font-semibold">Run models on your own machine</div>
@@ -84,14 +84,14 @@ function General() {
           {modes.map((m) => (
             <button key={m.id} onClick={() => update({ approvalMode: m.id })}
               className={`relative h-9 rounded-full text-[14px] font-semibold cursor-pointer ${me?.approvalMode === m.id ? "text-ink" : "text-ink-2"}`}>
-              {me?.approvalMode === m.id && <motion.span layoutId="mode" className="absolute inset-0 rounded-full bg-surface shadow-soft" transition={bouncy} />}
+              {me?.approvalMode === m.id && <motion.span layoutId="mode" className="absolute inset-0 rounded-full bg-surface hairline" transition={bouncy} />}
               <span className="relative">{m.label}</span>
             </button>
           ))}
         </div>
         <p className="text-[13px] text-ink-2 mt-2">{modes.find((m) => m.id === me?.approvalMode)?.blurb}</p>
         {rules.length > 0 && (
-          <ul className="mt-3 divide-y divide-line rounded-[18px] border border-line">
+          <ul className="mt-3 divide-y divide-line rounded-2xl border border-line">
             {rules.map((r) => (
               <li key={r.tool} className="flex items-center gap-3 px-3 py-2">
                 <span className={`text-[11px] font-bold uppercase tracking-wide w-12 ${r.rule === "allow" ? "text-emerald-600 dark:text-emerald-400" : "text-danger"}`}>{r.rule}</span>
@@ -141,7 +141,7 @@ function Integrations() {
     <div className="space-y-4">
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <div className="font-display font-extrabold text-[16px]">MCP servers</div>
+          <div className="font-semibold text-[14px]">MCP servers</div>
           <p className="text-[13px] text-ink-2">Connect tools over the Model Context Protocol. Only your bots can use what you add, and results count as outside content.</p>
         </div>
         {!adding && <Button variant="soft" onClick={() => setAdding(true)}><Icon.plus /> Add</Button>}
@@ -149,7 +149,7 @@ function Integrations() {
       <AnimatePresence initial={false}>
         {adding && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-            <div className="rounded-[18px] border border-line p-3 space-y-3">
+            <div className="rounded-2xl border border-line p-3 space-y-3">
               <div className="grid sm:grid-cols-2 gap-3">
                 <div><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="GitHub" /></div>
                 <div><Label hint="optional">Token</Label><Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Sent as a Bearer token" autoComplete="off" /></div>
@@ -168,7 +168,7 @@ function Integrations() {
       {list?.length === 0 && !adding && <Empty text="No integrations yet." />}
       <ul className="space-y-2">
         {list?.map((m) => (
-          <li key={m.id} className="rounded-[18px] border border-line p-3">
+          <li key={m.id} className="rounded-2xl border border-line p-3">
             <div className="flex items-center gap-3">
               <span className={m.status === "connected" ? "text-live" : "text-ink-2"}><Icon.plug /></span>
               <div className="min-w-0 flex-1">
@@ -239,7 +239,7 @@ function Skills() {
     <div className="space-y-4">
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <div className="font-display font-extrabold text-[16px]">Skills</div>
+          <div className="font-semibold text-[14px]">Skills</div>
           <p className="text-[13px] text-ink-2">Know-how your bots load when a task needs it. Type / in a chat to use one.</p>
         </div>
         <Button variant="soft" onClick={() => setEdit({})}><Icon.plus /> New</Button>
@@ -247,7 +247,7 @@ function Skills() {
       {list?.length === 0 && <Empty text="No skills yet." />}
       <ul className="space-y-2">
         {list?.map((k) => (
-          <li key={k.id} className="rounded-[18px] border border-line p-3 flex items-center gap-3">
+          <li key={k.id} className="rounded-2xl border border-line p-3 flex items-center gap-3">
             <span className="text-live"><Icon.spark /></span>
             <button className="min-w-0 flex-1 text-left cursor-pointer" onClick={() => setEdit(k)}>
               <div className="font-semibold text-[14px]">/{k.name}</div>
@@ -272,7 +272,7 @@ function Voice() {
         detail={v?.transcribe ? `Transcribed by ${v.transcribeBy}.` : browserSR ? "Using your browser's speech recognition. Some browsers send audio to their vendor." : "Not available in this browser."} />
       <Row title="Read aloud" ok
         detail={v?.speak ? `Spoken by ${v.speakBy}.` : "Using your computer's built-in voices. Pick one per bot in its settings."} />
-      <div className="rounded-[18px] bg-surface-2 p-4 text-[13px] text-ink-2 leading-relaxed">
+      <div className="rounded-2xl bg-surface-2 p-4 text-[13px] text-ink-2 leading-relaxed">
         To keep speech entirely on this machine, run an OpenAI-compatible speech server (for example faster-whisper or Kokoro) and set
         <code className="mx-1">GBOT_STT_URL</code>and<code className="mx-1">GBOT_TTS_URL</code>on the gbot server.
       </div>
@@ -282,7 +282,7 @@ function Voice() {
 
 function Row({ title, ok, detail }: { title: string; ok: boolean; detail: string }) {
   return (
-    <div className="flex items-start gap-3 rounded-[18px] border border-line p-3">
+    <div className="flex items-start gap-3 rounded-2xl border border-line p-3">
       <span className={`mt-0.5 size-5 rounded-full grid place-items-center ${ok ? "bg-emerald-500 text-white" : "bg-line text-ink-2"}`}>{ok ? <Icon.check /> : <Icon.close />}</span>
       <div><div className="font-semibold">{title}</div><div className="text-ink-2 text-[13px]">{detail}</div></div>
     </div>

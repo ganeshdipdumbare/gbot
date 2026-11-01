@@ -12,7 +12,7 @@ export default function Gallery() {
   return (
     <div className="min-h-full bg-bg text-ink p-6 space-y-8" ref={ref}>
       <div className="flex items-center gap-3">
-        <h1 className="font-display font-black text-2xl">gbot characters</h1>
+        <h1 className="font-semibold tracking-[-0.3px] text-2xl">gbot characters</h1>
         <button className="rounded-full bg-surface-2 px-3 h-8 text-sm font-bold" onClick={() => {
           const t = theme === "light" ? "dark" : "light";
           setTheme(t);

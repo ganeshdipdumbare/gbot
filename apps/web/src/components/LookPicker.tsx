@@ -40,7 +40,7 @@ export function LookPicker({ look, seed, onChange }: { look: Look; seed: string;
 function Row({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[12px] font-semibold uppercase tracking-[.08em] text-ink-2 mb-2">{title}</div>
+      <div className="text-[12px] text-ink-3 mb-1.5">{title}</div>
       <div className="flex flex-wrap gap-1.5">{children}</div>
     </div>
   );
@@ -56,8 +56,8 @@ function Choice({ on, label, onClick, round, children }: { on: boolean; label: s
       title={label}
       aria-label={label}
       aria-pressed={on}
-      className={`grid place-items-center ${round ? "size-10 rounded-full" : "size-12 rounded-[14px]"} transition-colors cursor-pointer ${
-        on ? "bg-surface ring-2 ring-ink" : "hover:bg-surface-2"
+      className={`grid place-items-center ${round ? "size-9 rounded-full" : "size-11 rounded-[10px]"} transition-colors duration-[120ms] cursor-pointer ${
+        on ? "bg-selected shadow-[inset_0_0_0_1px_var(--ink-3)]" : "hover:bg-hover"
       }`}
     >
       {children}
@@ -72,7 +72,7 @@ export function SurpriseButton({ onPick }: { onPick: (l: Look) => void }) {
       whileTap={{ scale: 0.92 }}
       transition={bouncy}
       onClick={() => onPick({ seed: randomSeed() })}
-      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-surface-2 text-[13px] font-semibold cursor-pointer hover:bg-line transition-colors"
+      className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-surface text-[12px] text-ink-2 hover:text-ink cursor-pointer transition-colors duration-[120ms]"
     >
       <Icon.dice /> Shuffle
     </motion.button>

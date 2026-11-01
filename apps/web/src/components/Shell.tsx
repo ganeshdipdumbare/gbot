@@ -65,13 +65,13 @@ export function Shell() {
   return (
     <div className="h-full flex">
       {wide ? (
-        <aside className="w-[300px] shrink-0 h-full border-r border-line">{sidebar}</aside>
+        <aside className="w-[272px] shrink-0 h-full hairline-r">{sidebar}</aside>
       ) : (
         <AnimatePresence>
           {drawer && (
             <>
               <motion.div className="fixed inset-0 bg-black/30 z-30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDrawer(false)} />
-              <motion.aside className="fixed inset-y-0 left-0 w-[86%] max-w-[320px] bg-bg z-40 shadow-pop"
+              <motion.aside className="fixed inset-y-0 left-0 w-[86%] max-w-[300px] z-40 shadow-pop"
                 initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} transition={spring}>
                 {sidebar}
               </motion.aside>
@@ -95,7 +95,7 @@ export function Shell() {
       {roomy ? (
         <AnimatePresence initial={false}>
           {sidePanel && (
-            <motion.aside key="side" className="h-full border-l border-line overflow-hidden shrink-0"
+            <motion.aside key="side" className="h-full hairline-l overflow-hidden shrink-0"
               initial={{ width: 0 }} animate={{ width: 420 }} exit={{ width: 0 }} transition={spring}>
               <div className="w-[420px] h-full">{sidePanel}</div>
             </motion.aside>

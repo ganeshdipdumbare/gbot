@@ -4,25 +4,31 @@
 export const live = "#8B5CF6";
 
 export const light = {
-  bg: "#FFF9F3",
-  surface: "#FFFFFF",
-  surface2: "#FFF1E6",
-  ink: "#2B2135",
-  ink2: "#6E6378",
-  line: "#F0E3D8",
-  bubbleMe: "#2B2135",
-  bubbleMeInk: "#FFF9F3",
+  chrome: "#f7f7f6",
+  bg: "#fcfcfc",
+  surface: "rgba(16,16,0,0.04)",
+  surface2: "rgba(16,16,0,0.07)",
+  ink: "#0a0a0a",
+  ink2: "rgba(0,0,0,0.55)",
+  ink3: "rgba(0,0,0,0.35)",
+  line: "rgba(0,0,0,0.1)",
+  bubbleMe: "#111110",
+  bubbleMeInk: "#ffffff",
+  bubbleBot: "rgba(16,16,0,0.04)",
 };
 
 export const dark = {
-  bg: "#17131F",
-  surface: "#211B2B",
-  surface2: "#2A2236",
-  ink: "#F6EEF9",
-  ink2: "#B3A7BF",
-  line: "#342B42",
-  bubbleMe: "#F6EEF9",
-  bubbleMeInk: "#17131F",
+  chrome: "#141414",
+  bg: "#1f1f1f",
+  surface: "rgba(255,255,255,0.06)",
+  surface2: "rgba(255,255,255,0.1)",
+  ink: "#f2f2f2",
+  ink2: "rgba(255,255,255,0.58)",
+  ink3: "rgba(255,255,255,0.36)",
+  line: "rgba(255,255,255,0.12)",
+  bubbleMe: "#ecece8",
+  bubbleMeInk: "#141414",
+  bubbleBot: "rgba(255,255,255,0.06)",
 };
 
 // Character colors: one flat fill plus the eye color that reads on it.
@@ -40,12 +46,12 @@ export const hues = {
 
 export type Hue = keyof typeof hues;
 
+// Snappy, like Grok Bot: 120ms hovers, a 280ms pop-in for new entries.
 export const motion = {
-  fast: 0.15,
-  base: 0.24,
-  slow: 0.35,
-  spring: { type: "spring", stiffness: 520, damping: 30, mass: 0.8 } as const,
-  bouncy: { type: "spring", stiffness: 420, damping: 16, mass: 0.7 } as const,
+  fast: 0.12,
+  base: 0.2,
+  enter: 0.28,
+  ease: [0.2, 0.9, 0.3, 1.15] as const,
 };
 
-export const radius = { sm: 10, md: 16, lg: 24, pill: 999 };
+export const radius = { sm: 8, md: 10, lg: 16, pill: 999 };

@@ -15,10 +15,10 @@ export function SidePanel({ bot, tab, onTab, onClose, takeover, setTakeover }: {
 }) {
   return (
     <div className="h-full flex flex-col bg-bg">
-      <div className="flex items-center gap-1 px-3 h-16 shrink-0 border-b border-line/70">
+      <div className="flex items-center gap-0.5 px-2 h-11 shrink-0 hairline-b">
         {(["computer", "routines"] as const).map((t) => (
           <button key={t} onClick={() => onTab(t)}
-            className={`h-9 px-3.5 rounded-full text-[14px] font-semibold cursor-pointer transition-colors ${tab === t ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}>
+            className={`h-7 px-2.5 rounded-lg text-[13px] cursor-pointer transition-colors duration-[120ms] ${tab === t ? "bg-selected text-ink" : "text-ink-3 hover:text-ink"}`}>
             {t === "computer" ? "Computer" : "Routines"}
           </button>
         ))}
@@ -125,12 +125,12 @@ function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) 
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <div className="flex items-center gap-3">
         <Gbot look={bot.look} seed={bot.id} size={36} mood={moodOf(presence, bot)} live={on} />
         <div className="min-w-0 flex-1">
-          <div className="font-display font-extrabold text-[16px]">{bot.name}'s computer</div>
-          <div className="text-[12.5px] text-ink-2 flex items-center gap-1.5">
+          <div className="font-medium text-[14px]">{bot.name}'s computer</div>
+          <div className="text-[12px] text-ink-3 flex items-center gap-1.5">
             <span className={`size-1.5 rounded-full ${on ? "bg-live" : status?.state === "starting" ? "bg-amber-400" : "bg-ink-2/40"}`} />
             {status?.state === "starting" ? "Starting…" : on ? (status.controller === "user" ? "You have control" : "On") : "Asleep"}
             <span className="opacity-50">·</span>
@@ -145,7 +145,7 @@ function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) 
         )}
       </div>
 
-      <div className="relative aspect-[16/10] rounded-[18px] overflow-hidden bg-surface-2 border border-line">
+      <div className="relative aspect-[16/10] rounded-xl overflow-hidden bg-surface hairline">
         <AnimatePresence>
           {src ? (
             <motion.img key="screen" src={src} alt={`${bot.name}'s screen`} className="absolute inset-0 size-full object-cover" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
@@ -168,7 +168,7 @@ function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) 
         <Button className="w-full" onClick={onTakeover}><Icon.screen /> Take control</Button>
       )}
       {error && <p className="text-danger text-[13px]">{error}</p>}
-      <p className="text-[12.5px] text-ink-2 leading-relaxed">
+      <p className="text-[12px] text-ink-3 leading-relaxed">
         A private Linux desktop with a browser, terminal and files, running on this machine
         {status?.backend === "microsandbox" ? " in its own microVM." : " in a Docker container."}
         {bot.computerNetwork ? " It can reach the internet." : " It has no network until you allow it in the bot's settings."}
@@ -241,7 +241,7 @@ function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: ()
               onContextMenu={(e) => { e.preventDefault(); send({ type: "rightclick", ...pos(e) }); }}
               onWheel={(e) => send({ type: "scroll", deltaY: e.deltaY, ...pos(e) })}
               initial={{ scale: 0.96 }} animate={{ scale: 1 }} transition={bouncy}
-              className="relative w-full max-w-[1280px] aspect-[16/10] rounded-[18px] overflow-hidden ring-2 ring-live outline-none cursor-default bg-black"
+              className="relative w-full max-w-[1280px] aspect-[16/10] rounded-xl overflow-hidden ring-1 ring-live outline-none cursor-default bg-black"
               aria-label={`${bot.name}'s screen. Click and type to control it.`}
             >
               {src && <img src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />}
@@ -271,11 +271,11 @@ function RoutinesTab({ bot }: { bot: Bot }) {
   useEffect(() => { load(); }, [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="p-4 space-y-3">
+    <div className="p-3 space-y-2.5">
       <div className="flex items-center">
         <div className="flex-1">
-          <div className="font-display font-extrabold text-[16px]">Routines</div>
-          <div className="text-[12.5px] text-ink-2">Prompts {bot.name} runs by itself. Or just ask in chat.</div>
+          <div className="font-medium text-[14px]">Routines</div>
+          <div className="text-[12px] text-ink-3">Prompts {bot.name} runs by itself. Or just ask in chat.</div>
         </div>
         {!adding && <Button variant="soft" onClick={() => setAdding(true)}><Icon.plus /> New</Button>}
       </div>
@@ -285,7 +285,7 @@ function RoutinesTab({ bot }: { bot: Bot }) {
       </AnimatePresence>
 
       {secret && (
-        <div className="rounded-[18px] border-2 border-live/40 bg-live-soft p-3 text-[13px] space-y-2">
+        <div className="rounded-2xl bg-surface p-3 text-[13px] space-y-2">
           <div className="font-semibold">Webhook ready. Copy the key now; it won't be shown again.</div>
           <code className="block break-all bg-surface rounded-xl px-2.5 py-2">POST {secret.webhookUrl}</code>
           <code className="block break-all bg-surface rounded-xl px-2.5 py-2">Authorization: Bearer {secret.secret}</code>
@@ -302,20 +302,20 @@ function RoutinesTab({ bot }: { bot: Bot }) {
 
       <ul className="space-y-2">
         {list?.map((r) => (
-          <motion.li key={r.id} layout className="rounded-[18px] bg-surface border border-line p-3">
+          <motion.li key={r.id} layout className="rounded-2xl bg-surface px-3 pt-2.5 pb-2">
             <div className="flex items-start gap-3">
               <span className={`mt-0.5 ${r.active ? "text-live" : "text-ink-2/50"}`}><Icon.clock /></span>
               <div className="min-w-0 flex-1">
-                <div className="font-semibold text-[14px] truncate">{r.name}</div>
-                <div className="text-[12.5px] text-ink-2">{r.active ? r.when : "Paused"}{r.active && r.nextRunAt && r.kind === "schedule" ? ` · next ${new Date(r.nextRunAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : ""}</div>
+                <div className="font-medium text-[14px] truncate">{r.name}</div>
+                <div className="text-[12px] text-ink-3">{r.active ? r.when : "Paused"}{r.active && r.nextRunAt && r.kind === "schedule" ? ` · next ${new Date(r.nextRunAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : ""}</div>
                 <div className="text-[13px] mt-1.5 line-clamp-2">{r.prompt}</div>
               </div>
               <Toggle on={r.active} label={r.active ? "Pause" : "Resume"} onChange={async (v) => { await api.updateRoutine(bot.id, r.id, { active: v }); load(); }} />
             </div>
             <div className="flex gap-1 mt-2 -mb-1 -ml-1">
-              <button className="h-8 px-2.5 rounded-full text-[12.5px] font-semibold text-ink-2 hover:text-ink hover:bg-surface-2 cursor-pointer inline-flex items-center gap-1"
+              <button className="h-7 px-2 rounded-lg text-[12px] text-ink-3 hover:text-ink hover:bg-hover cursor-pointer inline-flex items-center gap-1"
                 onClick={() => api.runRoutine(bot.id, r.id)}><Icon.play /> Run now</button>
-              <button className="h-8 px-2.5 rounded-full text-[12.5px] font-semibold text-ink-2 hover:text-danger hover:bg-surface-2 cursor-pointer inline-flex items-center gap-1"
+              <button className="h-7 px-2 rounded-lg text-[12px] text-ink-3 hover:text-danger hover:bg-hover cursor-pointer inline-flex items-center gap-1"
                 onClick={async () => { await api.deleteRoutine(bot.id, r.id); load(); }}><Icon.trash /> Delete</button>
             </div>
           </motion.li>
@@ -359,7 +359,7 @@ function NewRoutine({ bot, onDone }: { bot: Bot; onDone: (r?: Routine) => void }
 
   return (
     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-      <div className="rounded-[18px] bg-surface border border-line p-3 space-y-3">
+      <div className="rounded-2xl bg-surface p-3 space-y-3">
         <div><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Morning briefing" maxLength={80} /></div>
         <div><Label>Instruction</Label><TextArea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Summarize what's new and what needs me today." /></div>
         <div>
@@ -381,7 +381,7 @@ function NewRoutine({ bot, onDone }: { bot: Bot; onDone: (r?: Routine) => void }
               {!presets[preset].cron && <Input value={custom} onChange={(e) => setCustom(e.target.value)} className="h-9! font-mono text-[13px]!" aria-label="Cron schedule" />}
             </div>
           )}
-          {kind === "webhook" && <p className="text-[12.5px] text-ink-2">Any service can start it with a POST. Text it sends is treated as outside content, so changes still ask you first.</p>}
+          {kind === "webhook" && <p className="text-[12px] text-ink-3">Any service can start it with a POST. Text it sends is treated as outside content, so changes still ask you first.</p>}
         </div>
         {error && <p className="text-danger text-[13px]">{error}</p>}
         <div className="flex justify-end gap-2">

@@ -36,7 +36,7 @@ function Main() {
       <div className="h-full grid place-items-center p-6 text-center">
         <div>
           <Gbot seed="offline" look={{ shape: "square", hue: "sky", eyes: "dot" }} mood="blocked" size={110} className="mx-auto" />
-          <h1 className="font-display font-black text-2xl mt-4">Can't reach the gbot server</h1>
+          <h1 className="font-semibold tracking-[-0.3px] text-2xl mt-4">Can't reach the gbot server</h1>
           <p className="text-ink-2 mt-2">Start it with <code className="bg-surface-2 px-2 py-0.5 rounded-lg">gbot serve</code>, then refresh.</p>
         </div>
       </div>

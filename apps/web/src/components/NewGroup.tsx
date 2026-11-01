@@ -43,7 +43,7 @@ export function NewGroup({ open, onClose, onCreated }: { open: boolean; onClose:
                 const i = picked.indexOf(b.id);
                 return (
                   <motion.button key={b.id} whileTap={{ scale: 0.94 }} transition={bouncy} onClick={() => toggle(b.id)}
-                    className={`relative flex flex-col items-center gap-1 rounded-[18px] p-2.5 cursor-pointer transition-colors ${i >= 0 ? "bg-surface ring-2 ring-ink" : "hover:bg-surface-2"}`}
+                    className={`relative flex flex-col items-center gap-1 rounded-2xl p-2.5 cursor-pointer transition-colors ${i >= 0 ? "bg-surface ring-2 ring-ink" : "hover:bg-hover"}`}
                     aria-pressed={i >= 0}>
                     <Gbot look={b.look} seed={b.id} size={44} mood={i >= 0 ? "happy" : "idle"} />
                     <span className="text-[13px] font-semibold truncate max-w-full">{b.name}</span>

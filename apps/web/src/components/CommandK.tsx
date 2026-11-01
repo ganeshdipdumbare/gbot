@@ -39,7 +39,7 @@ export function CommandK({ open, onClose, onPick, onHatch }: { open: boolean; on
               if (e.key === "Enter") { if (i < list.length) onPick(list[i].id); else onHatch(); }
             }}
             placeholder="Jump to a bot…"
-            className="flex-1 h-12 bg-transparent outline-none text-[16px] text-ink"
+            className="flex-1 h-12 bg-transparent outline-none text-[14px] text-ink"
             aria-label="Search bots"
           />
         </div>
@@ -49,7 +49,7 @@ export function CommandK({ open, onClose, onPick, onHatch }: { open: boolean; on
               <button onMouseEnter={() => setI(j)} onClick={() => onPick(b.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-2xl text-left cursor-pointer ${i === j ? "bg-surface-2" : ""}`}>
                 {b.bot ? <Gbot look={b.bot.look} seed={b.bot.id} size={32} mood={moodOf(presence[b.bot.id], b.bot)} /> : <Stack bots={b.members ?? []} size={22} />}
-                <span className="font-display font-extrabold">{b.name}</span>
+                <span className="font-semibold">{b.name}</span>
                 <span className="text-ink-2 text-[13px] truncate">{b.sub}</span>
               </button>
             </li>
@@ -58,7 +58,7 @@ export function CommandK({ open, onClose, onPick, onHatch }: { open: boolean; on
             <button onMouseEnter={() => setI(list.length)} onClick={onHatch}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left cursor-pointer ${i === list.length ? "bg-surface-2" : ""}`}>
               <span className="size-8 grid place-items-center rounded-full bg-ink text-bg"><Icon.plus /></span>
-              <span className="font-display font-extrabold">New bot</span>
+              <span className="font-semibold">New bot</span>
             </button>
           </li>
         </ul>

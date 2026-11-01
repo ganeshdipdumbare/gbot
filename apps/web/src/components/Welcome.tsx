@@ -74,14 +74,14 @@ export function Welcome() {
         transition={{ ...bouncy, delay: 0.45 }}
         className="w-full max-w-[400px] mt-6"
       >
-        <h1 className="font-display font-black text-[34px] leading-tight text-center tracking-tight">
+        <h1 className="font-semibold tracking-[-0.3px] text-[34px] leading-tight text-center tracking-tight">
           {mode === "signup" ? "Meet your teammates" : "Welcome back!"}
         </h1>
-        <p className="text-center text-ink-2 mt-2 text-[15px]">
+        <p className="text-center text-ink-2 mt-2 text-[14px]">
           Little AI friends that remember, work and grow with you.
           <br />Running 100% on your own machine.
         </p>
-        <form onSubmit={submit} className="mt-7 space-y-3 bg-surface rounded-[28px] p-5 shadow-soft border border-line">
+        <form onSubmit={submit} className="mt-7 space-y-3 bg-surface rounded-2xl p-5 hairline border border-line">
           {mode === "signup" && (
             <Input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
           )}
@@ -96,7 +96,7 @@ export function Welcome() {
               </motion.p>
             )}
           </AnimatePresence>
-          <Button type="submit" disabled={busy} className="w-full h-12 text-[16px]">
+          <Button type="submit" disabled={busy} className="w-full h-12 text-[14px]">
             {mode === "signup" ? "Create account" : "Sign in"}
           </Button>
         </form>

@@ -18,7 +18,7 @@ export function ModelSelect({ value, onChange, allowDefault }: { value: string; 
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full h-11 rounded-2xl bg-surface border-2 border-line px-3 text-[15px] outline-none focus:border-live cursor-pointer"
+      className="w-full h-11 rounded-2xl bg-surface border-2 border-line px-3 text-[14px] outline-none focus:border-live cursor-pointer"
     >
       {allowDefault !== undefined && <option value="">{allowDefault}</option>}
       {local.length > 0 && (

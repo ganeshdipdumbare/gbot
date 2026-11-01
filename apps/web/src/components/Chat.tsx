@@ -9,7 +9,7 @@ import { renderMarkdown } from "../lib/markdown";
 import { speak, stopSpeaking } from "../lib/voice";
 import { Card } from "./Card";
 import { Composer } from "./Composer";
-import { bouncy, Button, Icon, IconButton, spring } from "./ui";
+import { bouncy, Button, Icon, IconButton } from "./ui";
 
 export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOpen }: {
   chatKey: ChatKey | null; onMenu?: () => void; onSettings: () => void; onHatch: () => void;
@@ -45,10 +45,10 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
         <div className="flex-1 grid place-items-center p-6 text-center">
           {loaded && (
             <div>
-              <Gbot seed="empty" look={{ shape: "arch", hue: "sun", eyes: "wide" }} mood="sleepy" size={120} className="mx-auto" />
-              <h2 className="font-display font-black text-2xl mt-4">It's quiet in here</h2>
-              <p className="text-ink-2 mt-1">Create a bot to get started.</p>
-              <Button className="mt-5" onClick={onHatch}><Icon.plus /> New bot</Button>
+              <Gbot seed="empty" look={{ shape: "arch", hue: "sun", eyes: "wide" }} mood="sleepy" size={64} className="mx-auto" />
+              <h2 className="text-[15px] font-semibold mt-4">No bots yet</h2>
+              <p className="text-[13px] text-ink-2 mt-1">Create one and give it a job.</p>
+              <Button className="mt-4" onClick={onHatch}><Icon.plus /> New bot</Button>
             </div>
           )}
         </div>
@@ -62,31 +62,27 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
 
   return (
     <div className="h-full flex flex-col">
-      <header className="flex items-center gap-2 px-3 sm:px-5 h-16 shrink-0 border-b border-line/70 bg-bg/80 backdrop-blur-md z-10">
+      <header className="flex items-center gap-1 px-2 h-11 shrink-0 hairline-b bg-bg/85 backdrop-blur-xl z-10">
         {onMenu && <IconButton label="Bots" onClick={onMenu}><Icon.menu /></IconButton>}
         {bot ? (
-          <button onClick={onSettings} className="flex items-center gap-3 min-w-0 rounded-2xl pr-3 hover:bg-surface-2 transition-colors cursor-pointer">
-            <Gbot look={bot.look} seed={bot.id} size={40} mood={moodOf(p, bot)} />
-            <div className="min-w-0 text-left">
-              <div className="font-display font-black text-[17px] leading-tight truncate">{bot.name}</div>
-              <Status p={p} fallback={bot.title || "Your teammate"} />
-            </div>
+          <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-8 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
+            <Gbot look={bot.look} seed={bot.id} size={22} mood={moodOf(p, bot)} />
+            <span className="text-[14px] font-medium truncate">{bot.name}</span>
+            <Status p={p} fallback={bot.title} />
           </button>
         ) : (
-          <button onClick={onSettings} className="flex items-center gap-3 min-w-0 rounded-2xl pr-3 hover:bg-surface-2 transition-colors cursor-pointer">
-            <Stack bots={members} size={30} presence={presence} />
-            <div className="min-w-0 text-left">
-              <div className="font-display font-black text-[17px] leading-tight truncate">{group!.name}</div>
-              <div className="text-[12.5px] text-ink-2 truncate">{members.map((b) => b.name).join(", ")}</div>
-            </div>
+          <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-8 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
+            <Stack bots={members} size={20} presence={presence} />
+            <span className="text-[14px] font-medium truncate">{group!.name}</span>
+            <span className="text-[13px] text-ink-3 truncate">{members.map((b) => b.name).join(", ")}</span>
           </button>
         )}
         <div className="flex-1" />
         {bot && (
           <IconButton label={live ? "Its computer is active" : "Computer and routines"} onClick={() => onComputer()}
-            className={`relative ${panelOpen ? "bg-surface-2 text-ink!" : ""}`}>
+            className={`relative ${panelOpen ? "bg-selected text-ink!" : ""}`}>
             <span className={live ? "text-live" : ""}><Icon.screen /></span>
-            {live && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-live ring-2 ring-bg" />}
+            {live && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-live" />}
           </IconButton>
         )}
         <IconButton label={bot ? "Bot settings" : "Group settings"} onClick={onSettings}><Icon.gear /></IconButton>
@@ -109,11 +105,11 @@ function Status({ p, fallback }: { p?: Presence; fallback: string }) {
   const busy = p && p.state !== "idle";
   return (
     <AnimatePresence mode="wait" initial={false}>
-      <motion.div key={(p?.state ?? "idle") + (p?.detail ?? "")}
-        initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.15 }}
-        className={`text-[12.5px] truncate ${busy ? "text-live font-semibold" : "text-ink-2"}`}>
+      <motion.span key={(p?.state ?? "idle") + (p?.detail ?? "")}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}
+        className={`text-[13px] truncate ${busy ? "text-ink-2" : "text-ink-3"}`}>
         {busy ? (p!.detail && p!.state === "working" ? p!.detail : presenceText[p!.state]) : fallback}
-      </motion.div>
+      </motion.span>
     </AnimatePresence>
   );
 }
@@ -156,10 +152,13 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
   useEffect(() => { stick.current = true; }, [chatKey]);
 
   const rows = useMemo(() => {
-    const out: { m: Message; first: boolean; last: boolean }[] = [];
+    const out: { m: Message; first: boolean; last: boolean; stamp?: string }[] = [];
     (messages ?? []).forEach((m, i, all) => {
+      const prev = all[i - 1];
       const same = (a?: Message) => !!a && a.role === m.role && a.botId === m.botId && a.role !== "card" && a.role !== "event";
-      out.push({ m, first: !same(all[i - 1]), last: !same(all[i + 1]) });
+      // A quiet timestamp after a gap, like Grok Bot.
+      const gap = !prev || new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() > 30 * 60_000;
+      out.push({ m, first: !same(prev) || gap, last: !same(all[i + 1]), stamp: gap ? stampOf(m.createdAt) : undefined });
     });
     return out;
   }, [messages]);
@@ -167,13 +166,19 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
   return (
     <div ref={ref} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
       className="flex-1 overflow-y-auto scroll-soft">
-      <div className="max-w-[760px] mx-auto px-3 sm:px-6 py-6">
+      <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-4 pb-6">
         {messages && messages.length === 0 && (bot ? <Hello bot={bot} /> : <GroupHello group={group!} members={members} />)}
-        {error && <p className="text-center text-danger text-sm">{error}</p>}
-        {rows.map(({ m, first, last }) => {
+        {error && <p className="text-center text-danger text-[13px]">{error}</p>}
+        {rows.map(({ m, first, last, stamp }) => {
           const author = m.botId ? byId[m.botId] : undefined;
-          if (m.role === "card") return author ? <Card key={m.id} m={m} bot={author} onTakeover={onTakeover} /> : null;
-          return <Row key={m.id} m={m} author={author} first={first} last={last} showName={!!group} />;
+          return (
+            <div key={m.id}>
+              {stamp && <div className="text-center text-[12px] text-ink-3 pt-5 pb-1">{stamp}</div>}
+              {m.role === "card"
+                ? author && <Card m={m} bot={author} onTakeover={onTakeover} />
+                : <Row m={m} author={author} first={first} last={last} inGroup={!!group} />}
+            </div>
+          );
         })}
         <AnimatePresence>
           {typing.map((id) => {
@@ -181,95 +186,92 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
             const p = presence[id];
             if (!b) return null;
             return (
-              <motion.div key={"typing" + id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={bouncy}
-                className="flex items-end gap-2.5 mt-3">
-                <Gbot look={b.look} seed={b.id} size={40} mood={p?.state === "working" ? "working" : "thinking"} />
-                <span className="text-[13px] text-ink-2 pb-2">
-                  {group && <span className="font-semibold text-ink">{b.name} · </span>}
-                  {p?.detail || (p?.state === "working" ? "Working…" : "Thinking…")}
+              <motion.div key={"typing" + id} initial={{ opacity: 0, y: 8, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, transition: { duration: 0.1 } }}
+                transition={bouncy} className="flex items-center gap-2.5 mt-3 py-1">
+                <Gbot look={b.look} seed={b.id} size={32} mood={p?.state === "working" ? "working" : "thinking"} />
+                <span className="text-[13px] text-ink-3">
+                  {group && <span className="text-ink-2">{b.name} · </span>}
+                  {p?.detail || (p?.state === "working" ? "Working" : "Thinking")}
                 </span>
               </motion.div>
             );
           })}
         </AnimatePresence>
-        <div className="h-2" />
       </div>
     </div>
   );
 }
 
+function stampOf(iso: string) {
+  const d = new Date(iso);
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 function Hello({ bot }: { bot: Bot }) {
   const [ref, gaze] = useGaze<HTMLDivElement>();
   return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={bouncy} className="text-center pt-[8vh] pb-8">
-      <div ref={ref} className="inline-block"><Gbot look={bot.look} seed={bot.id} size={140} lookAt={gaze} /></div>
-      <h2 className="font-display font-black text-[28px] mt-4">Hi, I'm {bot.name}</h2>
-      <p className="text-ink-2 mt-1 max-w-[400px] mx-auto">
-        Tell me what my job is, in plain words. I'll remember it, use my computer when it helps, and ask before anything risky.
+    <div className="entry-in text-center pt-[14vh] pb-8">
+      <div ref={ref} className="inline-block"><Gbot look={bot.look} seed={bot.id} size={72} lookAt={gaze} /></div>
+      <h2 className="text-[17px] font-semibold tracking-[-0.3px] mt-3">{bot.name}</h2>
+      <p className="text-[13px] text-ink-2 mt-1 max-w-[360px] mx-auto">
+        Tell {bot.name} what its job is, in plain words. It remembers, uses its own computer, and asks before anything risky.
       </p>
-    </motion.div>
+    </div>
   );
 }
 
 function GroupHello({ group, members }: { group: Group; members: Bot[] }) {
   return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={bouncy} className="text-center pt-[8vh] pb-8">
-      <div className="flex justify-center gap-3">
-        {members.map((b, i) => (
-          <motion.div key={b.id} initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ ...bouncy, delay: i * 0.06 }}>
-            <Gbot look={b.look} seed={b.id} size={72} />
-          </motion.div>
-        ))}
-      </div>
-      <h2 className="font-display font-black text-[28px] mt-4">{group.name}</h2>
-      <p className="text-ink-2 mt-1 max-w-[420px] mx-auto">
-        {members[0]?.name} takes the lead. @mention anyone to bring them in, and they'll hand work to each other.
+    <div className="entry-in text-center pt-[14vh] pb-8">
+      <div className="flex justify-center"><Stack bots={members} size={44} /></div>
+      <h2 className="text-[17px] font-semibold tracking-[-0.3px] mt-3">{group.name}</h2>
+      <p className="text-[13px] text-ink-2 mt-1 max-w-[380px] mx-auto">
+        {members[0]?.name} leads. @mention anyone to bring them in; they hand work to each other.
       </p>
-    </motion.div>
+    </div>
   );
 }
 
-const Row = memo(function Row({ m, author, first, last, showName }: { m: Message; author?: Bot; first: boolean; last: boolean; showName: boolean }) {
+const Row = memo(function Row({ m, author, first, last, inGroup }: { m: Message; author?: Bot; first: boolean; last: boolean; inGroup: boolean }) {
   if (m.role === "event") {
     const err = m.data?.kind === "error";
     return (
-      <motion.div initial={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }} transition={bouncy} className="flex justify-center my-3">
-        <div className={`flex items-center gap-2 text-[13px] px-3.5 py-1.5 rounded-full max-w-[90%] ${err ? "bg-danger/10 text-danger" : "bg-surface-2/70 text-ink-2"}`}>
-          {author && <Gbot look={author.look} seed={author.id} size={18} mood={err ? "blocked" : "idle"} />}
-          {m.data?.kind === "routine" && <Icon.clock />}
-          <span className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
-        </div>
-      </motion.div>
+      <div className={`entry-in flex justify-center items-center gap-1.5 my-3 text-[13px] text-center ${err ? "text-danger" : "text-ink-2"}`}>
+        {author && <Gbot look={author.look} seed={author.id} size={16} mood={err ? "blocked" : "idle"} />}
+        {m.data?.kind === "routine" && <span className="[&_svg]:size-3.5"><Icon.clock /></span>}
+        <span className="prose-bot [&_strong]:text-ink [&_strong]:font-medium" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
+      </div>
     );
   }
   const mine = m.role === "user";
   const failed = !!m.data?.failed;
+  // Bubbles round their joined corners less, like Grok Bot.
+  const shape = mine ? `rounded-2xl ${!first ? "rounded-tr-md" : ""} ${!last ? "rounded-br-md" : ""}` : `rounded-2xl ${!first ? "rounded-tl-md" : ""} ${!last ? "rounded-bl-md" : ""}`;
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}
-      className={`group flex items-end gap-2.5 ${first ? "mt-4" : "mt-1"} ${mine ? "justify-end" : ""}`}
-      style={{ transformOrigin: mine ? "bottom right" : "bottom left" }}
-    >
-      {!mine && <div className="w-[34px] shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={34} mood={m.streaming ? "working" : "idle"} />}</div>}
-      <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[min(82%,620px)]`}>
-        {showName && first && !mine && author && <span className="text-[12px] font-semibold text-ink-2 mb-1 ml-1">{author.name}</span>}
-        <div className={`px-4 py-2.5 text-[15px] ${mine
-          ? `bg-[var(--bubble-me)] text-[var(--bubble-me-ink)] rounded-[22px] ${last ? "rounded-br-md" : ""} ${m.pending ? "opacity-70" : ""} ${failed ? "ring-2 ring-danger" : ""}`
-          : `bg-surface border border-line shadow-soft rounded-[22px] ${last ? "rounded-bl-md" : ""}`}`}>
+    <div className={`entry-in group flex items-end gap-2 ${first ? "mt-3" : "mt-0.5"} ${mine ? "justify-end" : ""}`}
+      style={{ transformOrigin: mine ? "bottom right" : "bottom left" }}>
+      {!mine && inGroup && <div className="w-6 shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={24} mood={m.streaming ? "working" : "idle"} />}</div>}
+      <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[min(85%,560px)]`}>
+        {inGroup && first && !mine && author && <span className="text-[12px] text-ink-3 mb-1 ml-1">{author.name}</span>}
+        <div className={`px-3 py-2 text-[14px] leading-[21px] ${shape} ${mine
+          ? `bg-[var(--bubble-me)] text-[var(--bubble-me-ink)] ${m.pending ? "opacity-60" : ""} ${failed ? "ring-1 ring-danger" : ""}`
+          : "bg-surface text-ink"}`}>
           {mine ? (
-            <div className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</div>
+            <div className="whitespace-pre-wrap break-words">{m.content}</div>
           ) : (
             <div className={`prose-bot ${m.streaming ? "caret" : ""}`} dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content || " ") }} />
           )}
-          {failed && <div className="text-[12px] mt-1 opacity-90">Not sent: {String(m.data?.error ?? "")}</div>}
+          {failed && <div className="text-[12px] mt-1 opacity-80">Not sent: {String(m.data?.error ?? "")}</div>}
         </div>
       </div>
       {!mine && !m.streaming && m.content && (
         <button onClick={() => speak(m.content, author?.voice).catch(() => {})} aria-label="Read aloud" title="Read aloud"
-          className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity size-8 grid place-items-center rounded-full text-ink-2 hover:text-ink hover:bg-surface-2 cursor-pointer mb-0.5">
+          className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity duration-[120ms] size-7 grid place-items-center rounded-lg text-ink-3 hover:text-ink hover:bg-hover cursor-pointer [&_svg]:size-4">
           <Icon.speaker />
         </button>
       )}
-    </motion.div>
+    </div>
   );
 });
