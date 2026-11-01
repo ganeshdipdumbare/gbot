@@ -1,50 +1,29 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import { Gbot, type Look, type Mood } from "@gbot/characters";
 import { api } from "../lib/api";
 import { set } from "../lib/store";
 import { useGaze } from "../lib/hooks";
-import { bouncy, Button, Input } from "./ui";
+import { Button, Input, Label } from "./ui";
 
-const crew: { look: Look; x: number; size: number; delay: number }[] = [
-  { look: { shape: "circle", hue: "grape", eyes: "pill" }, x: 0, size: 112, delay: 0 },
-  { look: { shape: "triangle", hue: "coral", eyes: "dot" }, x: -124, size: 88, delay: 0.08 },
-  { look: { shape: "hexagon", hue: "cobalt", eyes: "pill" }, x: 124, size: 88, delay: 0.16 },
-  { look: { shape: "cloud", hue: "sun", eyes: "wide" }, x: -220, size: 68, delay: 0.24 },
-  { look: { shape: "square", hue: "mint", eyes: "dot" }, x: 220, size: 68, delay: 0.32 },
+const crew: { look: Look; seed: string }[] = [
+  { look: { shape: "triangle", hue: "coral", eyes: "dot" }, seed: "a" },
+  { look: { shape: "circle", hue: "grape", eyes: "pill" }, seed: "b" },
+  { look: { shape: "hexagon", hue: "cobalt", eyes: "pill" }, seed: "c" },
 ];
 
-function Crew({ mood }: { mood: Mood }) {
-  const [ref, gaze] = useGaze<HTMLDivElement>();
-  return (
-    <div ref={ref} className="relative h-[150px] w-full max-w-[520px] mx-auto origin-bottom scale-[0.64] sm:scale-100">
-      {crew.map((c, i) => (
-        <motion.div
-          key={i}
-          className="absolute left-1/2 bottom-0"
-          style={{ marginLeft: c.x - c.size / 2, zIndex: 10 - i }}
-          initial={{ y: 40, scale: 0.4, opacity: 0 }}
-          animate={{ y: 0, scale: 1, opacity: 1 }}
-          transition={{ ...bouncy, delay: 0.15 + c.delay }}
-        >
-          <Gbot look={c.look} seed={"crew" + i} size={c.size} lookAt={gaze} mood={i === 0 ? mood : mood === "happy" ? "happy" : "idle"} />
-        </motion.div>
-      ))}
-    </div>
-  );
-}
-
 export function Welcome() {
-  const [mode, setMode] = useState<"signup" | "login">("signup");
+  const [mode, setMode] = useState<"signup" | "login">("login");
+  const [canSignUp, setCanSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [mood, setMood] = useState<Mood>("idle");
+  const [ref, gaze] = useGaze<HTMLDivElement>();
 
   useEffect(() => {
-    api.setup().then((s) => setMode(s.fresh ? "signup" : "login")).catch(() => {});
+    api.setup().then((s) => { setCanSignUp(s.signup); setMode(s.fresh ? "signup" : "login"); }).catch(() => {});
   }, []);
 
   async function submit(e: FormEvent) {
@@ -55,58 +34,60 @@ export function Welcome() {
     try {
       const u = mode === "signup" ? await api.signup({ email, password, name }) : await api.login({ email, password });
       setMood("happy");
-      setTimeout(() => set(() => ({ me: u })), 650);
+      setTimeout(() => set(() => ({ me: u })), 280);
     } catch (err) {
       setError((err as Error).message);
       setMood("blocked");
-      setTimeout(() => setMood("idle"), 1800);
+      setTimeout(() => setMood("idle"), 1600);
     } finally {
       setBusy(false);
     }
   }
 
+  const signup = mode === "signup";
+
   return (
-    <div className="min-h-full flex flex-col items-center justify-center px-4 py-10">
-      <Crew mood={mood} />
-      <motion.div
-        initial={{ y: 24, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ ...bouncy, delay: 0.45 }}
-        className="w-full max-w-[400px] mt-6"
-      >
-        <h1 className="font-semibold tracking-[-0.3px] text-[34px] leading-tight text-center tracking-tight">
-          {mode === "signup" ? "Meet your teammates" : "Welcome back!"}
-        </h1>
-        <p className="text-center text-ink-2 mt-2 text-[14px]">
-          Little AI friends that remember, work and grow with you.
-          <br />Running 100% on your own machine.
-        </p>
-        <form onSubmit={submit} className="mt-7 space-y-3 bg-surface rounded-2xl p-5 hairline border border-line">
-          {mode === "signup" && (
-            <Input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+    <div className="min-h-full grid place-items-center px-4 py-12">
+      <main className="w-full max-w-[360px] entry-in">
+        <div ref={ref} className="flex justify-center items-end gap-1.5 mb-6" aria-hidden>
+          {crew.map((c, i) => (
+            <Gbot key={c.seed} look={c.look} seed={c.seed} size={i === 1 ? 44 : 32} lookAt={gaze} mood={i === 1 ? mood : mood === "happy" ? "happy" : "idle"} />
+          ))}
+        </div>
+        <h1 className="text-[22px] font-semibold tracking-[-0.4px] text-center">{signup ? "Create your gbot account" : "Sign in to gbot"}</h1>
+        <p className="text-[14px] text-ink-2 text-center mt-1.5">AI teammates that run on your own machine.</p>
+
+        <form onSubmit={submit} className="mt-7 space-y-3" noValidate={false}>
+          {signup && (
+            <div>
+              <Label>Name</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+            </div>
           )}
-          <Input type="email" required placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" onFocus={() => setMood("waiting")} onBlur={() => setMood("idle")} />
-          <Input type="password" required minLength={10} placeholder={mode === "signup" ? "Password (10+ characters)" : "Password"} value={password}
-            onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "signup" ? "new-password" : "current-password"}
-            onFocus={() => setMood("sleepy")} onBlur={() => setMood("idle")} />
-          <AnimatePresence>
-            {error && (
-              <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-danger text-[14px] px-1" role="alert">
-                {error}
-              </motion.p>
-            )}
-          </AnimatePresence>
-          <Button type="submit" disabled={busy} className="w-full h-12 text-[14px]">
-            {mode === "signup" ? "Create account" : "Sign in"}
+          <div>
+            <Label>Email</Label>
+            <Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoFocus className="h-10!" />
+          </div>
+          <div>
+            <Label hint={signup ? "10+ characters" : undefined}>Password</Label>
+            <Input type="password" required minLength={signup ? 10 : 1} value={password} onChange={(e) => setPassword(e.target.value)}
+              autoComplete={signup ? "new-password" : "current-password"} className="h-10!" />
+          </div>
+          {error && <p className="text-[13px] text-danger" role="alert">{error}</p>}
+          <Button type="submit" disabled={busy || !email || !password} className="w-full h-10! text-[14px]! mt-1">
+            {busy ? (signup ? "Creating…" : "Signing in…") : signup ? "Create account" : "Sign in"}
           </Button>
         </form>
-        <p className="text-center text-[14px] text-ink-2 mt-4">
-          {mode === "signup" ? "Already have an account? " : "New here? "}
-          <button className="font-bold text-ink underline underline-offset-2 cursor-pointer" onClick={() => { setMode(mode === "signup" ? "login" : "signup"); setError(""); }}>
-            {mode === "signup" ? "Sign in" : "Create an account"}
-          </button>
-        </p>
-      </motion.div>
+
+        {canSignUp && (
+          <p className="text-[13px] text-ink-3 text-center mt-5">
+            {signup ? "Already have an account?" : "New here?"}{" "}
+            <button className="text-ink hover:underline underline-offset-2 cursor-pointer" onClick={() => { setMode(signup ? "login" : "signup"); setError(""); }}>
+              {signup ? "Sign in" : "Create an account"}
+            </button>
+          </p>
+        )}
+      </main>
     </div>
   );
 }

@@ -36,7 +36,11 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Something went wrong");
+  if (!res.ok) {
+    // A session that expired mid-use signs the person out cleanly.
+    if (res.status === 401 && !path.startsWith("/api/auth/") && path !== "/api/me") window.dispatchEvent(new Event("gbot:signed-out"));
+    throw new ApiError(res.status, data.error ?? "Something went wrong");
+  }
   return data as T;
 }
 
@@ -57,7 +61,7 @@ export const api = {
   createBot: (b: Partial<Bot>) => req<Bot>("POST", "/api/bots", b),
   updateBot: (id: string, b: Partial<Bot>) => req<Bot>("PATCH", bot(id), b),
   archiveBot: (id: string) => req("DELETE", bot(id)),
-  messages: (id: string) => req<{ messages: Message[] }>("GET", `${bot(id)}/messages`),
+  messages: (id: string, before?: string) => req<{ messages: Message[] }>("GET", `${bot(id)}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`),
   send: (id: string, text: string) => req<Message>("POST", `${bot(id)}/messages`, { text }),
   stop: (id: string) => req("POST", `${bot(id)}/stop`, {}),
   answer: (cardId: string, b: { decision: "approve" | "reject" | "answer"; text?: string; always?: boolean }) =>
@@ -85,7 +89,7 @@ export const api = {
   groups: () => req<{ groups: Group[] }>("GET", "/api/groups"),
   createGroup: (b: { name: string; botIds: string[] }) => req<Group>("POST", "/api/groups", b),
   archiveGroup: (id: string) => req("DELETE", `/api/groups/${id}`),
-  groupMessages: (id: string) => req<{ messages: Message[] }>("GET", `/api/groups/${id}/messages`),
+  groupMessages: (id: string, before?: string) => req<{ messages: Message[] }>("GET", `/api/groups/${id}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`),
   sendGroup: (id: string, text: string) => req<Message>("POST", `/api/groups/${id}/messages`, { text }),
   stopGroup: (id: string) => req("POST", `/api/groups/${id}/stop`, {}),
 

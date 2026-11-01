@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { connectLive, groupKey, isGroupKey, loadAll, set, useStore } from "../lib/store";
+import { connectLive, get, groupKey, isGroupKey, loadAll, markRead, set, useStore } from "../lib/store";
+import { toastError } from "../lib/toast";
 import { useMediaQuery } from "../lib/hooks";
 import { Sidebar } from "./Sidebar";
 import { Chat } from "./Chat";
@@ -26,7 +27,7 @@ export function Shell() {
   const activeGroup = useStore((s) => s.groups.find((g) => groupKey(g.id) === s.activeId));
 
   useEffect(() => {
-    loadAll().catch(() => {});
+    loadAll().catch((e) => toastError(e, "Couldn't load your bots"));
     const off = connectLive();
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -39,7 +40,13 @@ export function Shell() {
   }, []);
 
   // The computer panel belongs to one bot; groups don't have one.
-  useEffect(() => { if (isGroupKey(activeId)) setSide(null); setTakeover(false); }, [activeId]);
+  useEffect(() => { if (isGroupKey(activeId)) setSide(null); setTakeover(false); markRead(activeId); }, [activeId]);
+  // Coming back to the tab reads the open chat.
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "visible") markRead(get().activeId); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   const select = (id: string) => {
     set(() => ({ activeId: id }));

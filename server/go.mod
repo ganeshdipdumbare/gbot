@@ -5,7 +5,7 @@ go 1.27
 toolchain go1.27.3
 
 require (
-	github.com/ganeshdipdumbare/eipagent v0.4.0
+	github.com/ganeshdipdumbare/eipagent v0.4.1-0.20261101183648-312b09203fcb
 	github.com/jackc/pgx/v5 v5.12.0
 	golang.org/x/crypto v0.58.0
 )

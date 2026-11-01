@@ -564,7 +564,16 @@ func (s *Server) groupMessages(w http.ResponseWriter, r *http.Request) {
 	if g == nil {
 		return
 	}
-	msgs, err := s.Store.ListGroupMessages(r.Context(), g.ID, nil, 100)
+	var before *time.Time
+	if v := r.URL.Query().Get("before"); v != "" {
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			writeErr(w, 400, "bad cursor")
+			return
+		}
+		before = &t
+	}
+	msgs, err := s.Store.ListGroupMessages(r.Context(), g.ID, before, 100)
 	if err != nil {
 		writeErr(w, 500, "could not load messages")
 		return

@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Group } from "../lib/api";
 import { upsertGroup, useStore } from "../lib/store";
+import { attempt } from "../lib/toast";
 import { Modal } from "./Modal";
 import { bouncy, Button, Icon, Input, Label } from "./ui";
 import { Stack } from "./Chat";
@@ -90,7 +91,7 @@ export function GroupSettings({ open, group, onClose }: { open: boolean; group?:
             <div className="flex items-center gap-2">
               <span className="text-[14px] flex-1">Archive this group?</span>
               <Button variant="ghost" onClick={() => setConfirm(false)}>Keep</Button>
-              <Button variant="danger" onClick={async () => { await api.archiveGroup(group.id); onClose(); }}>Archive</Button>
+              <Button variant="danger" onClick={async () => { if (await attempt(() => api.archiveGroup(group.id), "Group archived") !== undefined) onClose(); }}>Archive</Button>
             </div>
           ) : <Button variant="danger" onClick={() => setConfirm(true)}>Archive group</Button>}
         </div>

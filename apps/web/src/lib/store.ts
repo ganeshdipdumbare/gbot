@@ -17,13 +17,16 @@ export interface State {
   activeId: ChatKey | null;
   models: Model[] | null;
   connected: boolean;
+  loaded: boolean;                       // first roster load finished
+  unread: Record<ChatKey, number>;       // new replies in chats you're not looking at
+  hasMore: Record<ChatKey, boolean>;     // older messages exist on the server
 }
 
 function savedActive() {
   try { return localStorage.getItem("gbot.active"); } catch { return null; }
 }
 
-let state: State = { me: null, bots: [], groups: [], presence: {}, computers: {}, messages: {}, activeId: savedActive(), models: null, connected: false };
+let state: State = { me: null, bots: [], groups: [], presence: {}, computers: {}, messages: {}, activeId: savedActive(), models: null, connected: false, loaded: false, unread: {}, hasMore: {} };
 const listeners = new Set<() => void>();
 
 export function set(fn: (s: State) => Partial<State>) {
@@ -77,6 +80,14 @@ export function addMessage(m: Message) {
     return { messages: { ...s.messages, [k]: next } };
   });
   touchLast(m);
+  // Count replies that land outside the open chat (or while the tab is hidden).
+  if ((m.role === "bot" || m.role === "card") && (k !== get().activeId || document.visibilityState === "hidden")) {
+    set((s) => ({ unread: { ...s.unread, [k]: (s.unread[k] ?? 0) + 1 } }));
+  }
+}
+
+export function markRead(k: ChatKey | null) {
+  if (k && get().unread[k]) set((s) => { const u = { ...s.unread }; delete u[k]; return { unread: u }; });
 }
 
 export function patchMessage(k: ChatKey, id: string, fn: (m: Message) => Message) {
@@ -91,13 +102,35 @@ export async function loadAll() {
   const [{ bots, presence }, { groups }] = await Promise.all([api.bots(), api.groups()]);
   set((s) => {
     const keys = new Set([...bots.map((b) => b.id), ...groups.map((g) => groupKey(g.id))]);
-    return { bots: sortBots(bots), groups: sortGroups(groups), presence, activeId: s.activeId && keys.has(s.activeId) ? s.activeId : bots[0]?.id ?? null };
+    return { bots: sortBots(bots), groups: sortGroups(groups), presence, loaded: true, activeId: s.activeId && keys.has(s.activeId) ? s.activeId : bots[0]?.id ?? null };
   });
 }
 
+const PAGE = 100;
+
 export async function loadMessages(k: ChatKey) {
   const { messages } = isGroupKey(k) ? await api.groupMessages(k.slice(2)) : await api.messages(k);
-  set((s) => ({ messages: { ...s.messages, [k]: messages } }));
+  set((s) => ({ messages: { ...s.messages, [k]: messages }, hasMore: { ...s.hasMore, [k]: messages.length >= PAGE } }));
+}
+
+/** Loads the page before the oldest message we have; returns how many arrived. */
+export async function loadOlder(k: ChatKey): Promise<number> {
+  const list = get().messages[k];
+  if (!list?.length || !get().hasMore[k]) return 0;
+  const before = list[0].createdAt;
+  const { messages } = isGroupKey(k) ? await api.groupMessages(k.slice(2), before) : await api.messages(k, before);
+  set((s) => {
+    const cur = s.messages[k] ?? [];
+    const seen = new Set(cur.map((m) => m.id));
+    return { messages: { ...s.messages, [k]: [...messages.filter((m) => !seen.has(m.id)), ...cur] }, hasMore: { ...s.hasMore, [k]: messages.length >= PAGE } };
+  });
+  return messages.length;
+}
+
+/** Resends a message that failed to send. */
+export function retry(k: ChatKey, m: Message) {
+  set((s) => ({ messages: { ...s.messages, [k]: (s.messages[k] ?? []).filter((x) => x.id !== m.id) } }));
+  return sendMessage(k, m.content);
 }
 
 export async function sendMessage(k: ChatKey, text: string) {

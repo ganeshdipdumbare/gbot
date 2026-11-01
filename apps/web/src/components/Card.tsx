@@ -51,7 +51,7 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
     const s = status[st] ?? { label: st, tone: "text-ink-2" };
     const ok = st !== "denied" && st !== "skipped";
     return (
-      <div className="entry-in flex justify-center items-center gap-1.5 my-2 text-[13px] text-ink-2">
+      <div className="flex justify-center items-center gap-1.5 my-2 text-[13px] text-ink-2">
         <span className={`receipt-check grid place-items-center size-4 rounded-full [&_svg]:size-3 ${ok ? "bg-[color-mix(in_srgb,var(--success)_16%,transparent)] text-success" : "bg-surface-2 text-ink-3"}`}>
           {ok ? <Icon.check /> : <Icon.close />}
         </span>

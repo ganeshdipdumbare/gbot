@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
 import { set, useStore } from "../lib/store";
+import { attempt } from "../lib/toast";
 import { moodOf } from "../lib/hooks";
 import { bouncy, Button, Icon, IconButton, Input, Label, TextArea } from "./ui";
 
@@ -310,13 +311,13 @@ function RoutinesTab({ bot }: { bot: Bot }) {
                 <div className="text-[12px] text-ink-3">{r.active ? r.when : "Paused"}{r.active && r.nextRunAt && r.kind === "schedule" ? ` · next ${new Date(r.nextRunAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : ""}</div>
                 <div className="text-[13px] mt-1.5 line-clamp-2">{r.prompt}</div>
               </div>
-              <Toggle on={r.active} label={r.active ? "Pause" : "Resume"} onChange={async (v) => { await api.updateRoutine(bot.id, r.id, { active: v }); load(); }} />
+              <Toggle on={r.active} label={r.active ? "Pause" : "Resume"} onChange={async (v) => { await attempt(() => api.updateRoutine(bot.id, r.id, { active: v }), v ? "Routine resumed" : "Routine paused"); load(); }} />
             </div>
             <div className="flex gap-1 mt-2 -mb-1 -ml-1">
               <button className="h-7 px-2 rounded-lg text-[12px] text-ink-3 hover:text-ink hover:bg-hover cursor-pointer inline-flex items-center gap-1"
-                onClick={() => api.runRoutine(bot.id, r.id)}><Icon.play /> Run now</button>
+                onClick={() => attempt(() => api.runRoutine(bot.id, r.id), "Running now")}><Icon.play /> Run now</button>
               <button className="h-7 px-2 rounded-lg text-[12px] text-ink-3 hover:text-danger hover:bg-hover cursor-pointer inline-flex items-center gap-1"
-                onClick={async () => { await api.deleteRoutine(bot.id, r.id); load(); }}><Icon.trash /> Delete</button>
+                onClick={async () => { await attempt(() => api.deleteRoutine(bot.id, r.id), "Routine deleted"); load(); }}><Icon.trash /> Delete</button>
             </div>
           </motion.li>
         ))}

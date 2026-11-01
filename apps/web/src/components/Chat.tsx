@@ -3,7 +3,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import type { Bot, Group, Message, Presence } from "../lib/api";
 import { api } from "../lib/api";
-import { groupKey, isGroupKey, loadMessages, onLive, sendMessage, useStore, type ChatKey } from "../lib/store";
+import { get as useStoreGet, groupKey, isGroupKey, loadMessages, loadOlder, onLive, retry, sendMessage, useStore, type ChatKey } from "../lib/store";
+import { toast } from "../lib/toast";
+import { Skeleton } from "./Feedback";
 import { moodOf, presenceText, useGaze } from "../lib/hooks";
 import { renderMarkdown } from "../lib/markdown";
 import { speak, stopSpeaking } from "../lib/voice";
@@ -133,7 +135,19 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const lastLen = messages?.length ?? 0;
+  const lastId = messages?.[lastLen - 1]?.id;
   const lastContent = messages?.[lastLen - 1]?.content.length ?? 0;
+  const hasMore = useStore((s) => s.hasMore[chatKey]);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [below, setBelow] = useState(0); // new messages below the fold
+  const seenLast = useRef(lastId);
+  // Only messages that arrive live animate in; history renders at rest.
+  const settled = useRef<Set<string>>(new Set());
+  const settledFor = useRef<string | null>(null);
+  if (messages && settledFor.current !== chatKey) {
+    settled.current = new Set(messages.map((m) => m.id));
+    settledFor.current = chatKey;
+  }
   const byId = useMemo(() => Object.fromEntries((bot ? [bot] : members).map((b) => [b.id, b])), [bot, members]);
 
   // Who is thinking right now, without a streaming bubble to show for it.
@@ -149,7 +163,43 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [lastLen, lastContent, typing.length]);
-  useEffect(() => { stick.current = true; }, [chatKey]);
+  useEffect(() => { stick.current = true; setBelow(0); }, [chatKey]);
+  // Count messages that arrive while scrolled up.
+  useEffect(() => {
+    if (lastId && lastId !== seenLast.current && !stick.current) setBelow((n) => n + 1);
+    seenLast.current = lastId;
+  }, [lastId]);
+
+  const jump = () => {
+    const el = ref.current;
+    if (!el) return;
+    stick.current = true;
+    setBelow(0);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  };
+
+  // Load older messages near the top, keeping the view where it was.
+  async function older() {
+    const el = ref.current;
+    if (!el || loadingOlder || !hasMore) return;
+    setLoadingOlder(true);
+    const from = el.scrollHeight - el.scrollTop;
+    try {
+      await loadOlder(chatKey);
+      for (const m of useStoreGet().messages[chatKey] ?? []) settled.current.add(m.id);
+      requestAnimationFrame(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight - from; });
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
+  // Copy buttons on code blocks (rendered from Markdown).
+  const onClick = (e: React.MouseEvent) => {
+    const btn = (e.target as HTMLElement).closest(".copy-code");
+    if (!btn) return;
+    const code = btn.parentElement?.querySelector("pre")?.textContent ?? "";
+    navigator.clipboard.writeText(code).then(() => toast("Copied code"), () => toast("Couldn't copy", "error"));
+  };
 
   const rows = useMemo(() => {
     const out: { m: Message; first: boolean; last: boolean; stamp?: string }[] = [];
@@ -164,9 +214,27 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
   }, [messages]);
 
   return (
-    <div ref={ref} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
-      className="flex-1 overflow-y-auto scroll-soft">
-      <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-4 pb-6">
+    <div className="relative flex-1 min-h-0">
+    <div ref={ref} onClick={onClick}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        if (stick.current && below) setBelow(0);
+        if (el.scrollTop < 200) older();
+      }}
+      className="h-full overflow-y-auto scroll-soft">
+      <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-4 pb-6" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+        {!messages && (
+          <div className="space-y-3 pt-6" aria-hidden>
+            <div className="flex justify-end"><Skeleton className="h-9 w-56 rounded-2xl!" /></div>
+            <Skeleton className="h-16 w-72 rounded-2xl!" />
+            <div className="flex justify-end"><Skeleton className="h-9 w-40 rounded-2xl!" /></div>
+            <Skeleton className="h-24 w-80 rounded-2xl!" />
+          </div>
+        )}
+        {hasMore && messages && messages.length > 0 && (
+          <div className="text-center text-[12px] text-ink-3 py-2">{loadingOlder ? "Loading earlier messages…" : <button onClick={older} className="hover:text-ink cursor-pointer">Load earlier messages</button>}</div>
+        )}
         {messages && messages.length === 0 && (bot ? <Hello bot={bot} /> : <GroupHello group={group!} members={members} />)}
         {error && <p className="text-center text-danger text-[13px]">{error}</p>}
         {rows.map(({ m, first, last, stamp }) => {
@@ -176,7 +244,7 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
               {stamp && <div className="text-center text-[12px] text-ink-3 pt-5 pb-1">{stamp}</div>}
               {m.role === "card"
                 ? author && <Card m={m} bot={author} onTakeover={onTakeover} />
-                : <Row m={m} author={author} first={first} last={last} inGroup={!!group} />}
+                : <Row m={m} author={author} first={first} last={last} inGroup={!!group} chatKey={chatKey} animate={!settled.current.has(m.id)} />}
             </div>
           );
         })}
@@ -198,6 +266,16 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
           })}
         </AnimatePresence>
       </div>
+    </div>
+      <AnimatePresence>
+        {below > 0 && (
+          <motion.button key="jump" onClick={jump}
+            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6, transition: { duration: 0.1 } }} transition={{ duration: 0.18 }}
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 h-8 pl-3 pr-3.5 rounded-full bg-bg shadow-pop text-[13px] text-ink-2 hover:text-ink inline-flex items-center gap-1.5 cursor-pointer [&_svg]:size-3.5 [&_svg]:rotate-90">
+            <Icon.send /> {below === 1 ? "1 new message" : `${below} new messages`}
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -234,11 +312,12 @@ function GroupHello({ group, members }: { group: Group; members: Bot[] }) {
   );
 }
 
-const Row = memo(function Row({ m, author, first, last, inGroup }: { m: Message; author?: Bot; first: boolean; last: boolean; inGroup: boolean }) {
+const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animate }: { m: Message; author?: Bot; first: boolean; last: boolean; inGroup: boolean; chatKey: ChatKey; animate: boolean }) {
+  const enter = animate ? "entry-in" : "";
   if (m.role === "event") {
     const err = m.data?.kind === "error";
     return (
-      <div className={`entry-in flex justify-center items-center gap-1.5 my-3 text-[13px] text-center ${err ? "text-danger" : "text-ink-2"}`}>
+      <div className={`${enter} flex justify-center items-center gap-1.5 my-3 text-[13px] text-center ${err ? "text-danger" : "text-ink-2"}`}>
         {author && <Gbot look={author.look} seed={author.id} size={16} mood={err ? "blocked" : "idle"} />}
         {m.data?.kind === "routine" && <span className="[&_svg]:size-3.5"><Icon.clock /></span>}
         <span className="prose-bot [&_strong]:text-ink [&_strong]:font-medium" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
@@ -250,8 +329,9 @@ const Row = memo(function Row({ m, author, first, last, inGroup }: { m: Message;
   // Bubbles round their joined corners less, like Grok Bot.
   const shape = mine ? `rounded-2xl ${!first ? "rounded-tr-md" : ""} ${!last ? "rounded-br-md" : ""}` : `rounded-2xl ${!first ? "rounded-tl-md" : ""} ${!last ? "rounded-bl-md" : ""}`;
   return (
-    <div className={`entry-in group flex items-end gap-2 ${first ? "mt-3" : "mt-0.5"} ${mine ? "justify-end" : ""}`}
-      style={{ transformOrigin: mine ? "bottom right" : "bottom left" }}>
+    <div className={`${enter} group flex items-end gap-1.5 ${first ? "mt-3" : "mt-0.5"} ${mine ? "justify-end" : ""}`}
+      style={{ transformOrigin: mine ? "bottom right" : "bottom left" }} title={new Date(m.createdAt).toLocaleString()}>
+      {mine && !m.pending && <Actions m={m} chatKey={chatKey} failed={failed} />}
       {!mine && inGroup && <div className="w-6 shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={24} mood={m.streaming ? "working" : "idle"} />}</div>}
       <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[min(85%,560px)]`}>
         {inGroup && first && !mine && author && <span className="text-[12px] text-ink-3 mb-1 ml-1">{author.name}</span>}
@@ -266,12 +346,31 @@ const Row = memo(function Row({ m, author, first, last, inGroup }: { m: Message;
           {failed && <div className="text-[12px] mt-1 opacity-80">Not sent: {String(m.data?.error ?? "")}</div>}
         </div>
       </div>
-      {!mine && !m.streaming && m.content && (
-        <button onClick={() => speak(m.content, author?.voice).catch(() => {})} aria-label="Read aloud" title="Read aloud"
-          className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity duration-[120ms] size-7 grid place-items-center rounded-lg text-ink-3 hover:text-ink hover:bg-hover cursor-pointer [&_svg]:size-4">
-          <Icon.speaker />
-        </button>
-      )}
+      {!mine && !m.streaming && m.content && <Actions m={m} chatKey={chatKey} voice={author?.voice} />}
     </div>
   );
 });
+
+// Hover actions on a message: copy, read aloud, or retry a failed send.
+function Actions({ m, chatKey, voice, failed }: { m: Message; chatKey: ChatKey; voice?: string; failed?: boolean }) {
+  const btn = "size-7 grid place-items-center rounded-lg text-ink-3 hover:text-ink hover:bg-hover cursor-pointer [&_svg]:size-[15px]";
+  return (
+    <div className={`flex items-center mb-0.5 transition-opacity duration-[120ms] ${failed ? "" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"}`}>
+      {failed ? (
+        <button onClick={() => retry(chatKey, m)} className="h-7 px-2 rounded-lg text-[12px] text-danger hover:bg-hover cursor-pointer">Retry</button>
+      ) : (
+        <>
+          <button className={btn} aria-label="Copy" title="Copy"
+            onClick={() => navigator.clipboard.writeText(m.content).then(() => toast("Copied"), () => toast("Couldn't copy", "error"))}>
+            <Icon.copy />
+          </button>
+          {m.role === "bot" && (
+            <button className={btn} aria-label="Read aloud" title="Read aloud" onClick={() => speak(m.content, voice).catch(() => toast("Couldn't read aloud", "error"))}>
+              <Icon.speaker />
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

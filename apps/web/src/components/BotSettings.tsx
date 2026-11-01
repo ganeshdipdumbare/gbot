@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Gbot, type Look } from "@gbot/characters";
 import { api } from "../lib/api";
 import { upsertBot, useStore } from "../lib/store";
+import { attempt, toast } from "../lib/toast";
 import { Modal } from "./Modal";
 import { LookPicker, SurpriseButton } from "./LookPicker";
 import { ModelSelect } from "./ModelSelect";
@@ -38,6 +39,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
     try {
       const b = await api.updateBot(bot!.id, { name, title, instructions, model, look, computerNetwork: network, readAloud, voice });
       upsertBot(b);
+      toast("Saved");
       setSaved(true);
       setTimeout(() => setSaved(false), 1400);
     } catch (e) {
@@ -97,8 +99,8 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
         </div>
         {error && <p className="text-danger text-sm" role="alert">{error}</p>}
         <div className="flex items-center gap-2 sticky bottom-0 bg-bg py-3 -mb-3">
-          <Button onClick={save} className="flex-1">{saved ? "Saved ♡" : "Save changes"}</Button>
-          <Button variant="soft" onClick={async () => upsertBot(await api.updateBot(bot.id, { pinned: !bot.pinned }))} aria-label={bot.pinned ? "Unpin" : "Pin"}>
+          <Button onClick={save} className="flex-1">Save changes</Button>
+          <Button variant="soft" onClick={async () => { const b = await attempt(() => api.updateBot(bot.id, { pinned: !bot.pinned }), bot.pinned ? "Unpinned" : "Pinned"); if (b) upsertBot(b); }} aria-label={bot.pinned ? "Unpin" : "Pin"}>
             <Icon.pin /> {bot.pinned ? "Unpin" : "Pin"}
           </Button>
         </div>
@@ -107,7 +109,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
             <div className="flex items-center gap-2">
               <span className="text-[14px] flex-1">Archive {bot.name}? Their chat is kept.</span>
               <Button variant="ghost" onClick={() => setConfirm(false)}>Keep</Button>
-              <Button variant="danger" onClick={async () => { await api.archiveBot(bot.id); onClose(); }}>Archive</Button>
+              <Button variant="danger" onClick={async () => { if (await attempt(() => api.archiveBot(bot.id), `${bot.name} archived`) !== undefined) onClose(); }}>Archive</Button>
             </div>
           ) : (
             <Button variant="danger" onClick={() => setConfirm(true)}>Archive bot</Button>

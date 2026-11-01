@@ -13,8 +13,11 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 });
 
 export function renderMarkdown(src: string): string {
-  return DOMPurify.sanitize(marked.parse(src, { async: false }) as string, {
-    FORBID_TAGS: ["style", "form", "input", "iframe", "img"],
+  const html = DOMPurify.sanitize(marked.parse(src, { async: false }) as string, {
+    FORBID_TAGS: ["style", "form", "input", "iframe", "img", "button"],
     FORBID_ATTR: ["style"],
   });
+  // Code blocks get a copy button. It's added after sanitizing, from a
+  // fixed string, so bot text can never inject one.
+  return html.replace(/<pre>/g, '<div class="code-block"><button type="button" class="copy-code" aria-label="Copy code">Copy</button><pre>').replace(/<\/pre>/g, "</pre></div>");
 }

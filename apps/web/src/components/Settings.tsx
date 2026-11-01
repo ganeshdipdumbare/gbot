@@ -4,6 +4,7 @@ import { Gbot } from "@gbot/characters";
 import { api, type ApprovalMode, type MCPServer, type Skill, type ToolRule, type VoiceInfo } from "../lib/api";
 import { set, useStore } from "../lib/store";
 import { voiceInfo } from "../lib/voice";
+import { attempt, toast } from "../lib/toast";
 import { Modal } from "./Modal";
 import { ModelSelect, useModels } from "./ModelSelect";
 import { invalidateSkills } from "./Composer";
@@ -97,7 +98,7 @@ function General() {
                 <span className={`text-[11px] font-bold uppercase tracking-wide w-12 ${r.rule === "allow" ? "text-emerald-600 dark:text-emerald-400" : "text-danger"}`}>{r.rule}</span>
                 <code className="flex-1 text-[13px] truncate">{r.tool.replace(/^m[0-9a-f]{8}__/, "")}</code>
                 <button className="text-ink-2 hover:text-ink cursor-pointer" aria-label={`Remove rule for ${r.tool}`}
-                  onClick={async () => setRules((await api.setRule(r.tool, "")).rules)}><Icon.close /></button>
+                  onClick={async () => { const r2 = await attempt(() => api.setRule(r.tool, ""), "Rule removed"); if (r2) setRules(r2.rules); }}><Icon.close /></button>
               </li>
             ))}
           </ul>
@@ -175,8 +176,8 @@ function Integrations() {
                 <div className="font-semibold text-[14px]">{m.name}</div>
                 <div className="text-[12.5px] text-ink-2 truncate">{m.url}</div>
               </div>
-              <Toggle on={m.enabled} label={m.enabled ? "Turn off" : "Turn on"} onChange={async (v) => { await api.toggleMcp(m.id, v); load(); }} />
-              <button className="text-ink-2 hover:text-danger cursor-pointer" aria-label={`Remove ${m.name}`} onClick={async () => { await api.deleteMcp(m.id); load(); }}><Icon.trash /></button>
+              <Toggle on={m.enabled} label={m.enabled ? "Turn off" : "Turn on"} onChange={async (v) => { await attempt(() => api.toggleMcp(m.id, v), v ? `${m.name} on` : `${m.name} off`); load(); }} />
+              <button className="text-ink-2 hover:text-danger cursor-pointer" aria-label={`Remove ${m.name}`} onClick={async () => { await attempt(() => api.deleteMcp(m.id), `${m.name} removed`); load(); }}><Icon.trash /></button>
             </div>
             <div className="mt-2 text-[12.5px]">
               {m.status === "connected" ? (
@@ -209,6 +210,7 @@ function Skills() {
     try {
       await api.saveSkill({ name: edit!.name ?? "", description: edit!.description ?? "", body: edit!.body ?? "" });
       invalidateSkills();
+      toast("Skill saved");
       setEdit(null);
       load();
     } catch (e) { setError((e as Error).message); }
@@ -254,7 +256,7 @@ function Skills() {
               <div className="text-[12.5px] text-ink-2 truncate">{k.description || "No description"}</div>
             </button>
             <button className="text-ink-2 hover:text-danger cursor-pointer" aria-label={`Delete ${k.name}`}
-              onClick={async () => { await api.deleteSkill(k.id); invalidateSkills(); load(); }}><Icon.trash /></button>
+              onClick={async () => { await attempt(() => api.deleteSkill(k.id), "Skill deleted"); invalidateSkills(); load(); }}><Icon.trash /></button>
           </li>
         ))}
       </ul>

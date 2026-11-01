@@ -18,7 +18,7 @@ export function Button({ variant = "primary", className = "", children, ...rest 
     <motion.button
       whileTap={{ scale: 0.97 }}
       transition={{ duration: 0.1 }}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3.5 h-8 text-[13px] font-medium transition-[background-color,opacity,color] duration-[120ms] disabled:opacity-40 disabled:pointer-events-none cursor-pointer select-none ${variants[variant]} ${className}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3.5 h-8 text-[13px] font-medium transition-colors duration-[120ms] disabled:opacity-40 disabled:pointer-events-none cursor-pointer select-none ${variants[variant]} ${className}`}
       {...rest}
     >
       {children}
@@ -30,7 +30,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   return (
     <input
       ref={ref}
-      className={`w-full h-9 rounded-[10px] bg-bg hairline px-3 text-[14px] text-ink placeholder:text-ink-3 outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)] transition-shadow duration-[120ms] ${className}`}
+      className={`w-full h-9 rounded-[10px] bg-surface hairline px-3 text-[14px] text-ink placeholder:text-ink-3 outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)] transition-shadow duration-[120ms] ${className}`}
       {...rest}
     />
   );
@@ -40,7 +40,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
   return (
     <textarea
       ref={ref}
-      className={`w-full rounded-[10px] bg-bg hairline px-3 py-2 text-[14px] leading-5 text-ink placeholder:text-ink-3 outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)] transition-shadow duration-[120ms] resize-none ${className}`}
+      className={`w-full rounded-[10px] bg-surface hairline px-3 py-2 text-[14px] leading-5 text-ink placeholder:text-ink-3 outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)] transition-shadow duration-[120ms] resize-none ${className}`}
       {...rest}
     />
   );
@@ -100,6 +100,7 @@ export const Icon = {
   terminal: () => <I><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9l3 3-3 3M12 15h5" /></I>,
   play: () => <I><path d="M8 5.5v13l10-6.5z" /></I>,
   trash: () => <I><path d="M5 7h14M10 11v6M14 11v6M7 7l1 12h8l1-12M9.5 7V4.5h5V7" /></I>,
+  copy: () => <I><rect x="8" y="8" width="12" height="12" rx="2.5" /><path d="M16 8V6.5A2.5 2.5 0 0013.5 4h-7A2.5 2.5 0 004 6.5v7A2.5 2.5 0 006.5 16H8" /></I>,
   check: () => <I><path d="M5 12.5l4.5 4.5L19 7.5" /></I>,
   heart: () => <I><path d="M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z" /></I>,
 };

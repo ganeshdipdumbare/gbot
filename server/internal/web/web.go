@@ -63,6 +63,10 @@ func contentType(p string) string {
 		return "image/svg+xml"
 	case ".woff2":
 		return "font/woff2"
+	case ".png":
+		return "image/png"
+	case ".webmanifest":
+		return "application/manifest+json"
 	}
 	return ""
 }
