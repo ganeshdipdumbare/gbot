@@ -24,6 +24,7 @@ export default function Gallery() {
           <Gbot key={shape} look={{ shape, hue: hueNames[i % hueNames.length], eyes: eyeStyles[i % eyeStyles.length] }} seed={shape} size={120} lookAt={gaze} />
         ))}
       </section>
+      <Lifecycle />
       <section className="flex flex-wrap gap-5 items-end">
         {moods.map((mood) => (
           <div key={mood} className="text-center text-xs text-ink-2">
@@ -39,5 +40,27 @@ export default function Gallery() {
         {Array.from({ length: 48 }, (_, i) => <Gbot key={i} seed={"g" + i} size={24} />)}
       </section>
     </div>
+  );
+}
+
+// One bot moving through its lifecycle, like the avatar motion demo on
+// Grok Bot's design page. Picking a state shows the transition into it.
+function Lifecycle() {
+  const states: Mood[] = ["idle", "working", "waiting", "blocked", "thinking", "done"];
+  const [mood, setMood] = useState<Mood>("idle");
+  return (
+    <section className="rounded-2xl bg-surface p-6 max-w-[560px]">
+      <div className="grid place-items-center h-44">
+        <Gbot look={{ shape: "circle", hue: "blue", eyes: "up" }} seed="life" size={128} mood={mood} />
+      </div>
+      <div className="flex gap-1 mt-4" role="tablist">
+        {states.map((m) => (
+          <button key={m} role="tab" aria-selected={m === mood} onClick={() => setMood(m)}
+            className={`flex-1 h-8 rounded-full text-[13px] capitalize cursor-pointer transition-colors duration-[120ms] ${m === mood ? "bg-emphasis text-on-emphasis" : "text-ink-2 hover:bg-hover"}`}>
+            {m}
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }

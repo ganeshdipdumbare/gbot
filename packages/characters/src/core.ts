@@ -3,3 +3,4 @@
 export * from "./traits";
 export * from "./parts";
 export * from "./pose";
+export * from "./motion";
