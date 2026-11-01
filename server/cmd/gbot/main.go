@@ -88,7 +88,7 @@ func run(cmd string, log *slog.Logger) error {
 
 	var comp *computer.Manager
 	if env("GBOT_COMPUTER", "on") != "off" {
-		comp = computer.New(env("GBOT_COMPUTER_IMAGE", "gbot-computer:latest"), log)
+		comp = computer.New(env("GBOT_COMPUTER_IMAGE", "gbot-computer:latest"), os.Getenv("GBOT_COMPUTER_BACKEND"), log)
 		comp.Adopt(ctx)
 		comp.OnChange = func(botID string, cs computer.Status) {
 			if b, err := st.GetBotAnySpace(context.Background(), botID); err == nil {

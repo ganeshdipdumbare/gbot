@@ -97,6 +97,8 @@ export const Icon = {
   users: () => <I><circle cx="9" cy="9" r="3.5" fill="currentColor" opacity=".15" /><circle cx="9" cy="9" r="3.5" /><path d="M3 19a6 6 0 0112 0M16 5.5a3.5 3.5 0 010 7M18 19a6 6 0 00-2.5-4.9" /></I>,
   spark: () => <I><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" fill="currentColor" opacity=".15" /><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 17l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" /></I>,
   globe: () => <I><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17" /></I>,
+  folder: () => <I><path d="M3 7.5A2.5 2.5 0 015.5 5H9l2 2h7.5A2.5 2.5 0 0121 9.5v7A2.5 2.5 0 0118.5 19h-13A2.5 2.5 0 013 16.5z" fill="currentColor" opacity=".15" /><path d="M3 7.5A2.5 2.5 0 015.5 5H9l2 2h7.5A2.5 2.5 0 0121 9.5v7A2.5 2.5 0 0118.5 19h-13A2.5 2.5 0 013 16.5z" /></I>,
+  terminal: () => <I><rect x="3" y="4" width="18" height="16" rx="3" fill="currentColor" opacity=".15" /><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9l3 3-3 3M12 15h5" /></I>,
   play: () => <I><path d="M8 5.5v13l10-6.5z" fill="currentColor" opacity=".2" /><path d="M8 5.5v13l10-6.5z" /></I>,
   trash: () => <I><path d="M5 7h14M10 11v6M14 11v6M7 7l1 12h8l1-12M9.5 7V4.5h5V7" /></I>,
   check: () => <I><path d="M5 12.5l4.5 4.5L19 7.5" /></I>,

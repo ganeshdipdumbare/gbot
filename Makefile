@@ -12,8 +12,9 @@ web:           ## build the web app into the server binary
 server:        ## build bin/gbot
 	cd server && go build -trimpath -o ../bin/gbot ./cmd/gbot
 
-computer:      ## build the bots' computer image (Docker)
+computer:      ## build the bots' computer image, and load it into microsandbox if installed
 	docker build -t gbot-computer:latest infra/sandboxes/computer
+	@if command -v msb >/dev/null; then docker save gbot-computer:latest | msb load -t gbot-computer:latest; fi
 
 run: db web server   ## build everything and start gbot on http://127.0.0.1:8080
 	./bin/gbot serve

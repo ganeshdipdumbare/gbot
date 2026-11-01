@@ -1,0 +1,6 @@
+[begin] (gbot)
+  [exec] (Browser) {gbot-browser}
+  [exec] (Terminal) {gbot-terminal}
+  [exec] (Files) {gbot-files}
+  [exec] (Activity) {gbot-focus GbotActivity bash -c '. /tmp/gbot/xterm.env; xterm "${XT[@]}" -class GbotActivity -title Activity -e tail -n 200 -F /tmp/gbot/activity.log'}
+[end]

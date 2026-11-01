@@ -14,7 +14,7 @@ export interface Bot {
 export interface Group { id: string; spaceId: string; name: string; botIds: string[]; createdAt: string; lastMessage?: Message }
 export interface Presence { state: "idle" | "thinking" | "working" | "waiting" | "blocked" | "done"; detail?: string; queued?: number; live?: boolean }
 export interface Model { id: string; label: string; provider: string; local: boolean; tools: boolean; caps?: string[] }
-export interface ComputerStatus { state: "off" | "starting" | "on"; controller: "bot" | "user"; network: boolean; available: boolean }
+export interface ComputerStatus { state: "off" | "starting" | "on"; controller: "bot" | "user"; network: boolean; available: boolean; backend: "microsandbox" | "docker" }
 export interface Routine {
   id: string; botId: string; name: string; prompt: string; kind: "schedule" | "webhook"; schedule?: string; when: string;
   active: boolean; nextRunAt?: string; lastRunAt?: string; webhookUrl?: string; secret?: string;
@@ -64,7 +64,7 @@ export const api = {
     req<Message>("POST", `/api/cards/${cardId}`, b),
 
   computer: (id: string) => req<ComputerStatus>("GET", `${bot(id)}/computer`),
-  computerAction: (id: string, action: "start" | "stop" | "control" | "input", body: unknown = {}) =>
+  computerAction: (id: string, action: "start" | "stop" | "control" | "input" | "show", body: unknown = {}) =>
     req<ComputerStatus>("POST", `${bot(id)}/computer/${action}`, body),
   screenUrl: (id: string) => `${bot(id)}/computer/screen?t=${Date.now()}`,
 

@@ -1,0 +1,62 @@
+! A flat dark style to match gbot.
+*font: DejaVu Sans-9
+*textColor: #E8E8EA
+*justify: left
+toolbar: flat solid
+toolbar.color: #18181B
+toolbar.borderWidth: 0
+toolbar.clock: flat solid
+toolbar.clock.color: #18181B
+toolbar.clock.textColor: #B3B3BA
+toolbar.iconbar.empty: flat solid
+toolbar.iconbar.empty.color: #18181B
+toolbar.iconbar.focused: flat solid
+toolbar.iconbar.focused.color: #2A2A30
+toolbar.iconbar.focused.textColor: #FFFFFF
+toolbar.iconbar.unfocused: flat solid
+toolbar.iconbar.unfocused.color: #18181B
+toolbar.iconbar.unfocused.textColor: #9A9AA2
+window.title.focus: flat solid
+window.title.focus.color: #232328
+window.title.unfocus: flat solid
+window.title.unfocus.color: #1B1B1F
+window.label.focus: flat solid
+window.label.focus.color: #232328
+window.label.focus.textColor: #E8E8EA
+window.label.unfocus: flat solid
+window.label.unfocus.color: #1B1B1F
+window.label.unfocus.textColor: #8A8A92
+window.button.focus: flat solid
+window.button.focus.color: #232328
+window.button.focus.picColor: #B3B3BA
+window.button.unfocus: flat solid
+window.button.unfocus.color: #1B1B1F
+window.button.unfocus.picColor: #6A6A72
+window.button.pressed: flat solid
+window.button.pressed.color: #8B5CF6
+window.handle.focus: flat solid
+window.handle.focus.color: #232328
+window.handle.unfocus: flat solid
+window.handle.unfocus.color: #1B1B1F
+window.grip.focus: flat solid
+window.grip.focus.color: #232328
+window.grip.unfocus: flat solid
+window.grip.unfocus.color: #1B1B1F
+window.frame.focusColor: #2A2A30
+window.frame.unfocusColor: #1B1B1F
+window.borderWidth: 1
+window.borderColor: #2A2A30
+window.title.height: 26
+window.justify: center
+window.handleWidth: 3
+menu.frame: flat solid
+menu.frame.color: #1B1B1F
+menu.frame.textColor: #E8E8EA
+menu.title: flat solid
+menu.title.color: #232328
+menu.title.textColor: #FFFFFF
+menu.hilite: flat solid
+menu.hilite.color: #8B5CF6
+menu.hilite.textColor: #FFFFFF
+menu.borderWidth: 0
+background: none

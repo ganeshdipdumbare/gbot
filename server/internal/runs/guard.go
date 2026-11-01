@@ -117,7 +117,7 @@ func guardPlugin() engine.Plugin {
 		ctx.SetPriority(5) // inside policy/audit, outside retries and logging
 
 		// Hide other accounts' MCP tools from the model.
-		ctx.OnStepPrepare(func(c context.Context, sc *sdk.StepContext) error {
+		ctx.BeforeStep(func(c context.Context, sc *sdk.StepContext) error {
 			rc := runFrom(c)
 			if rc == nil || sc.Request == nil {
 				return nil

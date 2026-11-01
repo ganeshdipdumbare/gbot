@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type WheelEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
@@ -71,13 +71,52 @@ function useScreen(botId: string, on: boolean, fps = 1.2) {
   return src;
 }
 
+type DeskApp = "browser" | "terminal" | "files";
+
+function AppDock({ current, onShow }: { current: DeskApp; onShow: (app: DeskApp) => void }) {
+  const apps: { id: DeskApp; label: string; icon: ReactNode }[] = [
+    { id: "browser", label: "Browser", icon: <Icon.globe /> },
+    { id: "terminal", label: "Terminal", icon: <Icon.terminal /> },
+    { id: "files", label: "Files", icon: <Icon.folder /> },
+  ];
+  return (
+    <div
+      className="absolute bottom-2.5 left-1/2 z-10 flex -translate-x-1/2 gap-1 rounded-full bg-black/75 p-1 shadow-pop backdrop-blur-sm"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {apps.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          aria-label={a.label}
+          title={a.label}
+          aria-pressed={current === a.id}
+          onClick={() => onShow(a.id)}
+          className={`grid size-9 cursor-pointer place-items-center rounded-full transition-colors ${current === a.id ? "bg-white text-[#16131C]" : "text-white/90 hover:bg-white/15"}`}
+        >
+          {a.icon}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) {
   const [status, update] = useComputer(bot);
   const presence = useStore((s) => s.presence[bot.id]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [app, setApp] = useState<DeskApp>("browser");
   const on = status?.state === "on";
   const src = useScreen(bot.id, on);
+
+  async function show(next: DeskApp) {
+    setApp(next);
+    setError("");
+    try { update(await api.computerAction(bot.id, "show", { app: next })); }
+    catch (e) { setError((e as Error).message); }
+  }
 
   async function act(a: "start" | "stop") {
     setBusy(true);
@@ -115,13 +154,14 @@ function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) 
               <div>
                 <Gbot look={bot.look} seed={bot.id} size={56} mood={status?.state === "starting" ? "working" : "sleepy"} className="mx-auto" />
                 <p className="text-[13px] text-ink-2 mt-2">
-                  {status?.available === false ? "Docker or the computer image isn't available. Run `make computer`." :
+                  {status?.available === false ? "The computer image isn't built yet. Run `make computer`." :
                     status?.state === "starting" ? "Waking up…" : "Its computer wakes when it needs it."}
                 </p>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
+        {on && <AppDock current={app} onShow={show} />}
       </div>
 
       {on && (
@@ -129,7 +169,8 @@ function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) 
       )}
       {error && <p className="text-danger text-[13px]">{error}</p>}
       <p className="text-[12.5px] text-ink-2 leading-relaxed">
-        A private Linux desktop with a browser, terminal and files, running on this machine in Docker.
+        A private Linux desktop with a browser, terminal and files, running on this machine
+        {status?.backend === "microsandbox" ? " in its own microVM." : " in a Docker container."}
         {bot.computerNetwork ? " It can reach the internet." : " It has no network until you allow it in the bot's settings."}
       </p>
     </div>
@@ -144,8 +185,16 @@ const keyMap: Record<string, string> = {
 function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: () => void }) {
   const [status, update] = useComputer(bot);
   const [error, setError] = useState("");
+  const [app, setApp] = useState<DeskApp>("browser");
   const area = useRef<HTMLDivElement>(null);
   const src = useScreen(bot.id, open && status?.state === "on", 4);
+
+  async function show(next: DeskApp) {
+    setApp(next);
+    setError("");
+    try { await api.computerAction(bot.id, "show", { app: next }); }
+    catch (e) { setError((e as Error).message); }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -196,6 +245,7 @@ function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: ()
               aria-label={`${bot.name}'s screen. Click and type to control it.`}
             >
               {src && <img src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />}
+              <AppDock current={app} onShow={show} />
             </motion.div>
           </div>
           {error && <p className="text-center text-red-300 text-sm pb-3">{error}</p>}

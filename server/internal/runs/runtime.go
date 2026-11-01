@@ -106,15 +106,15 @@ func New(cfg Config, st *store.Store, hub *Hub, cat *models.Catalog, log *slog.L
 		eipagent.WithMaxSteps(max(cfg.MaxSteps, 1)),
 		eipagent.WithLogger(func(scope, msg string) { log.Debug(msg, "plugin", scope) }),
 		// Local models are the default and need no key.
-		eipagent.WithPluginSpec(engine.PluginSpec{Use: "llm_openai", As: "llm_ollama", Config: map[string]any{
+		eipagent.WithPluginSpec(engine.PluginSpec{Use: "model_openai", As: "llm_ollama", Config: map[string]any{
 			"name": "ollama", "base_url": strings.TrimRight(cfg.OllamaHost, "/") + "/v1", "api_key": "",
 		}}),
 	}
 	if cfg.Mock {
-		opts = append(opts, eipagent.WithPlugin("llm_mock", map[string]any{"name": "mock"}))
+		opts = append(opts, eipagent.WithPlugin("model_mock", map[string]any{"name": "mock"}))
 	}
 	if cfg.MockScript != nil {
-		opts = append(opts, eipagent.WithPluginSpec(engine.PluginSpec{Use: "llm_mock", As: "llm_mockscript",
+		opts = append(opts, eipagent.WithPluginSpec(engine.PluginSpec{Use: "model_mock", As: "llm_mockscript",
 			Config: map[string]any{"name": "mockscript", "script": cfg.MockScript}}))
 	}
 	for _, p := range models.PaidProviders() {
@@ -124,10 +124,10 @@ func New(cfg Config, st *store.Store, hub *Hub, cat *models.Catalog, log *slog.L
 	}
 	opts = append(opts,
 		eipagent.WithPlugin("secrets_env", map[string]any{"allow": []any{"EIP_DATABASE_URL", "*_API_KEY"}, "grants": grants}),
-		eipagent.WithPlugins("db_sql", "checkpoint_sql", "store_sql", "memory_store", "tool_time"),
-		eipagent.WithPlugin("mw_retry", map[string]any{"max_retries": 2}),
-		eipagent.WithPlugin("mw_limits", map[string]any{"model_calls_run": 24, "tool_calls_run": 48}),
-		eipagent.WithPlugin("mw_summarize", map[string]any{"trigger_messages": 60, "keep_messages": 20}),
+		eipagent.WithPlugins("db_sql", "threads_sql", "memory_sql", "tool_memory", "tool_time"),
+		eipagent.WithPlugin("hook_retry", map[string]any{"max_retries": 2}),
+		eipagent.WithPlugin("hook_limits", map[string]any{"model_calls_run": 24, "tool_calls_run": 48}),
+		eipagent.WithPlugin("hook_summarize", map[string]any{"trigger_messages": 60, "keep_messages": 20}),
 		eipagent.WithCompiledPlugin(guardPlugin()),
 		// Default model only matters for the agent's own bookkeeping;
 		// every run passes the bot's model.
@@ -150,15 +150,15 @@ func (r *Runtime) Use(c *computer.Manager, rs *routines.Service) {
 func paidSpec(p string) (engine.PluginSpec, string) {
 	switch p {
 	case "anthropic":
-		return engine.PluginSpec{Use: "llm_anthropic", As: "llm_anthropic", Config: map[string]any{"name": "anthropic"}}, "ANTHROPIC_API_KEY"
+		return engine.PluginSpec{Use: "model_anthropic", As: "llm_anthropic", Config: map[string]any{"name": "anthropic"}}, "ANTHROPIC_API_KEY"
 	case "gemini":
-		return engine.PluginSpec{Use: "llm_gemini", As: "llm_gemini", Config: map[string]any{"name": "gemini"}}, "GEMINI_API_KEY"
+		return engine.PluginSpec{Use: "model_gemini", As: "llm_gemini", Config: map[string]any{"name": "gemini"}}, "GEMINI_API_KEY"
 	case "openai":
-		return engine.PluginSpec{Use: "llm_openai", As: "llm_openai", Config: map[string]any{"name": "openai"}}, "OPENAI_API_KEY"
+		return engine.PluginSpec{Use: "model_openai", As: "llm_openai", Config: map[string]any{"name": "openai"}}, "OPENAI_API_KEY"
 	}
 	urls := map[string]string{"deepseek": "https://api.deepseek.com", "groq": "https://api.groq.com/openai/v1", "openrouter": "https://openrouter.ai/api/v1"}
 	key := strings.ToUpper(p) + "_API_KEY"
-	return engine.PluginSpec{Use: "llm_openai", As: "llm_" + p, Config: map[string]any{
+	return engine.PluginSpec{Use: "model_openai", As: "llm_" + p, Config: map[string]any{
 		"name": p, "base_url": urls[p], "api_key": "secret://" + key,
 	}}, key
 }

@@ -1,16 +1,16 @@
-// Package computer gives each bot its own Linux desktop in a Docker
-// container: a browser, a terminal and files. gbot talks to it only
-// through `docker exec`, so a computer needs no open ports and has no
-// network at all unless its owner turns network on.
+// Package computer gives each bot its own Linux desktop, in the style of
+// Rakazo's: a browser, a terminal and files, with an Activity terminal
+// that shows everything the bot runs. It runs as a microVM
+// (microsandbox) or a container (Docker). gbot only runs commands inside
+// it, so a computer opens no ports and has no network at all unless its
+// owner turns network on.
 package computer
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -31,7 +31,8 @@ type Status struct {
 	Controller string `json:"controller"` // bot | user
 	Network    bool   `json:"network"`
 	Image      string `json:"image"`
-	Available  bool   `json:"available"` // Docker and the image are present
+	Backend    string `json:"backend"`   // microsandbox | docker
+	Available  bool   `json:"available"` // the backend and the image are present
 }
 
 type box struct {
@@ -47,6 +48,7 @@ type Manager struct {
 	Image   string
 	IdleTTL time.Duration
 	log     *slog.Logger
+	d       driver
 
 	mu    sync.Mutex
 	boxes map[string]*box
@@ -54,44 +56,29 @@ type Manager struct {
 	OnChange func(botID string, st Status)
 }
 
-func New(image string, log *slog.Logger) *Manager {
-	m := &Manager{Image: image, IdleTTL: 20 * time.Minute, log: log, boxes: map[string]*box{}}
+// New picks a backend: "microsandbox", "docker", or "" for microsandbox
+// when it's installed and Docker otherwise.
+func New(image, backend string, log *slog.Logger) *Manager {
+	m := &Manager{Image: image, IdleTTL: 20 * time.Minute, log: log, d: pick(backend), boxes: map[string]*box{}}
 	go m.reap()
 	return m
 }
 
+func (m *Manager) Backend() string { return m.d.name() }
+
 var safeID = regexp.MustCompile(`^[a-f0-9-]{36}$`)
 
-func name(botID string) string { return "gbot-computer-" + botID }
-
-func docker(ctx context.Context, stdin []byte, args ...string) (string, string, int, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	err := cmd.Run()
-	code := 0
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		code, err = ee.ExitCode(), nil
-	}
-	return out.String(), errb.String(), code, err
-}
-
-// Available reports whether Docker runs and the computer image exists.
+// Available reports whether the backend runs and has the computer image.
 func (m *Manager) Available(ctx context.Context) bool {
-	c, cancel := context.WithTimeout(ctx, 3*time.Second)
+	c, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, _, code, err := docker(c, nil, "image", "inspect", "--format", "{{.Id}}", m.Image)
-	return err == nil && code == 0
+	return m.d.available(c, m.Image)
 }
 
 func (m *Manager) Status(ctx context.Context, botID string) Status {
 	m.mu.Lock()
 	b := m.boxes[botID]
-	st := Status{State: "off", Controller: "bot", Image: m.Image}
+	st := Status{State: "off", Controller: "bot", Image: m.Image, Backend: m.d.name(), Available: true}
 	if b != nil {
 		st.State, st.Controller, st.Network = "on", b.controller, b.network
 		if b.starting {
@@ -101,8 +88,6 @@ func (m *Manager) Status(ctx context.Context, botID string) Status {
 	m.mu.Unlock()
 	if st.State == "off" {
 		st.Available = m.Available(ctx)
-	} else {
-		st.Available = true
 	}
 	return st
 }
@@ -113,8 +98,8 @@ func (m *Manager) changed(botID string) {
 	}
 }
 
-// Ensure starts the bot's computer if needed. network=false gives the
-// container no network interface at all.
+// Ensure starts the bot's computer if needed. network=false gives it no
+// network at all.
 func (m *Manager) Ensure(ctx context.Context, botID string, network bool) error {
 	if !safeID.MatchString(botID) {
 		return errors.New("bad bot id")
@@ -132,13 +117,17 @@ func (m *Manager) Ensure(ctx context.Context, botID string, network bool) error 
 	}
 	if b := m.boxes[botID]; b != nil && b.starting {
 		m.mu.Unlock()
-		for i := 0; i < 100; i++ {
+		for i := 0; i < 300; i++ {
 			time.Sleep(100 * time.Millisecond)
 			m.mu.Lock()
 			ok := m.boxes[botID] != nil && !m.boxes[botID].starting
+			gone := m.boxes[botID] == nil
 			m.mu.Unlock()
 			if ok {
 				return nil
+			}
+			if gone {
+				return errors.New("the computer failed to start")
 			}
 		}
 		return errors.New("the computer is taking too long to start")
@@ -160,40 +149,23 @@ func (m *Manager) Ensure(ctx context.Context, botID string, network bool) error 
 }
 
 func (m *Manager) start(ctx context.Context, botID string, network bool) (string, error) {
-	// A stopped container from before keeps nothing we need; the home
-	// volume holds the bot's files.
-	_, _, _, _ = docker(ctx, nil, "rm", "-f", name(botID))
-	args := []string{"run", "-d", "--name", name(botID),
-		"--label", "gbot.bot=" + botID,
-		"--init", "--cap-drop=ALL", "--security-opt", "no-new-privileges",
-		"--pids-limit=512", "--memory=1536m", "--cpus=1.5", "--shm-size=512m",
-		"--tmpfs", "/tmp:rw,nosuid,size=512m",
-		"-v", "gbot-home-" + botID + ":/home/gbot",
+	if !m.Available(ctx) {
+		return "", fmt.Errorf("the computer image %s isn't built for %s yet: run `make computer`", m.Image, m.d.name())
 	}
-	if !network {
-		args = append(args, "--network", "none")
-	}
-	args = append(args, m.Image)
-	out, errOut, code, err := docker(ctx, nil, args...)
+	begin := time.Now()
+	id, err := m.d.start(ctx, botID, m.Image, network)
 	if err != nil {
-		return "", fmt.Errorf("docker: %w (is Docker running?)", err)
+		return "", err
 	}
-	if code != 0 {
-		if strings.Contains(errOut, "Unable to find image") || strings.Contains(errOut, "pull access denied") {
-			return "", fmt.Errorf("the computer image %s isn't built yet: run `make computer`", m.Image)
-		}
-		return "", fmt.Errorf("docker run: %s", strings.TrimSpace(errOut))
-	}
-	id := strings.TrimSpace(out)
 	// Wait for the virtual screen.
-	for i := 0; i < 50; i++ {
-		_, _, c, _ := docker(ctx, nil, "exec", id, "xdpyinfo", "-display", ":1")
+	for i := 0; i < 100; i++ {
+		_, _, c, _ := m.d.exec(ctx, id, "gbot", []string{"DISPLAY=:1"}, nil, false, "xdpyinfo")
 		if c == 0 {
 			break
 		}
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
-	m.log.Info("computer started", "bot", botID, "network", network)
+	m.log.Info("computer started", "bot", botID, "backend", m.d.name(), "network", network, "took", time.Since(begin).Round(time.Millisecond))
 	return id, nil
 }
 
@@ -205,7 +177,9 @@ func (m *Manager) Stop(ctx context.Context, botID string) {
 	if b == nil {
 		return
 	}
-	_, _, _, _ = docker(ctx, nil, "rm", "-f", name(botID))
+	if b.id != "" {
+		m.d.stop(ctx, b.id)
+	}
 	m.log.Info("computer stopped", "bot", botID)
 	m.changed(botID)
 }
@@ -240,27 +214,26 @@ type ExecResult struct {
 	Code           int
 }
 
-// Exec runs a shell command as the computer's unprivileged user.
+// Exec runs a shell command as the computer's unprivileged user. It also
+// appears in the Activity terminal on the computer's screen.
 func (m *Manager) Exec(ctx context.Context, botID, command string, timeout time.Duration) (*ExecResult, error) {
-	return m.exec(ctx, botID, command, timeout, nil)
-}
-
-func (m *Manager) exec(ctx context.Context, botID, command string, timeout time.Duration, env []string) (*ExecResult, error) {
 	id, err := m.container(botID, true)
 	if err != nil {
 		return nil, err
 	}
 	c, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	args := []string{"exec", "-w", "/home/gbot"}
-	for _, e := range env {
-		args = append(args, "-e", e)
-	}
-	out, errOut, code, err := docker(c, nil, append(args, id, "bash", "-lc", command)...)
+	out, errOut, code, err := m.d.exec(c, id, "gbot", []string{"GBOT_CMD=" + command}, nil, false, "/usr/local/bin/gbot-run")
 	if c.Err() != nil {
 		return &ExecResult{out, errOut + "\n(timed out)", 124}, nil
 	}
 	return &ExecResult{out, errOut, code}, err
+}
+
+// note adds a line to the Activity terminal.
+func (m *Manager) note(ctx context.Context, id, symbol, color, text string) {
+	line := fmt.Sprintf("\n\033[38;5;%sm%s\033[0m %s\n", color, symbol, text)
+	_, _, _, _ = m.d.exec(ctx, id, "gbot", nil, []byte(line), false, "sh", "-c", "cat >> /tmp/gbot/activity.log")
 }
 
 func (m *Manager) WriteFile(ctx context.Context, botID, path string, content []byte) error {
@@ -268,9 +241,12 @@ func (m *Manager) WriteFile(ctx context.Context, botID, path string, content []b
 	if err != nil {
 		return err
 	}
-	_, errOut, code, err := docker(ctx, content, "exec", "-i", "-w", "/home/gbot", id, "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", path)
+	_, errOut, code, err := m.d.exec(ctx, id, "gbot", nil, content, false, "sh", "-c", `cd "$HOME" && mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", path)
 	if err == nil && code != 0 {
 		err = errors.New(strings.TrimSpace(errOut))
+	}
+	if err == nil {
+		m.note(ctx, id, "✎", "114", fmt.Sprintf("Wrote %s (%d bytes)", path, len(content)))
 	}
 	return err
 }
@@ -280,23 +256,44 @@ func (m *Manager) ReadFile(ctx context.Context, botID, path string, max int) (st
 	if err != nil {
 		return "", err
 	}
-	out, errOut, code, err := docker(ctx, nil, "exec", "-w", "/home/gbot", id, "head", "-c", strconv.Itoa(max), "--", path)
+	out, errOut, code, err := m.d.exec(ctx, id, "gbot", nil, nil, false, "sh", "-c", `cd "$HOME" && head -c "$1" -- "$2"`, "sh", strconv.Itoa(max), path)
 	if err == nil && code != 0 {
 		err = errors.New(strings.TrimSpace(errOut))
+	}
+	if err == nil {
+		m.note(ctx, id, "◇", "110", "Read "+path)
 	}
 	return out, err
 }
 
-// OpenBrowser shows a page on the computer's screen.
+// Show raises one app on the screen: the browser, the shell, or the file manager.
+func (m *Manager) Show(ctx context.Context, botID, app string) error {
+	script, ok := map[string]string{
+		"browser":  "/usr/local/bin/gbot-browser",
+		"terminal": "/usr/local/bin/gbot-terminal",
+		"files":    "/usr/local/bin/gbot-files",
+	}[app]
+	if !ok {
+		return errors.New("unknown app")
+	}
+	id, err := m.container(botID, false)
+	if err != nil {
+		return err
+	}
+	_, errOut, code, err := m.d.exec(ctx, id, "gbot", []string{"DISPLAY=:1"}, nil, true, script)
+	if err == nil && code != 0 {
+		err = errors.New(strings.TrimSpace(errOut))
+	}
+	return err
+}
+
+// OpenBrowser shows a page on the computer's screen, maximized.
 func (m *Manager) OpenBrowser(ctx context.Context, botID, url string) error {
 	id, err := m.container(botID, true)
 	if err != nil {
 		return err
 	}
-	_, _, _, _ = docker(ctx, nil, "exec", id, "pkill", "-f", "chromium")
-	_, errOut, code, err := docker(ctx, nil, "exec", "-d", id, "chromium", "--no-sandbox", "--no-first-run",
-		"--disable-dev-shm-usage", "--no-default-browser-check", "--window-position=0,0",
-		fmt.Sprintf("--window-size=%d,%d", ScreenW, ScreenH), "--user-data-dir=/home/gbot/.browser", url)
+	_, errOut, code, err := m.d.exec(ctx, id, "gbot", []string{"DISPLAY=:1"}, nil, true, "/usr/local/bin/gbot-browser", url)
 	if err == nil && code != 0 {
 		err = errors.New(strings.TrimSpace(errOut))
 	}
@@ -305,20 +302,20 @@ func (m *Manager) OpenBrowser(ctx context.Context, botID, url string) error {
 
 // ReadPage fetches a page with headless Chromium and returns its text.
 func (m *Manager) ReadPage(ctx context.Context, botID, url string) (string, error) {
-	r, err := m.exec(ctx, botID, `chromium --headless --no-sandbox --disable-gpu --dump-dom "$GBOT_URL" 2>/dev/null | python3 -c '
+	id, err := m.container(botID, true)
+	if err != nil {
+		return "", err
+	}
+	m.note(ctx, id, "◍", "111", "Reading "+url)
+	c, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	out, _, _, err := m.d.exec(c, id, "gbot", []string{"GBOT_URL=" + url}, nil, false, "bash", "-c", `chromium --headless --no-sandbox --disable-gpu --dump-dom "$GBOT_URL" 2>/dev/null | python3 -c '
 import sys, html, re
 s = sys.stdin.read()
 s = re.sub(r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>", " ", s)
 s = re.sub(r"(?s)<[^>]+>", " ", s)
-print(re.sub(r"\s+", " ", html.unescape(s)).strip()[:12000])'`, 45*time.Second, []string{"GBOT_URL=" + url})
-	return pageText(r), err
-}
-
-func pageText(r *ExecResult) string {
-	if r == nil {
-		return ""
-	}
-	return r.Stdout
+print(re.sub(r"\s+", " ", html.unescape(s)).strip()[:12000])'`)
+	return out, err
 }
 
 // Screenshot returns the screen as a JPEG.
@@ -329,13 +326,11 @@ func (m *Manager) Screenshot(ctx context.Context, botID string) ([]byte, error) 
 	}
 	c, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(c, "docker", "exec", "-e", "DISPLAY=:1", id, "import", "-silent", "-window", "root", "-quality", "72", "jpg:-")
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("screenshot: %v %s", err, strings.TrimSpace(errb.String()))
+	out, errOut, code, err := m.d.exec(c, id, "gbot", []string{"DISPLAY=:1"}, nil, false, "/usr/local/bin/gbot-capture", "72")
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("screenshot: %s%s", strings.TrimSpace(errOut), errOrNil(err))
 	}
-	return out.Bytes(), nil
+	return []byte(out), nil
 }
 
 // TakeControl hands the screen to the person (true) or back to the bot.
@@ -351,7 +346,13 @@ func (m *Manager) TakeControl(botID string, user bool) error {
 	} else {
 		b.controller = "bot"
 	}
+	id := b.id
 	m.mu.Unlock()
+	if user {
+		m.note(context.Background(), id, "◐", "214", "You have control")
+	} else {
+		m.note(context.Background(), id, "◑", "141", "Control handed back")
+	}
 	m.changed(botID)
 	return nil
 }
@@ -415,7 +416,7 @@ func (m *Manager) Send(ctx context.Context, botID string, in Input) error {
 	default:
 		return errors.New("unknown input")
 	}
-	_, errOut, code, err := docker(ctx, nil, append([]string{"exec", "-e", "DISPLAY=:1", id, "xdotool"}, args...)...)
+	_, errOut, code, err := m.d.exec(ctx, id, "gbot", []string{"DISPLAY=:1"}, nil, false, append([]string{"xdotool"}, args...)...)
 	if err == nil && code != 0 {
 		err = errors.New(strings.TrimSpace(errOut))
 	}
@@ -424,18 +425,11 @@ func (m *Manager) Send(ctx context.Context, botID string, in Input) error {
 
 // Adopt finds computers left running by a previous server process.
 func (m *Manager) Adopt(ctx context.Context) {
-	out, _, code, err := docker(ctx, nil, "ps", "--filter", "label=gbot.bot", "--format", `{{.ID}} {{.Label "gbot.bot"}} {{.Networks}}`)
-	if err != nil || code != 0 {
-		return
-	}
+	fs := m.d.list(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		f := strings.Fields(line)
-		if len(f) < 2 || !safeID.MatchString(f[1]) {
-			continue
-		}
-		m.boxes[f[1]] = &box{id: f[0], network: len(f) > 2 && f[2] != "none", controller: "bot", lastUsed: time.Now()}
+	for _, f := range fs {
+		m.boxes[f.botID] = &box{id: f.id, controller: "bot", lastUsed: time.Now()}
 	}
 }
 

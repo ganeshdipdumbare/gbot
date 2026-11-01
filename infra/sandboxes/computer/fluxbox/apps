@@ -1,0 +1,18 @@
+[app] (class=GbotBrowser)
+  [Maximized] {yes}
+[end]
+[app] (class=Chromium)
+  [Maximized] {yes}
+[end]
+[app] (class=Pcmanfm)
+  [Maximized] {yes}
+[end]
+[app] (class=pcmanfm)
+  [Maximized] {yes}
+[end]
+[app] (class=GbotTerminal)
+  [Maximized] {yes}
+[end]
+[app] (class=Pcmanfm)
+  [Maximized] {no}
+[end]

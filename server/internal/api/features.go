@@ -177,6 +177,16 @@ func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = s.Computer.Send(r.Context(), b.ID, in)
+	case "show":
+		var body struct {
+			App string `json:"app"`
+		}
+		if !readJSON(w, r, &body) {
+			return
+		}
+		if err = s.Computer.Ensure(r.Context(), b.ID, b.Network); err == nil {
+			err = s.Computer.Show(r.Context(), b.ID, body.App)
+		}
 	default:
 		writeErr(w, 404, "not found")
 		return

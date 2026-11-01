@@ -10,9 +10,11 @@ needs you, stuck, done), and keep working while you keep chatting.
 - **Approvals and questions.** Bots ask before risky steps with a card in the
   chat (Ask, Auto or Never ask, plus allow/block lists). They ask you
   questions the same way. Cards never block the chat.
-- **A computer per bot.** A private Linux desktop with a browser, terminal and
-  files in Docker, with no network unless you allow it. Watch it live beside
-  the chat, or take control when it needs you (sign-ins, codes).
+- **A computer per bot.** A private Linux desktop (browser, terminal, files, and
+  an Activity log of everything the bot runs) in its own microVM via
+  [microsandbox](https://github.com/superradcompany/microsandbox), or a Docker
+  container. No network unless you allow it. Watch it live beside the chat, or
+  take control when it needs you (sign-ins, codes).
 - **Routines.** Prompts a bot runs on a schedule or when a webhook fires.
   Ask for one in chat, or set it up in the bot's panel.
 - **Integrations.** Remote MCP servers (tokens encrypted at rest, scoped to your
@@ -54,7 +56,14 @@ gh auth setup-git
 go env -w GOPRIVATE='github.com/ganeshdipdumbare/*'
 ```
 
-Build the bots' computer image once (optional, about 1 GB):
+Build the bots' computer image once (optional, about 1 GB, shared by every
+bot). For lightweight microVM computers (boot in under a second, about 75 MB
+of memory at idle), install microsandbox first; `make computer` loads the
+image into it:
+
+```bash
+brew install superradcompany/tap/microsandbox
+```
 
 ```bash
 make computer
@@ -80,6 +89,7 @@ For development with hot reload, run `make dev` and open http://127.0.0.1:5173.
 | `GBOT_SIGNUP` | `open` | `closed` allows only the first account |
 | `GBOT_PUBLIC_URL` | | set to an `https://` URL to enable secure cookies and HSTS |
 | `GBOT_COMPUTER` | `on` | `off` disables bot computers |
+| `GBOT_COMPUTER_BACKEND` | auto | `microsandbox` or `docker`; auto prefers microsandbox when `msb` is installed |
 | `GBOT_COMPUTER_IMAGE` | `gbot-computer:latest` | image for bot computers |
 | `GBOT_KEY_FILE` | `~/.config/gbot/secret.key` | key that encrypts integration tokens (or set `GBOT_SECRET_KEY`) |
 | `GBOT_STT_URL`, `GBOT_TTS_URL` | | OpenAI-compatible speech servers (e.g. faster-whisper, Kokoro), or `openai` |
@@ -121,8 +131,9 @@ Both connect to your gbot server; the phone needs its address on your network.
 - Bots run one tool call at a time through a guard that applies the owner's
   approval mode and allow/block lists. Once outside text (a webhook, a web page,
   an MCP result) enters a run, changes always ask first, even in Auto.
-- Computers run with all capabilities dropped, no new privileges, CPU/memory/PID
-  limits and no network by default. gbot reaches them only through `docker exec`.
+- Computers are hardware-isolated microVMs (or containers with all capabilities
+  dropped and no new privileges), with CPU/memory limits and no network by
+  default. gbot reaches them only by running commands inside them.
   Takeover input is accepted only while you hold control.
 - Webhooks need the routine's secret (bearer token or HMAC signature).
 - MCP tokens are sealed with AES-256-GCM and redacted from logs; each account

@@ -12,7 +12,7 @@ import (
 	"gbot/internal/store"
 )
 
-// MCP servers are loaded into the shared agent as mcp_client plugins.
+// MCP servers are loaded into the shared agent as tool_mcp plugins.
 // Each server's tools are prefixed with its own short name, and the
 // guard shows them only to runs of the account that added it.
 
@@ -68,7 +68,7 @@ func (r *Runtime) SyncMCP(ctx context.Context, sealer *crypto.Sealer) {
 		}
 		p := mcpPrefix(id)
 		status := "connected"
-		err := eng.Load(engine.PluginSpec{Use: "mcp_client", As: "mcp_" + p, Config: map[string]any{
+		err := eng.Load(engine.PluginSpec{Use: "tool_mcp", As: "mcp_" + p, Config: map[string]any{
 			"servers": []any{map[string]any{"name": p, "url": s.URL, "headers": headers, "timeout_seconds": 30}},
 		}})
 		if err != nil {

@@ -10,12 +10,19 @@ import (
 	"time"
 )
 
-// Runs against the real gbot-computer image; skipped when it isn't built.
+// Runs against the real gbot-computer image on each installed backend;
+// skipped where the image isn't built.
 func TestComputer(t *testing.T) {
-	m := New("gbot-computer:latest", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, backend := range []string{"microsandbox", "docker"} {
+		t.Run(backend, func(t *testing.T) { testComputer(t, backend) })
+	}
+}
+
+func testComputer(t *testing.T, backend string) {
+	m := New("gbot-computer:latest", backend, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx := context.Background()
 	if !m.Available(ctx) {
-		t.Skip("gbot-computer image not built (make computer)")
+		t.Skip("gbot-computer image not available on " + backend + " (make computer)")
 	}
 	bot := "00000000-0000-4000-8000-000000000001"
 	defer m.Stop(ctx, bot)
@@ -26,8 +33,11 @@ func TestComputer(t *testing.T) {
 	if err != nil || r.Code != 0 || !strings.Contains(r.Stdout, "gbot\nhi") {
 		t.Fatalf("exec: %+v %v", r, err)
 	}
-	if r, _ := m.Exec(ctx, bot, "getent hosts example.com || ip link | grep -c eth0", 10*time.Second); strings.TrimSpace(r.Stdout) != "0" {
+	if r, _ := m.Exec(ctx, bot, "curl -s -m 3 -o /dev/null https://example.com && echo reachable || echo blocked", 10*time.Second); strings.TrimSpace(r.Stdout) != "blocked" {
 		t.Fatalf("computer without network can reach the network: %q", r.Stdout)
+	}
+	if r, _ := m.Exec(ctx, bot, "cat /tmp/gbot/activity.log", 10*time.Second); !strings.Contains(r.Stdout, "echo hi > note.txt") {
+		t.Fatalf("command not shown on the Activity screen: %q", r.Stdout)
 	}
 	if err := m.WriteFile(ctx, bot, "dir/a.md", []byte("# hello")); err != nil {
 		t.Fatal(err)
