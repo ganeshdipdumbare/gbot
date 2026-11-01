@@ -26,8 +26,8 @@ type Model struct {
 type Catalog struct {
 	OllamaHost string
 	// Extra models are always listed (tests use the offline mock).
-	Extra []Model
-	client     *http.Client
+	Extra  []Model
+	client *http.Client
 
 	mu      sync.Mutex
 	cached  []Model

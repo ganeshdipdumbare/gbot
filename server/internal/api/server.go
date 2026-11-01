@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/bots/{id}/messages", s.authed(s.sendMessage))
 	mux.Handle("POST /api/bots/{id}/stop", s.authed(s.stopBot))
 	mux.Handle("GET /api/events", s.authed(s.events))
+	mux.Handle("GET /api/events/poll", s.authed(s.pollEvents))
 	s.routesV2(mux)
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")

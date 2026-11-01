@@ -1,9 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -209,9 +211,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	defer unsub()
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-store")
+	// no-transform stops proxies such as Cloudflare from compressing (and
+	// so buffering) the stream; X-Accel-Buffering does the same for nginx.
+	h.Set("Cache-Control", "no-store, no-transform")
 	h.Set("X-Accel-Buffering", "no")
-	fmt.Fprint(w, "retry: 1500\n\n")
+	// The hello lets clients detect a path that buffers the stream and
+	// switch to long-polling.
+	fmt.Fprint(w, "retry: 1500\ndata: {\"type\":\"hello\"}\n\n")
 	fl.Flush()
 	ping := time.NewTicker(20 * time.Second)
 	defer ping.Stop()
@@ -230,4 +236,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
+}
+
+// pollEvents is the long-polling alternative to the event stream: it
+// returns events after ?after=N, waiting up to 20s for one.
+func (s *Server) pollEvents(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	events, next, reset := s.Hub.Poll(r.Context(), userFrom(r).SpaceID, after, 20*time.Second)
+	if events == nil {
+		events = []json.RawMessage{}
+	}
+	writeJSON(w, 200, map[string]any{"events": events, "next": next, "reset": reset})
 }

@@ -14,11 +14,11 @@ func TestNeedsApproval(t *testing.T) {
 		return &runCtx{mode: mode, allow: map[string]bool{"allowed": true}, block: map[string]bool{}, tainted: tainted}
 	}
 	cases := []struct {
-		name    string
-		rc      *runCtx
-		tool    string
-		t       *sdk.Tool
-		want    bool
+		name string
+		rc   *runCtx
+		tool string
+		t    *sdk.Tool
+		want bool
 	}{
 		{"ask: reads pass", rc("ask", false), "x", ro, false},
 		{"ask: writes ask", rc("ask", false), "x", write, true},

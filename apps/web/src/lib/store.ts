@@ -134,66 +134,107 @@ type Listener = (e: LiveEvent) => void;
 const extra = new Set<Listener>();
 export function onLive(fn: Listener) { extra.add(fn); return () => { extra.delete(fn); }; }
 
+function handle(e: LiveEvent) {
+  extra.forEach((fn) => fn(e));
+  switch (e.type) {
+    case "presence": {
+      const prev = get().presence[e.botId]?.state;
+      set((s) => ({ presence: { ...s.presence, [e.botId]: e.data } }));
+      const b = get().bots.find((x) => x.id === e.botId);
+      const open = () => set(() => ({ activeId: e.botId }));
+      if (b && e.data.state === "waiting" && prev !== "waiting") notify(`${b.name} needs you`, e.data.detail ?? "Open gbot to answer.", open);
+      if (b && e.data.state === "done" && prev && prev !== "done") notify(`${b.name} is done`, b.lastMessage?.content.slice(0, 120) ?? "", open);
+      break;
+    }
+    case "message":
+      addMessage({ ...e.data, streaming: e.data.role === "bot" });
+      break;
+    case "delta": {
+      const k = e.groupId ? groupKey(e.groupId) : e.botId;
+      patchMessage(k, e.data.id, (m) => ({ ...m, content: m.content + e.data.text }));
+      break;
+    }
+    case "message_done":
+      patchMessage(keyOf(e.data), e.data.id, (m) => ({ ...m, content: e.data.content, streaming: false }));
+      touchLast(e.data);
+      break;
+    case "message_update":
+      patchMessage(keyOf(e.data), e.data.id, () => e.data);
+      break;
+    case "bot":
+      upsertBot(e.data);
+      break;
+    case "bot_removed":
+      set((s) => {
+        const bots = s.bots.filter((b) => b.id !== e.botId);
+        return { bots, activeId: s.activeId === e.botId ? bots[0]?.id ?? null : s.activeId };
+      });
+      break;
+    case "group":
+      upsertGroup(e.data);
+      break;
+    case "group_removed":
+      set((s) => ({ groups: s.groups.filter((g) => g.id !== e.groupId), activeId: s.activeId === groupKey(e.groupId) ? s.bots[0]?.id ?? null : s.activeId }));
+      break;
+    case "computer":
+      set((s) => ({ computers: { ...s.computers, [e.botId]: e.data } }));
+  }
+}
+
+function catchUp() {
+  loadAll().catch(() => {});
+  const id = get().activeId;
+  if (id) loadMessages(id).catch(() => {});
+}
+
+// Live updates use a server-sent event stream. Some proxies and tunnels
+// (e.g. Cloudflare quick tunnels) hold a stream back until it ends, so if
+// the server's hello doesn't arrive promptly we switch to long-polling,
+// which works through anything.
 export function connectLive() {
-  let es: EventSource | null = null;
+  let stopped = false;
+  let es: EventSource | null = new EventSource("/api/events");
   let hadError = false;
-  es = new EventSource("/api/events");
+  let gotHello = false;
+  const fallback = setTimeout(() => {
+    if (gotHello || stopped) return;
+    es?.close();
+    es = null;
+    longPoll();
+  }, 4000);
+
   es.onopen = () => {
-    set(() => ({ connected: true }));
-    if (hadError) {
-      // Catch up on anything missed while disconnected.
-      loadAll().catch(() => {});
-      const id = get().activeId;
-      if (id) loadMessages(id).catch(() => {});
-    }
+    if (hadError && gotHello) catchUp();
   };
-  es.onerror = () => { hadError = true; set(() => ({ connected: false })); };
+  es.onerror = () => { hadError = true; if (gotHello) set(() => ({ connected: false })); };
   es.onmessage = (ev) => {
-    const e = JSON.parse(ev.data) as LiveEvent;
-    extra.forEach((fn) => fn(e));
-    switch (e.type) {
-      case "presence": {
-        const prev = get().presence[e.botId]?.state;
-        set((s) => ({ presence: { ...s.presence, [e.botId]: e.data } }));
-        const b = get().bots.find((x) => x.id === e.botId);
-        const open = () => set(() => ({ activeId: e.botId }));
-        if (b && e.data.state === "waiting" && prev !== "waiting") notify(`${b.name} needs you`, e.data.detail ?? "Open gbot to answer.", open);
-        if (b && e.data.state === "done" && prev && prev !== "done") notify(`${b.name} is done`, b.lastMessage?.content.slice(0, 120) ?? "", open);
-        break;
-      }
-      case "message":
-        addMessage({ ...e.data, streaming: e.data.role === "bot" });
-        break;
-      case "delta": {
-        const k = e.groupId ? groupKey(e.groupId) : e.botId;
-        patchMessage(k, e.data.id, (m) => ({ ...m, content: m.content + e.data.text }));
-        break;
-      }
-      case "message_done":
-        patchMessage(keyOf(e.data), e.data.id, (m) => ({ ...m, content: e.data.content, streaming: false }));
-        touchLast(e.data);
-        break;
-      case "message_update":
-        patchMessage(keyOf(e.data), e.data.id, () => e.data);
-        break;
-      case "bot":
-        upsertBot(e.data);
-        break;
-      case "bot_removed":
-        set((s) => {
-          const bots = s.bots.filter((b) => b.id !== e.botId);
-          return { bots, activeId: s.activeId === e.botId ? bots[0]?.id ?? null : s.activeId };
-        });
-        break;
-      case "group":
-        upsertGroup(e.data);
-        break;
-      case "group_removed":
-        set((s) => ({ groups: s.groups.filter((g) => g.id !== e.groupId), activeId: s.activeId === groupKey(e.groupId) ? s.bots[0]?.id ?? null : s.activeId }));
-        break;
-      case "computer":
-        set((s) => ({ computers: { ...s.computers, [e.botId]: e.data } }));
+    const e = JSON.parse(ev.data) as LiveEvent | { type: "hello" };
+    if (e.type === "hello") {
+      gotHello = true;
+      set(() => ({ connected: true }));
+      return;
     }
+    handle(e as LiveEvent);
   };
-  return () => es?.close();
+
+  async function longPoll() {
+    let after = 0;
+    while (!stopped) {
+      try {
+        const res = await fetch(`/api/events/poll?after=${after}`, { credentials: "same-origin" });
+        if (!res.ok) throw new Error(String(res.status));
+        const { events, next, reset } = (await res.json()) as { events: LiveEvent[]; next: number; reset: boolean };
+        set(() => ({ connected: true }));
+        // A reset means we missed events (or just started): refetch.
+        if (reset) catchUp();
+        events.forEach(handle);
+        after = next;
+      } catch {
+        set(() => ({ connected: false }));
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  }
+
+  return () => { stopped = true; clearTimeout(fallback); es?.close(); };
 }

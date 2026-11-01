@@ -38,11 +38,11 @@ func TestParseErrors(t *testing.T) {
 
 func TestDescribe(t *testing.T) {
 	for expr, want := range map[string]string{
-		"0 * * * *":    "Every hour",
-		"0 8 * * 1-5":  "Weekdays at 8:00 AM",
-		"30 18 * * *":  "Every day at 6:30 PM",
-		"0 9 * * 1":    "Mondays at 9:00 AM",
-		"*/5 * * * *":  "*/5 * * * *",
+		"0 * * * *":   "Every hour",
+		"0 8 * * 1-5": "Weekdays at 8:00 AM",
+		"30 18 * * *": "Every day at 6:30 PM",
+		"0 9 * * 1":   "Mondays at 9:00 AM",
+		"*/5 * * * *": "*/5 * * * *",
 	} {
 		if got := Describe(expr); got != want {
 			t.Errorf("%s: got %q, want %q", expr, got, want)

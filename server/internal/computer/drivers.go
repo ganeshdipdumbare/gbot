@@ -101,7 +101,9 @@ func (msbDriver) exec(ctx context.Context, id, user string, env []string, stdin 
 	return run(ctx, "msb", stdin, append(append(a, "--"), args...)...)
 }
 
-func (msbDriver) stop(ctx context.Context, id string) { _, _, _, _ = run(ctx, "msb", nil, "rm", "--force", id) }
+func (msbDriver) stop(ctx context.Context, id string) {
+	_, _, _, _ = run(ctx, "msb", nil, "rm", "--force", id)
+}
 
 func (msbDriver) list(ctx context.Context) []found {
 	out, _, code, err := run(ctx, "msb", nil, "ls", "--running", "--format", "json")
@@ -169,7 +171,9 @@ func (dockerDriver) exec(ctx context.Context, id, user string, env []string, std
 	return run(ctx, "docker", stdin, append(append(a, id), args...)...)
 }
 
-func (dockerDriver) stop(ctx context.Context, id string) { _, _, _, _ = run(ctx, "docker", nil, "rm", "-f", id) }
+func (dockerDriver) stop(ctx context.Context, id string) {
+	_, _, _, _ = run(ctx, "docker", nil, "rm", "-f", id)
+}
 
 func (dockerDriver) list(ctx context.Context) []found {
 	out, _, code, err := run(ctx, "docker", nil, "ps", "--filter", "label=gbot.bot", "--format", `{{.ID}} {{.Label "gbot.bot"}}`)

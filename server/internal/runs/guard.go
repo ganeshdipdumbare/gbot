@@ -35,8 +35,10 @@ func (rc *runCtx) taint()          { rc.mu.Lock(); rc.tainted = true; rc.mu.Unlo
 
 type rcKey struct{}
 
-func withRun(ctx context.Context, rc *runCtx) context.Context { return context.WithValue(ctx, rcKey{}, rc) }
-func runFrom(ctx context.Context) *runCtx            { rc, _ := ctx.Value(rcKey{}).(*runCtx); return rc }
+func withRun(ctx context.Context, rc *runCtx) context.Context {
+	return context.WithValue(ctx, rcKey{}, rc)
+}
+func runFrom(ctx context.Context) *runCtx { rc, _ := ctx.Value(rcKey{}).(*runCtx); return rc }
 
 // Tools that only touch the bot's own state never need approval.
 var internalTools = map[string]bool{

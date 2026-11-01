@@ -70,6 +70,10 @@ export function connect() {
         patch(keyOf(e.data), e.data.id, (m) => ({ ...m, content: e.data.content, streaming: false }));
         loadAll().catch(() => {});
         break;
+      case "reset":
+        loadAll().catch(() => {});
+        Object.keys(get().messages).forEach((k) => loadMessages(k).catch(() => {}));
+        break;
       case "bot":
       case "group":
       case "bot_removed":

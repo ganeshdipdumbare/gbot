@@ -56,12 +56,38 @@ export const api = {
   screen: (id: string) => `${base}/api/bots/${id}/computer/screen?t=${Date.now()}`,
 };
 
+// Live updates: an event stream, or long-polling when the network path
+// holds the stream back (Cloudflare quick tunnels do). A "reset" event
+// tells the store to refetch.
 export function liveEvents(onEvent: (e: { type: string; botId?: string; groupId?: string; data: any }) => void) {
-  const es = new EventSource(base + "/api/events", { withCredentials: true, pollingInterval: 1500 });
+  let stopped = false;
+  let gotHello = false;
+  let es: EventSource | null = new EventSource(base + "/api/events", { withCredentials: true, pollingInterval: 1500 });
   es.addEventListener("message", (ev) => {
-    if (ev.data) {
-      try { onEvent(JSON.parse(ev.data)); } catch { /* ignore */ }
-    }
+    if (!ev.data) return;
+    try {
+      const e = JSON.parse(ev.data);
+      if (e.type === "hello") { gotHello = true; return; }
+      onEvent(e);
+    } catch { /* ignore */ }
   });
-  return () => es.close();
+  const fallback = setTimeout(async () => {
+    if (gotHello || stopped) return;
+    es?.close();
+    es = null;
+    let after = 0;
+    while (!stopped) {
+      try {
+        const res = await fetch(`${base}/api/events/poll?after=${after}`, { credentials: "include" });
+        if (!res.ok) throw new Error(String(res.status));
+        const { events, next, reset } = await res.json();
+        if (reset) onEvent({ type: "reset", data: null });
+        for (const e of events) onEvent(e);
+        after = next;
+      } catch {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  }, 4000);
+  return () => { stopped = true; clearTimeout(fallback); es?.close(); };
 }
