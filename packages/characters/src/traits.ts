@@ -3,8 +3,9 @@ import { hues, type Hue } from "@gbot/ui-tokens";
 // A gbot's look is three discrete traits picked from a seed: every bot is
 // recognizable, and all of them read as one family.
 
-export const shapes = ["circle", "square", "triangle", "hexagon", "cloud", "pill", "arch", "diamond"] as const;
-export const eyeStyles = ["dot", "pill", "wide"] as const;
+export const shapes = ["circle", "blob", "squircle", "pill", "triangle", "hexagon", "cloud", "drop"] as const;
+// Where the two eyes sit on the head.
+export const eyeStyles = ["up", "side", "center"] as const;
 export const hueNames = Object.keys(hues) as Hue[];
 
 export type Shape = (typeof shapes)[number];
@@ -44,21 +45,23 @@ export function rng(seed: string) {
 
 const pick = <T,>(r: () => number, list: readonly T[]) => list[Math.floor(r() * list.length)];
 
-// Circles are the house shape (as in Grok Bot's roster); the others add
-// variety without breaking the family look.
-const weightedShapes: Shape[] = ["circle", "circle", "circle", "circle", ...shapes.filter((s) => s !== "circle")];
+// Looks saved before the Grok-style heads map onto the closest new trait.
+const oldShapes: Record<string, Shape> = { square: "squircle", arch: "squircle", diamond: "drop" };
+const oldHues: Record<string, Hue> = { cobalt: "blue", coral: "orange", mint: "teal", sun: "amber", grape: "purple", bubblegum: "pink", sky: "blue", cream: "brown", ink: "red" };
 
 export function traitsFromSeed(seed: string): Traits {
   const r = rng(seed);
-  return { shape: pick(r, weightedShapes), hue: pick(r, hueNames), eyes: pick(r, eyeStyles) };
+  return { shape: pick(r, shapes), hue: pick(r, hueNames), eyes: pick(r, eyeStyles) };
 }
 
 // Unknown values (including looks saved by older versions) fall back to
 // the seed, so every stored bot still renders.
 export function resolveLook(look: Look | undefined, fallbackSeed: string): Traits {
   const t = traitsFromSeed(look?.seed || fallbackSeed);
-  if (look?.shape && shapes.includes(look.shape)) t.shape = look.shape;
-  if (look?.hue && look.hue in hues) t.hue = look.hue;
+  const shape = look?.shape && (oldShapes[look.shape] ?? look.shape);
+  const hue = look?.hue && (oldHues[look.hue] ?? look.hue);
+  if (shape && shapes.includes(shape)) t.shape = shape;
+  if (hue && hue in hues) t.hue = hue;
   if (look?.eyes && eyeStyles.includes(look.eyes)) t.eyes = look.eyes;
   return t;
 }

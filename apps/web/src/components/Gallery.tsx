@@ -27,7 +27,7 @@ export default function Gallery() {
       <section className="flex flex-wrap gap-5 items-end">
         {moods.map((mood) => (
           <div key={mood} className="text-center text-xs text-ink-2">
-            <Gbot look={{ shape: "circle", hue: "cobalt", eyes: "pill" }} seed="m" size={96} mood={mood} live={mood === "working"} />
+            <Gbot look={{ shape: "circle", hue: "blue", eyes: "up" }} seed="m" size={96} mood={mood} live={mood === "working"} />
             {mood}
           </div>
         ))}

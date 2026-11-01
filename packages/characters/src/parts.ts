@@ -1,9 +1,11 @@
-import type { Shape } from "./traits";
+import type { EyeStyle, Shape } from "./traits";
 
-// Flat geometric bodies in a 100×100 box. Each one says where its face
-// sits, so eyes land in the visual center of the shape, not the box.
+// Flat heads in a 100×100 box, in the Grok Bot style: one solid shape,
+// two slanted pill eyes cut out of it. Each head says where its face
+// sits for every eye placement, so eyes stay on the shape.
 
 type Pt = [number, number];
+const f = (n: number) => n.toFixed(2);
 
 // A polygon with every corner rounded by radius r.
 function rounded(points: Pt[], r: number): string {
@@ -17,8 +19,7 @@ function rounded(points: Pt[], r: number): string {
       return [b[0] + dx * t, b[1] + dy * t];
     };
     const a = toward(p0, p1), b = toward(p2, p1);
-    const f = (p: Pt) => `${p[0].toFixed(2)} ${p[1].toFixed(2)}`;
-    d += `${i === 0 ? "M" : "L"}${f(a)}Q${f(p1)} ${f(b)}`;
+    d += `${i === 0 ? "M" : "L"}${f(a[0])} ${f(a[1])}Q${f(p1[0])} ${f(p1[1])} ${f(b[0])} ${f(b[1])}`;
   }
   return d + "Z";
 }
@@ -30,41 +31,65 @@ function regular(sides: number, radius: number, cx: number, cy: number, rot: num
   });
 }
 
-function flower(petals: number, cx: number, cy: number, ring: number, petal: number): string {
-  // A scalloped edge: arcs bulging outward between points on a ring.
-  const pts = regular(petals, ring, cx, cy, -Math.PI / 2);
-  let d = `M${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`;
-  for (let i = 1; i <= petals; i++) {
-    const p = pts[i % petals];
-    d += `A${petal} ${petal} 0 0 1 ${p[0].toFixed(2)} ${p[1].toFixed(2)}`;
+// A closed curve sampled from a polar or parametric function.
+function traced(at: (t: number) => Pt, steps = 120): string {
+  let d = "";
+  for (let i = 0; i < steps; i++) {
+    const [x, y] = at((i / steps) * 2 * Math.PI);
+    d += `${i === 0 ? "M" : "L"}${f(x)} ${f(y)}`;
   }
   return d + "Z";
 }
 
+// Clockwise circle; several of these in one path fill as their union.
+const circle = (cx: number, cy: number, r: number) =>
+  `M${f(cx - r)} ${f(cy)}A${r} ${r} 0 1 1 ${f(cx + r)} ${f(cy)}A${r} ${r} 0 1 1 ${f(cx - r)} ${f(cy)}Z`;
+
+const sgnPow = (v: number, p: number) => Math.sign(v) * Math.abs(v) ** p;
+
 export interface Body {
   d: string;
-  face: [number, number]; // eye-line center
-  eyeScale: number;
+  /** Eye-pair centers for each placement. */
+  face: Record<EyeStyle, Pt>;
+  /** Eye size multiplier for this head. */
+  k: number;
 }
 
 export const bodies: Record<Shape, Body> = {
-  circle: { d: "M50 9a41 41 0 1 1 0 82a41 41 0 1 1 0-82Z", face: [50, 48], eyeScale: 1 },
-  square: { d: "M50 10C80 10 90 20 90 50C90 80 80 90 50 90C20 90 10 80 10 50C10 20 20 10 50 10Z", face: [50, 48], eyeScale: 1 },
-  triangle: { d: rounded([[50, 10], [93, 86], [7, 86]], 15), face: [50, 62], eyeScale: 0.9 },
-  hexagon: { d: rounded(regular(6, 44, 50, 50, -Math.PI / 2), 11), face: [50, 49], eyeScale: 1 },
-  cloud: { d: flower(7, 50, 51, 30, 11.5), face: [50, 50], eyeScale: 0.95 },
-  pill: { d: "M30 22H70A28 28 0 0 1 70 78H30A28 28 0 0 1 30 22Z", face: [50, 49], eyeScale: 0.95 },
-  arch: { d: "M12 52A38 38 0 0 1 88 52V80Q88 90 78 90H22Q12 90 12 80Z", face: [50, 54], eyeScale: 1 },
-  diamond: { d: rounded([[50, 7], [93, 50], [50, 93], [7, 50]], 13), face: [50, 49], eyeScale: 0.85 },
+  circle: { d: circle(50, 50, 50), face: { up: [69, 27], side: [35, 50], center: [50, 42] }, k: 1 },
+  blob: {
+    d: traced((t) => {
+      const r = 47 + 2.6 * Math.sin(2 * t + 1) + 1.4 * Math.sin(3 * t + 2);
+      return [50 + r * Math.cos(t), 51 + r * Math.sin(t)];
+    }),
+    face: { up: [67, 30], side: [35, 52], center: [50, 44] },
+    k: 1,
+  },
+  squircle: {
+    d: traced((t) => [50 + 50 * sgnPow(Math.cos(t), 0.5), 50 + 50 * sgnPow(Math.sin(t), 0.5)]),
+    face: { up: [70, 26], side: [33, 50], center: [50, 42] },
+    k: 1,
+  },
+  pill: { d: "M32 18H68A32 32 0 0 1 68 82H32A32 32 0 0 1 32 18Z", face: { up: [66, 38], side: [33, 52], center: [50, 46] }, k: 0.92 },
+  triangle: { d: rounded([[50, 2], [99, 92], [1, 92]], 22), face: { up: [58, 52], side: [44, 64], center: [50, 58] }, k: 0.86 },
+  hexagon: { d: rounded(regular(6, 51, 50, 50, -Math.PI / 2), 14), face: { up: [65, 32], side: [35, 52], center: [50, 44] }, k: 1 },
+  cloud: {
+    d: circle(27, 60, 25) + circle(50, 39, 29) + circle(73, 57, 26) + circle(50, 68, 25),
+    face: { up: [64, 38], side: [37, 57], center: [50, 50] },
+    k: 0.95,
+  },
+  drop: {
+    d: "M45.5 7.5Q50 0 54.5 7.5L78.4 33.3" + "A39 39 0 1 1 21.6 33.3Z",
+    face: { up: [61, 54], side: [39, 62], center: [50, 58] },
+    k: 0.9,
+  },
 };
 
-// Eye styles as [width, height] before mood shaping. Eyes sit inside the
-// visor, so they're small.
-export const eyeSizes = {
-  dot: [7.5, 7.5],
-  pill: [6.5, 11],
-  wide: [10, 6.5],
-} as const;
-
-// The visor: a dark capsule across the face that holds the eyes.
-export const visorSize = { w: 50, h: 27 };
+// Eye pills: [width, height] before the head's k, and how each placement
+// spaces and tilts them (degrees, clockwise).
+export const eyeSize: [number, number] = [11.5, 24];
+export const eyeLayout: Record<EyeStyle, { gap: number; lift: number; rot: [number, number] }> = {
+  up: { gap: 10.5, lift: -2, rot: [-26, -26] },
+  side: { gap: 11.5, lift: 3, rot: [27, -22] },
+  center: { gap: 11.5, lift: -1.5, rot: [-18, -18] },
+};

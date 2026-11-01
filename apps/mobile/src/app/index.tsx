@@ -20,7 +20,7 @@ export default function Roster() {
   return (
     <SafeAreaView edges={["top"]} style={{ flex: 1, backgroundColor: t.bg }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 20, paddingVertical: 12 }}>
-        <Gbot seed="brand" look={{ shape: "circle", hue: "grape", eyes: "pill" }} size={32} />
+        <Gbot seed="brand" look={{ shape: "circle", hue: "blue", eyes: "up" }} size={32} />
         <Text style={{ color: t.ink, fontSize: 26, fontWeight: "800", letterSpacing: -0.5 }}>gbot</Text>
       </View>
       <FlatList

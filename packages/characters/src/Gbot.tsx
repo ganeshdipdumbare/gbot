@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { hues, visor } from "@gbot/ui-tokens";
-import { bodies, eyeSizes, visorSize } from "./parts";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { hues } from "@gbot/ui-tokens";
+import { bodies, eyeLayout, eyeSize } from "./parts";
 import { resolveLook, type Look } from "./traits";
 import { pose, type Mood } from "./pose";
 
@@ -43,12 +43,14 @@ function useBlink(enabled: boolean) {
 
 const clamp = (v: number) => Math.max(-1, Math.min(1, v));
 
+// The eyes are real holes, masked out of the head, so whatever the bot
+// sits on shows through them.
 export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, live, className, style, title }: GbotProps) {
   const t = resolveLook(look, seed);
-  const color = hues[t.hue];
   const body = bodies[t.shape];
-  const happy = mood === "done" || mood === "happy";
-  const blink = useBlink(!happy && mood !== "sleepy");
+  const layout = eyeLayout[t.eyes];
+  const mask = useId().replace(/:/g, "");
+  const blink = useBlink(mood !== "sleepy" && mood !== "done" && mood !== "happy");
 
   // At rest the eyes wander now and then: calm, slightly curious.
   const [drift, setDrift] = useState({ x: 0, y: 0 });
@@ -65,23 +67,14 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
   }, [mood]);
 
   const gaze = lookAt ? { x: clamp(lookAt.x), y: clamp(lookAt.y) } : drift;
-  // Eyes move within the visor.
-  const gx = gaze.x * 4.5;
-  const gy = gaze.y * 2.5;
-
-  const [fx, fy] = body.face;
-  const s = body.eyeScale;
-  const [ew, eh] = eyeSizes[t.eyes];
-  const w = ew * s;
-  const h = eh * s;
-  const gap = 9.5 * s;
-  const vw = visorSize.w * s;
-  const vh = visorSize.h * s;
-  const edge = t.hue === "ink" ? "rgba(255,255,255,.14)" : t.hue === "cream" ? "rgba(30,26,22,.08)" : "none";
+  const p = pose(mood, gaze.x * 6, gaze.y * 4);
+  const [fx, fy] = body.face[t.eyes];
+  const w = eyeSize[0] * body.k;
+  const h = eyeSize[1] * body.k;
 
   return (
     <svg
-      viewBox="0 0 100 100"
+      viewBox="-7 -7 114 114"
       width={size}
       height={size}
       className={`gbot ${className ?? ""}`}
@@ -91,44 +84,37 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
       role="img"
       aria-label={title ?? "bot"}
     >
+      <defs>
+        <mask id={mask} maskUnits="userSpaceOnUse" x="-7" y="-7" width="114" height="114">
+          <rect x="-7" y="-7" width="114" height="114" fill="#fff" />
+          <g className={`gbot-eyes${blink ? " is-blink" : ""}`} style={{ transform: `translate(${p.tx}px, ${p.ty}px)` }}>
+            {([0, 1] as const).map((i) => {
+              const side = i === 0 ? -1 : 1;
+              const cx = fx + side * layout.gap * body.k;
+              const cy = fy + side * layout.lift * body.k;
+              return (
+                <g key={i} transform={`rotate(${layout.rot[i]} ${cx} ${cy})`}>
+                  <rect
+                    className="gbot-eye"
+                    x={cx - w / 2}
+                    y={cy - h / 2}
+                    width={w}
+                    height={h}
+                    rx={w / 2}
+                    fill="#000"
+                    style={{ "--sx": p.sx, "--sy": p.sy } as CSSProperties}
+                  />
+                </g>
+              );
+            })}
+          </g>
+          {live && <circle cx="88" cy="88" r="13.5" fill="#000" />}
+        </mask>
+      </defs>
       <g className="gbot-body" style={{ "--tilt": `${gaze.x * 3}deg` } as CSSProperties}>
-        <path d={body.d} fill={color.body} stroke={edge} strokeWidth="1.5" />
-        <rect className="gbot-visor" x={fx - vw / 2} y={fy - vh / 2} width={vw} height={vh} rx={vh / 2} fill={visor}
-          stroke={t.hue === "ink" ? "rgba(255,255,255,.16)" : "none"} strokeWidth="1" />
-        <g className={`gbot-eyes${blink ? " is-blink" : ""}`}>
-          {([-1, 1] as const).map((side) => {
-            const cx = fx + side * gap;
-            const p = pose(mood, side, gx, gy);
-            return (
-              <g key={side}>
-                <rect
-                  className="gbot-eye"
-                  x={cx - w / 2}
-                  y={fy - h / 2}
-                  width={w}
-                  height={h}
-                  rx={Math.min(w, h) / 2}
-                  fill={color.eye}
-                  style={{
-                    transform: `translate(${p.tx}px, ${p.ty}px) rotate(${p.rot}deg) scale(${p.sx}, ${p.sy})`,
-                    opacity: happy ? 0 : 1,
-                  }}
-                />
-                <path
-                  className="gbot-eye"
-                  d={`M${cx - 4.5 * s} ${fy + 2.2}Q${cx} ${fy - 4.5 * s} ${cx + 4.5 * s} ${fy + 2.2}`}
-                  fill="none"
-                  stroke={color.eye}
-                  strokeWidth={3.2 * s}
-                  strokeLinecap="round"
-                  style={{ opacity: happy ? 1 : 0 }}
-                />
-              </g>
-            );
-          })}
-        </g>
+        <path d={body.d} fill={hues[t.hue].body} mask={`url(#${mask})`} />
       </g>
-      {live && <circle className="gbot-live" cx="84" cy="84" r="7.5" fill="#8B5CF6" stroke="var(--bg, #fff)" strokeWidth="3" />}
+      {live && <circle className="gbot-live" cx="88" cy="88" r="9" fill="#8B5CF6" />}
     </svg>
   );
 }

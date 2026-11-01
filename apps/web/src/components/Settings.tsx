@@ -70,7 +70,7 @@ function General() {
         <ModelSelect value={me?.defaultModel ?? ""} onChange={(v) => update({ defaultModel: v })} allowDefault="Best available" />
         {models && !hasLocal && (
           <div className="mt-3 rounded-[10px] bg-surface-2 p-4 flex gap-3">
-            <Gbot seed="plug" look={{ shape: "pill", hue: "sky", eyes: "dot" }} mood="waiting" size={52} />
+            <Gbot seed="plug" look={{ shape: "pill", hue: "red", eyes: "up" }} mood="waiting" size={52} />
             <div className="text-[14px]">
               <div className="font-semibold">Run models on your own machine</div>
               <p className="text-ink-2 mt-1">Install <a className="underline" href="https://ollama.com" target="_blank" rel="noreferrer">Ollama</a>, then pull a small model with tools:</p>
@@ -295,7 +295,7 @@ function Row({ title, ok, detail }: { title: string; ok: boolean; detail: string
 function Empty({ text }: { text: string }) {
   return (
     <div className="text-center py-8">
-      <Gbot seed="empty-int" look={{ shape: "cloud", hue: "cream", eyes: "dot" }} mood="sleepy" size={52} className="mx-auto" />
+      <Gbot seed="empty-int" look={{ shape: "cloud", hue: "amber", eyes: "center" }} mood="sleepy" size={52} className="mx-auto" />
       <p className="text-[13px] text-ink-2 mt-2">{text}</p>
     </div>
   );

@@ -1,20 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing } from "react-native";
-import Svg, { G, Path, Rect, Circle } from "react-native-svg";
-import { hues, visor } from "@gbot/ui-tokens";
-import { bodies, eyeSizes, pose, resolveLook, visorSize, type Look, type Mood } from "@gbot/characters/core";
+import Svg, { ClipPath, Defs, G, Path, Rect, Circle } from "react-native-svg";
+import { hues } from "@gbot/ui-tokens";
+import { useTheme } from "../lib/theme";
+import { bodies, eyeLayout, eyeSize, pose, resolveLook, type Look, type Mood } from "@gbot/characters/core";
 
 export type { Look, Mood };
 
-// The same gbot as on the web, drawn with react-native-svg. Eyes take
-// the mood's pose; the body breathes, bounces or hops with Animated.
+// The same gbot as on the web, drawn with react-native-svg: a solid head
+// with two cut-out eyes in the colour it sits on (cut). Eyes take the
+// mood's pose; the head breathes, bounces or hops with Animated.
 
-export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, live }: {
-  look?: Look; seed?: string; mood?: Mood; size?: number; live?: boolean;
+let clips = 0;
+
+export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, live, cut }: {
+  look?: Look; seed?: string; mood?: Mood; size?: number; live?: boolean; cut?: string;
 }) {
   const t = resolveLook(look, seed);
-  const color = hues[t.hue];
   const body = bodies[t.shape];
+  const layout = eyeLayout[t.eyes];
+  const bg = useTheme().bg;
+  const hole = cut ?? bg;
+  const clip = useRef(`gbot${++clips}`).current;
   const happy = mood === "done" || mood === "happy";
   const [blink, setBlink] = useState(false);
   const anim = useRef(new Animated.Value(0)).current;
@@ -56,31 +63,31 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, live }: {
     { rotate: anim.interpolate({ inputRange: [0, 1], outputRange: mood === "thinking" ? ["-4deg", "4deg"] : mood === "waiting" ? ["-7deg", "-4deg"] : ["0deg", "0deg"] }) },
   ];
 
-  const [fx, fy] = body.face;
-  const s = body.eyeScale;
-  const [ew, eh] = eyeSizes[t.eyes];
-  const w = ew * s, h = eh * s, gap = 9.5 * s;
-  const vw = visorSize.w * s, vh = visorSize.h * s;
+  const p = pose(mood, 0, 0);
+  const [fx, fy] = body.face[t.eyes];
+  const w = eyeSize[0] * body.k, h = eyeSize[1] * body.k;
+  const sy = blink ? 0.08 : p.sy;
 
   return (
     <Animated.View style={{ width: size, height: size, transform }}>
-      <Svg width={size} height={size} viewBox="0 0 100 100">
-        <Path d={body.d} fill={color.body} stroke={t.hue === "ink" ? "rgba(255,255,255,.14)" : "none"} strokeWidth={1.5} />
-        <Rect x={fx - vw / 2} y={fy - vh / 2} width={vw} height={vh} rx={vh / 2} fill={visor} stroke={t.hue === "ink" ? "rgba(255,255,255,.16)" : "none"} strokeWidth={1} />
-        {([-1, 1] as const).map((side) => {
-          const cx = fx + side * gap;
-          const p = pose(mood, side, 0, 0);
-          if (happy) {
-            return <Path key={side} d={`M${cx - 4.5 * s} ${fy + 2.2}Q${cx} ${fy - 4.5 * s} ${cx + 4.5 * s} ${fy + 2.2}`} stroke={color.eye} strokeWidth={3.2 * s} strokeLinecap="round" fill="none" />;
-          }
-          const sy = blink ? 0.1 : p.sy;
-          return (
-            <G key={side} transform={`translate(${cx + p.tx} ${fy + p.ty}) rotate(${p.rot}) scale(${p.sx} ${sy})`}>
-              <Rect x={-w / 2} y={-h / 2} width={w} height={h} rx={Math.min(w, h) / 2} fill={color.eye} />
-            </G>
-          );
-        })}
-        {live && <Circle cx={84} cy={84} r={7.5} fill="#8B5CF6" stroke="#FFF9F3" strokeWidth={3} />}
+      <Svg width={size} height={size} viewBox="-7 -7 114 114">
+        <Defs>
+          <ClipPath id={clip}><Path d={body.d} /></ClipPath>
+        </Defs>
+        <Path d={body.d} fill={hues[t.hue].body} />
+        <G clipPath={`url(#${clip})`}>
+          {([0, 1] as const).map((i) => {
+            const side = i === 0 ? -1 : 1;
+            const cx = fx + side * layout.gap * body.k + p.tx;
+            const cy = fy + side * layout.lift * body.k + p.ty;
+            return (
+              <G key={i} transform={`translate(${cx} ${cy}) rotate(${layout.rot[i]}) scale(${p.sx} ${sy})`}>
+                <Rect x={-w / 2} y={-h / 2} width={w} height={h} rx={w / 2} fill={hole} />
+              </G>
+            );
+          })}
+        </G>
+        {live && <Circle cx={88} cy={88} r={9} fill="#8B5CF6" stroke={hole} strokeWidth={4} />}
       </Svg>
     </Animated.View>
   );

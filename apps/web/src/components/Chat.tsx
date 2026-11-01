@@ -47,7 +47,7 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
         <div className="flex-1 grid place-items-center p-6 text-center">
           {loaded && (
             <div>
-              <Gbot seed="empty" look={{ shape: "arch", hue: "sun", eyes: "wide" }} mood="sleepy" size={64} className="mx-auto" />
+              <Gbot seed="empty" look={{ shape: "blob", hue: "orange", eyes: "up" }} mood="sleepy" size={64} className="mx-auto" />
               <h2 className="text-[15px] font-semibold mt-4">No bots yet</h2>
               <p className="text-[13px] text-ink-2 mt-1">Create one and give it a job.</p>
               <Button className="mt-4" onClick={onHatch}><Icon.plus /> New bot</Button>

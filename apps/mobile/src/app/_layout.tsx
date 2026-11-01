@@ -35,7 +35,7 @@ export default function Layout() {
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: t.bg }, animation: "slide_from_right" }} />
       {!ready && (
         <View style={{ position: "absolute", inset: 0, backgroundColor: t.bg, alignItems: "center", justifyContent: "center" }}>
-          <Gbot seed="boot" look={{ shape: "circle", hue: "grape", eyes: "pill" }} mood="thinking" size={88} />
+          <Gbot seed="boot" look={{ shape: "circle", hue: "blue", eyes: "up" }} mood="thinking" size={88} />
         </View>
       )}
     </SafeAreaProvider>
