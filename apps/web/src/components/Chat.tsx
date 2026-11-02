@@ -361,19 +361,36 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
 
 type Step = { label: string; detail?: string; ok: boolean };
 
-// What the bot did, as a quiet checklist above its reply (like Grok Bot
-// and Rakazo): "✓ Ran → python3 fib.py · exit 0".
+// What the bot did, as a quiet log above its reply (like Grok Bot's
+// "Ran full suite 212 passed"). Long runs fold into one line.
 function Activity({ m, enter }: { m: Message; enter: string }) {
   const steps = (m.data?.steps as Step[] | undefined) ?? [];
+  const long = steps.length > 4;
+  const [open, setOpen] = useState(!long);
+  const failed = steps.filter((s) => !s.ok).length;
   return (
-    <div className={`${enter} mt-3 max-w-[min(85%,560px)] rounded-2xl bg-surface px-3.5 py-2.5 text-[14px] leading-[22px]`}>
-      {steps.map((s, i) => (
-        <div key={i} className="flex items-baseline gap-2 min-w-0">
-          <span className={`shrink-0 [&_svg]:size-3.5 translate-y-[2px] ${s.ok ? "text-success" : "text-danger"}`}>{s.ok ? <Icon.check /> : <Icon.close />}</span>
-          <span className="font-medium shrink-0">{s.label}</span>
-          {s.detail && <><span className="text-ink-3 shrink-0">→</span><span className="text-ink-2 truncate font-mono text-[12.5px]">{s.detail}</span></>}
-        </div>
-      ))}
+    <div className={`${enter} mt-2 max-w-[min(85%,560px)] text-[13.5px] leading-[22px]`}>
+      {long && (
+        <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
+          className="flex items-center gap-1.5 -ml-1 px-1 rounded-md text-ink-3 hover:text-ink-2 cursor-pointer transition-colors duration-[120ms]">
+          <span>Worked through {steps.length} steps{failed ? ` · ${failed} failed` : ""}</span>
+          <motion.span className="inline-block text-[10px]" animate={{ rotate: open ? 90 : 0 }} transition={bouncy}>›</motion.span>
+        </button>
+      )}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.ul initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            transition={bouncy} className="overflow-hidden">
+            {steps.map((s, i) => (
+              <li key={i} className="flex items-center gap-2 min-w-0">
+                <span className={`shrink-0 size-1.5 rounded-full ${s.ok ? "bg-ink-3" : "bg-danger"}`} />
+                <span className="text-ink-2 shrink-0">{s.label}</span>
+                {s.detail && <span className={`text-ink-3 truncate ${s.label === "Ran" ? "font-mono text-[12.5px]" : ""}`}>{s.detail}</span>}
+              </li>
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

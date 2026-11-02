@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
 import { set, useStore } from "../lib/store";
-import { attempt } from "../lib/toast";
+import { attempt, toastError } from "../lib/toast";
 import { bouncy, Button, fade, Icon, IconButton, Input, Label, leave, spring, TextArea } from "./ui";
 
 // The bot's own place: its computer (status → preview → takeover) and
@@ -18,12 +18,13 @@ export function SidePanel({ bot, onClose, takeover, setTakeover }: {
     : status?.state === "starting" ? "Starting" : "Asleep";
   return (
     <div className="h-full flex flex-col bg-bg">
-      <div className="flex items-center gap-1 pl-4 pr-2 h-11 shrink-0">
+      <div className="flex items-center gap-0.5 pl-4 pr-2 h-11 shrink-0">
         <span className="text-[14px] text-ink-2 truncate flex-1">{bot.name}'s computer <span className="text-ink-3">· {label}</span></span>
+        <ComputerActions bot={bot} onTakeover={() => setTakeover(true)} />
         <IconButton label="Close panel" onClick={onClose}><Icon.close /></IconButton>
       </div>
       <div className="flex-1 overflow-y-auto scroll-soft">
-        <ComputerTab bot={bot} onTakeover={() => setTakeover(true)} />
+        <ComputerTab bot={bot} />
         <RoutinesTab bot={bot} />
       </div>
       <Takeover bot={bot} open={takeover} onClose={() => setTakeover(false)} />
@@ -69,99 +70,64 @@ function useScreen(botId: string, on: boolean, fps = 1.2) {
   return src;
 }
 
-type DeskApp = "browser" | "terminal" | "files";
-
-function AppDock({ current, onShow }: { current: DeskApp; onShow: (app: DeskApp) => void }) {
-  const apps: { id: DeskApp; label: string; icon: ReactNode }[] = [
-    { id: "browser", label: "Browser", icon: <Icon.globe /> },
-    { id: "terminal", label: "Terminal", icon: <Icon.terminal /> },
-    { id: "files", label: "Files", icon: <Icon.folder /> },
-  ];
-  return (
-    <div
-      className="absolute bottom-2.5 left-1/2 z-10 flex -translate-x-1/2 gap-1 rounded-full bg-black/75 p-1 shadow-pop backdrop-blur-sm"
-      onMouseDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {apps.map((a) => (
-        <button
-          key={a.id}
-          type="button"
-          aria-label={a.label}
-          title={a.label}
-          aria-pressed={current === a.id}
-          onClick={() => onShow(a.id)}
-          className={`grid size-9 cursor-pointer place-items-center rounded-full transition-colors ${current === a.id ? "bg-white text-[#16131C]" : "text-white/90 hover:bg-white/15"}`}
-        >
-          {a.icon}
-        </button>
-      ))}
-    </div>
-  );
+/** The computer's own wallpaper for the viewer's time of day, shown while it sleeps. */
+function wallpaper() {
+  const h = new Date().getHours();
+  return `/wallpaper-${h >= 6 && h < 11 ? "day" : h >= 11 && h < 18 ? "noon" : "night"}.jpg`;
 }
 
-function ComputerTab({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) {
+// Wake, sleep and take control, kept small in the panel's header.
+function ComputerActions({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) {
   const [status, update] = useComputer(bot);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [app, setApp] = useState<DeskApp>("browser");
   const on = status?.state === "on";
-  const src = useScreen(bot.id, on);
-
-  async function show(next: DeskApp) {
-    setApp(next);
-    setError("");
-    try { update(await api.computerAction(bot.id, "show", { app: next })); }
-    catch (e) { setError((e as Error).message); }
-  }
 
   async function act(a: "start" | "stop") {
     setBusy(true);
-    setError("");
-    try { update(await api.computerAction(bot.id, a)); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+    try { update(await api.computerAction(bot.id, a)); }
+    catch (e) { toastError(e, a === "start" ? "Couldn't wake the computer" : "Couldn't put it to sleep"); }
+    finally { setBusy(false); }
   }
 
+  if (on) return (
+    <>
+      <IconButton label="Take control" onClick={onTakeover}><Icon.expand /></IconButton>
+      <IconButton label="Sleep" disabled={busy} onClick={() => act("stop")}><Icon.moon /></IconButton>
+    </>
+  );
   return (
-    <div className="px-4 pb-2 space-y-3">
-      <div className="relative aspect-[16/10] rounded-2xl overflow-hidden bg-surface hairline">
-        <AnimatePresence>
+    <IconButton label="Wake" disabled={busy || status?.state === "starting" || status?.available === false}
+      onClick={() => act("start")} className="disabled:opacity-40"><Icon.power /></IconButton>
+  );
+}
+
+function ComputerTab({ bot }: { bot: Bot }) {
+  const [status] = useComputer(bot);
+  const on = status?.state === "on";
+  const src = useScreen(bot.id, on);
+  const where = `${status?.backend === "microsandbox" ? "Its own microVM on this machine." : "A container on this machine."}${bot.computerNetwork ? " Online." : " Offline until you allow internet in its settings."}`;
+
+  return (
+    <div className="px-4 pb-2">
+      <div className="relative aspect-[16/10] rounded-2xl overflow-hidden bg-surface shadow-[var(--shadow)]">
+        <AnimatePresence initial={false}>
           {src ? (
             <motion.img key="screen" src={src} alt={`${bot.name}'s screen`} className="absolute inset-0 size-full object-cover" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
           ) : (
-            <motion.div key="off" className="absolute inset-0 grid place-items-center text-center p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <div>
-                <Gbot look={bot.look} seed={bot.id} size={40} mood={status?.state === "starting" ? "working" : "sleepy"} className="mx-auto" />
-                <p className="text-[13px] text-ink-3 mt-2">
+            <motion.div key="off" className="absolute inset-0 grid place-items-center text-center p-6 bg-cover bg-center"
+              style={{ backgroundImage: `url(${wallpaper()})` }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <div className="rounded-2xl bg-black/35 backdrop-blur-md px-4 py-3 text-white">
+                <Gbot look={bot.look} seed={bot.id} size={36} mood={status?.state === "starting" ? "working" : "sleepy"} className="mx-auto" />
+                <p className="text-[13px] mt-1.5 text-white/80">
                   {status?.available === false ? "The computer image isn't built yet. Run make computer." :
-                    status?.state === "starting" ? "Waking up…" : "Wakes up when it needs it."}
+                    status?.state === "starting" ? "Waking up…" : "Wakes up when it needs it"}
                 </p>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
-        {on && <AppDock current={app} onShow={show} />}
       </div>
-
-      <div className="flex items-center gap-2">
-        <span className="text-[14px] text-ink-2 flex-1 truncate">{bot.name}'s screen</span>
-        {on ? (
-          <>
-            <button onClick={() => act("stop")} disabled={busy} className="h-8 px-3 rounded-full text-[13px] text-ink-3 hover:text-ink hover:bg-hover cursor-pointer transition-colors duration-[120ms]">Sleep</button>
-            <button onClick={onTakeover} className="h-8 px-3.5 rounded-full hairline text-[13px] font-medium hover:bg-hover cursor-pointer transition-colors duration-[120ms]">Take control</button>
-          </>
-        ) : (
-          <button onClick={() => act("start")} disabled={busy || status?.state === "starting" || status?.available === false}
-            className="h-8 px-3.5 rounded-full hairline text-[13px] font-medium hover:bg-hover cursor-pointer transition-colors duration-[120ms] disabled:opacity-40">Wake</button>
-        )}
-      </div>
-      {error && <p className="text-danger text-[13px]">{error}</p>}
-      <p className="text-[12px] text-ink-3 leading-relaxed flex items-start gap-1.5">
-        <span className="[&_svg]:size-3.5 mt-px"><Icon.globe /></span>
-        <span>
-          {status?.backend === "microsandbox" ? "Its own microVM on this machine." : "A container on this machine."}
-          {bot.computerNetwork ? " Online." : " Offline until you allow internet in its settings."}
-        </span>
-      </p>
+      <p className="text-center text-[12px] text-ink-3 mt-2" title={where}>{bot.name}'s screen</p>
     </div>
   );
 }
@@ -174,16 +140,8 @@ const keyMap: Record<string, string> = {
 function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: () => void }) {
   const [status, update] = useComputer(bot);
   const [error, setError] = useState("");
-  const [app, setApp] = useState<DeskApp>("browser");
   const area = useRef<HTMLDivElement>(null);
   const src = useScreen(bot.id, open && status?.state === "on", 4);
-
-  async function show(next: DeskApp) {
-    setApp(next);
-    setError("");
-    try { await api.computerAction(bot.id, "show", { app: next }); }
-    catch (e) { setError((e as Error).message); }
-  }
 
   useEffect(() => {
     if (!open) return;
@@ -230,11 +188,10 @@ function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: ()
               onContextMenu={(e) => { e.preventDefault(); send({ type: "rightclick", ...pos(e) }); }}
               onWheel={(e) => send({ type: "scroll", deltaY: e.deltaY, ...pos(e) })}
               initial={{ scale: 0.98 }} animate={{ scale: 1 }} transition={spring}
-              className="relative w-full max-w-[1280px] aspect-[16/10] rounded-xl overflow-hidden ring-1 ring-live outline-none cursor-default bg-black"
+              className="relative w-[min(100%,1280px,calc((100dvh-88px)*1.6))] aspect-[16/10] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-[0_24px_80px_-16px_rgba(0,0,0,0.7)] outline-none cursor-default bg-black"
               aria-label={`${bot.name}'s screen. Click and type to control it.`}
             >
               {src && <img src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />}
-              <AppDock current={app} onShow={show} />
             </motion.div>
           </div>
           {error && <p className="text-center text-red-300 text-sm pb-3">{error}</p>}
@@ -275,10 +232,12 @@ function RoutinesTab({ bot }: { bot: Bot }) {
       <ul>
         {list?.map((r) => (
           <li key={r.id} className="group">
-            <div className="flex items-center gap-2.5 h-10 -mx-2 px-2 rounded-xl hover:bg-hover transition-colors duration-[120ms]">
-              <span className={`[&_svg]:size-3.5 ${r.active ? "text-warning" : "text-ink-3"}`}><Icon.clock /></span>
-              <span className={`text-[14px] truncate flex-1 ${r.active ? "" : "text-ink-3"}`} title={r.prompt}>{r.name}</span>
-              <span className="text-[12px] text-ink-3 shrink-0 group-hover:hidden">{r.active ? r.when : "Paused"}</span>
+            <div className="flex items-center gap-2.5 min-h-12 py-1.5 -mx-2 px-2 rounded-xl hover:bg-hover transition-colors duration-[120ms]">
+              <span className={`self-start mt-[3px] [&_svg]:size-3.5 ${r.active ? "text-ink-2" : "text-ink-3"}`}><Icon.clock /></span>
+              <span className="min-w-0 flex-1" title={r.prompt}>
+                <span className={`block text-[14px] leading-5 truncate ${r.active ? "" : "text-ink-3"}`}>{r.name}</span>
+                <span className="block text-[12px] leading-4 text-ink-3 truncate">{r.active ? r.when : "Paused"}</span>
+              </span>
               <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
                 <IconButton label="Run now" className="size-7! [&_svg]:size-3.5" onClick={() => attempt(() => api.runRoutine(bot.id, r.id), "Running now")}><Icon.play /></IconButton>
                 <IconButton label={r.active ? "Pause" : "Resume"} className="size-7! [&_svg]:size-3.5"

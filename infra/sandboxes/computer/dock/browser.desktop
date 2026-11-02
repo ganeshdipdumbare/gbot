@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Browser
+Exec=gbot-browser
+Icon=/usr/local/share/gbot/icons/browser.svg

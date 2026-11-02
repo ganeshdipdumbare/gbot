@@ -1,7 +1,7 @@
 // Package computer gives each bot its own Linux desktop, in the style of
-// Rakazo's: a browser, a terminal and files, with an Activity terminal
-// that shows everything the bot runs. It runs as a microVM
-// (microsandbox) or a container (Docker). gbot only runs commands inside
+// Rakazo's: a wallpaper and a dock with a browser and a terminal, both
+// closed until the bot needs them; the Terminal shows everything the bot
+// runs. It runs as a microVM (microsandbox) or a container (Docker). gbot only runs commands inside
 // it, so a computer opens no ports and has no network at all unless its
 // owner turns network on.
 package computer
@@ -274,7 +274,7 @@ type ExecResult struct {
 }
 
 // Exec runs a shell command as the computer's unprivileged user. It also
-// appears in the Activity terminal on the computer's screen.
+// appears in the Terminal on the computer's screen, which opens for it.
 func (m *Manager) Exec(ctx context.Context, o Owner, command string, timeout time.Duration) (*ExecResult, error) {
 	id, err := m.container(o, true)
 	if err != nil {
@@ -289,7 +289,7 @@ func (m *Manager) Exec(ctx context.Context, o Owner, command string, timeout tim
 	return &ExecResult{out, errOut, code}, err
 }
 
-// note adds a line to the Activity terminal.
+// note adds a line to the Terminal's activity stream.
 func (m *Manager) note(ctx context.Context, id, symbol, color, text string) {
 	line := fmt.Sprintf("\n\033[38;5;%sm%s\033[0m %s\n", color, symbol, text)
 	_, _, _, _ = m.d.exec(ctx, id, "gbot", nil, []byte(line), false, "sh", "-c", "cat >> /tmp/gbot/activity.log")
@@ -306,6 +306,7 @@ func (m *Manager) WriteFile(ctx context.Context, o Owner, path string, content [
 	}
 	if err == nil {
 		m.note(ctx, id, "✎", "114", fmt.Sprintf("Wrote %s (%d bytes)", path, len(content)))
+		m.surface(ctx, id)
 	}
 	return err
 }
@@ -321,16 +322,22 @@ func (m *Manager) ReadFile(ctx context.Context, o Owner, path string, max int) (
 	}
 	if err == nil {
 		m.note(ctx, id, "◇", "110", "Read "+path)
+		m.surface(ctx, id)
 	}
 	return out, err
 }
 
-// Show raises one app on the screen: the browser, the shell, or the file manager.
+// surface opens the Terminal (or brings it forward) so the person
+// watching sees the bot's file work as it happens.
+func (m *Manager) surface(ctx context.Context, id string) {
+	_, _, _, _ = m.d.exec(ctx, id, "gbot", []string{"DISPLAY=:1"}, nil, true, "/usr/local/bin/gbot-terminal")
+}
+
+// Show opens one app on the screen, or brings it forward: the browser or the Terminal.
 func (m *Manager) Show(ctx context.Context, o Owner, app string) error {
 	script, ok := map[string]string{
 		"browser":  "/usr/local/bin/gbot-browser",
 		"terminal": "/usr/local/bin/gbot-terminal",
-		"files":    "/usr/local/bin/gbot-files",
 	}[app]
 	if !ok {
 		return errors.New("unknown app")

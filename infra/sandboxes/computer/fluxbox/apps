@@ -4,15 +4,12 @@
 [app] (class=Chromium)
   [Maximized] {yes}
 [end]
-[app] (class=Pcmanfm)
-  [Maximized] {yes}
-[end]
-[app] (class=pcmanfm)
-  [Maximized] {yes}
-[end]
 [app] (class=GbotTerminal)
-  [Maximized] {yes}
+  [Dimensions] {72% 74%}
+  [Position] (CENTER) {0 -24}
 [end]
-[app] (class=Pcmanfm)
-  [Maximized] {no}
+[app] (name=tint2)
+  [Deco] {NONE}
+  [Sticky] {yes}
+  [Layer] {4}
 [end]
