@@ -145,7 +145,7 @@ func TestEndToEnd(t *testing.T) {
 	})
 
 	t.Run("a message streams a reply and uses memory", func(t *testing.T) {
-		events, unsub := hub.Subscribe(me.SpaceID)
+		events, unsub := hub.Subscribe(me.SpaceID, me.ID)
 		defer unsub()
 		if code := alice.do("POST", "/api/bots/"+bot.ID+"/messages", map[string]string{"text": "remember I like jasmine tea"}, nil); code != 201 {
 			t.Fatalf("send: %d", code)

@@ -8,12 +8,16 @@ import (
 	"github.com/ganeshdipdumbare/eipagent"
 	"github.com/ganeshdipdumbare/eipagent/sdk"
 
+	"gbot/internal/computer"
 	"gbot/internal/store"
 )
 
 // A card is a paused tool call shown in the chat: an approval, a
 // question, or a request to take over the computer. Answering every card
 // of a run resumes it.
+//
+// Only the person a card belongs to can answer it: the owner of their
+// private chat with the bot, or the creator of a group.
 
 func (r *Runtime) addCard(ctx context.Context, c convo, b *store.Bot, runID string, in sdk.Interrupt) {
 	data := map[string]any{"kind": in.Kind, "interruptId": in.ID, "status": "pending", "botId": b.ID}
@@ -26,21 +30,37 @@ func (r *Runtime) addCard(ctx context.Context, c convo, b *store.Bot, runID stri
 	if opts, ok := in.Payload["options"].([]any); ok && len(opts) > 0 {
 		data["options"] = opts
 	}
-	m := &store.Message{BotID: b.ID, GroupID: c.GroupID, Role: "card", Content: in.Message, Data: data, RunID: &runID}
+	m := &store.Message{BotID: b.ID, GroupID: c.GroupID, ChatUser: c.User, Role: "card", Content: in.Message, Data: data, RunID: &runID}
 	if err := r.store.AddMessage(ctx, m, nil); err != nil {
 		r.log.Error("add card", "err", err)
 		return
 	}
-	r.hub.Publish(c.SpaceID, Event{Type: "message", BotID: b.ID, GroupID: c.GroupID, Data: m})
+	r.chat(c, Event{Type: "message", BotID: b.ID, GroupID: c.GroupID, Data: m})
 }
 
-var ErrCardDone = errors.New("this card was already answered")
+var (
+	ErrCardDone     = errors.New("this card was already answered")
+	ErrNotRequester = errors.New("only the person this chat is with can answer it")
+)
+
+// cardConvo is the chat a card sits in.
+func cardConvo(card *store.Message, bot *store.Bot, group *store.Group) convo {
+	if group != nil {
+		return newConvo(bot.SpaceID, "", group.ID, group.UserID)
+	}
+	return newConvo(bot.SpaceID, bot.ID, "", card.ChatUser)
+}
 
 // Answer records the person's decision on a card. decision is approve,
-// reject or answer; always=true also allows the tool from now on.
-func (r *Runtime) Answer(ctx context.Context, owner *store.User, card *store.Message, bot *store.Bot, group *store.Group, decision, text string, always bool) (*store.Message, error) {
+// reject or answer; always=true also allows the tool for that person from
+// now on.
+func (r *Runtime) Answer(ctx context.Context, caller *store.User, card *store.Message, bot *store.Bot, group *store.Group, decision, text string, always bool) (*store.Message, error) {
 	if card.Role != "card" || card.Data["status"] != "pending" || card.RunID == nil {
 		return nil, ErrCardDone
+	}
+	c := cardConvo(card, bot, group)
+	if c.User != caller.ID {
+		return nil, ErrNotRequester
 	}
 	id, _ := card.Data["interruptId"].(string)
 	kind, _ := card.Data["kind"].(string)
@@ -50,7 +70,7 @@ func (r *Runtime) Answer(ctx context.Context, owner *store.User, card *store.Mes
 	case kind == "approval" && decision == "approve":
 		d, status = eipagent.Approve(id), "approved"
 		if tool, _ := card.Data["tool"].(string); always && tool != "" {
-			_ = r.store.SetToolRule(ctx, owner.ID, tool, "allow")
+			_ = r.store.SetToolRule(ctx, caller.ID, tool, "allow")
 		}
 	case kind == "approval" && decision == "reject":
 		msg := "The person declined."
@@ -66,21 +86,21 @@ func (r *Runtime) Answer(ctx context.Context, owner *store.User, card *store.Mes
 		}
 		d, status = eipagent.Respond(id, text), "done"
 		if r.computer != nil {
-			_ = r.computer.TakeControl(bot.ID, false)
+			_ = r.computer.TakeControl(computer.Owner{Bot: bot.ID, User: caller.ID}, false)
 		}
 	default:
 		return nil, fmt.Errorf("can't %s a %s card", decision, kind)
 	}
-	d.By = owner.ID
+	d.By = caller.ID
 	upd, err := r.store.MergeMessageData(ctx, card.ID, map[string]any{"status": status, "answer": text,
 		"decision": map[string]any{"interruptId": d.InterruptID, "type": d.Type, "message": d.Message}})
 	if err != nil {
 		return nil, err
 	}
-	r.hub.Publish(bot.SpaceID, Event{Type: "message_update", BotID: card.BotID, GroupID: card.GroupID, Data: upd})
+	r.chat(c, Event{Type: "message_update", BotID: card.BotID, GroupID: card.GroupID, Data: upd})
 
 	// Resume once every card from that run has an answer.
-	pending, err := r.store.PendingCards(ctx, card.BotID, card.GroupID)
+	pending, err := r.store.PendingCards(ctx, card.BotID, c.User, card.GroupID)
 	if err != nil {
 		return upd, err
 	}
@@ -89,18 +109,18 @@ func (r *Runtime) Answer(ctx context.Context, owner *store.User, card *store.Mes
 			return upd, nil
 		}
 	}
-	decisions := r.runDecisions(ctx, card)
-	r.Enqueue(Job{Bot: bot, Group: group, Trigger: "resume", Decisions: decisions, ResumeRun: *card.RunID})
+	decisions := r.runDecisions(ctx, card, c)
+	r.Enqueue(Job{Bot: bot, Group: group, For: c.User, Trigger: "resume", Decisions: decisions, ResumeRun: *card.RunID})
 	return upd, nil
 }
 
 // runDecisions collects the recorded answers of every card in a run.
-func (r *Runtime) runDecisions(ctx context.Context, card *store.Message) []sdk.Decision {
+func (r *Runtime) runDecisions(ctx context.Context, card *store.Message, c convo) []sdk.Decision {
 	var msgs []*store.Message
-	if card.GroupID != "" {
-		msgs, _ = r.store.ListGroupMessages(ctx, card.GroupID, nil, 200)
+	if c.GroupID != "" {
+		msgs, _ = r.store.ListGroupMessages(ctx, c.GroupID, nil, 200)
 	} else {
-		msgs, _ = r.store.ListMessages(ctx, card.BotID, nil, 200)
+		msgs, _ = r.store.ListMessages(ctx, c.BotID, c.User, nil, 200)
 	}
 	var out []sdk.Decision
 	for _, m := range msgs {
@@ -123,10 +143,10 @@ func (r *Runtime) runDecisions(ctx context.Context, card *store.Message) []sdk.D
 // skipPending answers a thread's open cards with the person's new
 // message, so the chat moves on instead of waiting.
 func (r *Runtime) skipPending(ctx context.Context, c convo, pending []sdk.Interrupt, prompt string) []sdk.Decision {
-	cards, _ := r.store.PendingCards(ctx, c.BotID, c.GroupID)
+	cards, _ := r.store.PendingCards(ctx, c.BotID, c.User, c.GroupID)
 	for _, card := range cards {
 		if upd, err := r.store.MergeMessageData(ctx, card.ID, map[string]any{"status": "skipped"}); err == nil {
-			r.hub.Publish(c.SpaceID, Event{Type: "message_update", BotID: card.BotID, GroupID: card.GroupID, Data: upd})
+			r.chat(c, Event{Type: "message_update", BotID: card.BotID, GroupID: card.GroupID, Data: upd})
 		}
 	}
 	out := make([]sdk.Decision, 0, len(pending))
@@ -142,10 +162,10 @@ func (r *Runtime) skipPending(ctx context.Context, c convo, pending []sdk.Interr
 
 // expireCards closes a group's open cards when the chat moves on.
 func (r *Runtime) expireCards(ctx context.Context, c convo) {
-	cards, _ := r.store.PendingCards(ctx, c.BotID, c.GroupID)
+	cards, _ := r.store.PendingCards(ctx, c.BotID, c.User, c.GroupID)
 	for _, card := range cards {
 		if upd, err := r.store.MergeMessageData(ctx, card.ID, map[string]any{"status": "skipped"}); err == nil {
-			r.hub.Publish(c.SpaceID, Event{Type: "message_update", BotID: card.BotID, GroupID: card.GroupID, Data: upd})
+			r.chat(c, Event{Type: "message_update", BotID: card.BotID, GroupID: card.GroupID, Data: upd})
 		}
 		if card.RunID != nil {
 			r.mu.Lock()

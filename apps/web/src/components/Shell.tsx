@@ -11,7 +11,7 @@ import { Settings } from "./Settings";
 import { CommandK } from "./CommandK";
 import { NewGroup, GroupSettings } from "./NewGroup";
 import { SidePanel } from "./SidePanel";
-import { spring } from "./ui";
+import { fade, leave, spring } from "./ui";
 
 export type Panel = null | "hatch" | "bot" | "group" | "settings" | "search" | "newGroup";
 
@@ -78,9 +78,9 @@ export function Shell() {
         <AnimatePresence>
           {drawer && (
             <>
-              <motion.div className="fixed inset-0 bg-black/30 z-30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDrawer(false)} />
+              <motion.div className="fixed inset-0 bg-black/30 z-30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} onClick={() => setDrawer(false)} />
               <motion.aside className="fixed inset-y-0 left-0 w-[86%] max-w-[300px] z-40 shadow-pop"
-                initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} transition={spring}>
+                initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%", transition: leave }} transition={spring}>
                 {sidebar}
               </motion.aside>
             </>
@@ -104,7 +104,7 @@ export function Shell() {
         <AnimatePresence initial={false}>
           {sidePanel && (
             <motion.aside key="side" className="h-full hairline-l overflow-hidden shrink-0"
-              initial={{ width: 0 }} animate={{ width: 420 }} exit={{ width: 0 }} transition={spring}>
+              initial={{ width: 0 }} animate={{ width: 420 }} exit={{ width: 0, transition: leave }} transition={spring}>
               <div className="w-[420px] h-full">{sidePanel}</div>
             </motion.aside>
           )}
@@ -113,9 +113,9 @@ export function Shell() {
         <AnimatePresence>
           {sidePanel && (
             <>
-              <motion.div className="fixed inset-0 bg-black/30 z-30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSide(null)} />
+              <motion.div className="fixed inset-0 bg-black/30 z-30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} onClick={() => setSide(null)} />
               <motion.aside className="fixed inset-y-0 right-0 w-full max-w-[440px] z-40 shadow-pop"
-                initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={spring}>
+                initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%", transition: leave }} transition={spring}>
                 {sidePanel}
               </motion.aside>
             </>

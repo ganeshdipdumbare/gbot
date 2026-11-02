@@ -11,6 +11,7 @@ import { renderMarkdown } from "../lib/markdown";
 import { speak, stopSpeaking } from "../lib/voice";
 import { Card } from "./Card";
 import { Composer } from "./Composer";
+import { Modal } from "./Modal";
 import { bouncy, Button, Icon, IconButton } from "./ui";
 
 export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOpen }: {
@@ -81,7 +82,7 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
         )}
         <div className="flex-1" />
         {bot && (
-          <IconButton label={live ? "Its computer is active" : "Computer and routines"} onClick={() => onComputer()}
+          <IconButton label={live ? "Its computer is on" : "Computer and routines"} onClick={() => onComputer()}
             className={`relative ${panelOpen ? "bg-selected text-ink!" : ""}`}>
             <span className={live ? "text-live" : ""}><Icon.screen /></span>
             {live && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-live" />}
@@ -148,6 +149,7 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
     settled.current = new Set(messages.map((m) => m.id));
     settledFor.current = chatKey;
   }
+  const bots = useStore((s) => s.bots);
   const byId = useMemo(() => Object.fromEntries((bot ? [bot] : members).map((b) => [b.id, b])), [bot, members]);
 
   // Who is thinking right now, without a streaming bubble to show for it.
@@ -205,7 +207,7 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
     const out: { m: Message; first: boolean; last: boolean; stamp?: string }[] = [];
     (messages ?? []).forEach((m, i, all) => {
       const prev = all[i - 1];
-      const same = (a?: Message) => !!a && a.role === m.role && a.botId === m.botId && a.role !== "card" && a.role !== "event";
+      const same = (a?: Message) => !!a && a.role === m.role && a.botId === m.botId && a.data?.from === m.data?.from && a.role !== "card" && a.role !== "event";
       // A quiet timestamp after a gap, like Grok Bot.
       const gap = !prev || new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() > 30 * 60_000;
       out.push({ m, first: !same(prev) || gap, last: !same(all[i + 1]), stamp: gap ? stampOf(m.createdAt) : undefined });
@@ -238,7 +240,9 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
         {messages && messages.length === 0 && (bot ? <Hello bot={bot} /> : <GroupHello group={group!} members={members} />)}
         {error && <p className="text-center text-danger text-[13px]">{error}</p>}
         {rows.map(({ m, first, last, stamp }) => {
-          const author = m.botId ? byId[m.botId] : undefined;
+          // Another bot's message to this one is shown as coming from it.
+          const from = typeof m.data?.from === "string" ? bots.find((b) => b.id === m.data!.from) : undefined;
+          const author = from ?? (m.botId ? byId[m.botId] : undefined);
           return (
             <div key={m.id}>
               {stamp && <div className="text-center text-[12px] text-ink-3 pt-5 pb-1">{stamp}</div>}
@@ -315,6 +319,7 @@ function GroupHello({ group, members }: { group: Group; members: Bot[] }) {
 const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animate }: { m: Message; author?: Bot; first: boolean; last: boolean; inGroup: boolean; chatKey: ChatKey; animate: boolean }) {
   const enter = animate ? "entry-in" : "";
   if (m.role === "event" && m.data?.kind === "activity") return <Activity m={m} enter={enter} />;
+  if (m.role === "event" && m.data?.kind === "botmsg") return <Exchange m={m} enter={enter} />;
   if (m.role === "event") {
     const err = m.data?.kind === "error";
     return (
@@ -325,7 +330,9 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
       </div>
     );
   }
-  const mine = m.role === "user";
+  const fromBot = m.role === "user" && !!m.data?.from;
+  const mine = m.role === "user" && !fromBot;
+  const named = inGroup || fromBot;
   const failed = !!m.data?.failed;
   // Bubbles round their joined corners less, like Grok Bot.
   const shape = mine ? `rounded-2xl ${!first ? "rounded-tr-md" : ""} ${!last ? "rounded-br-md" : ""}` : `rounded-2xl ${!first ? "rounded-tl-md" : ""} ${!last ? "rounded-bl-md" : ""}`;
@@ -333,9 +340,9 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
     <div className={`${enter} group flex items-end gap-1.5 ${first ? "mt-3" : "mt-0.5"} ${mine ? "justify-end" : ""}`}
       style={{ transformOrigin: mine ? "bottom right" : "bottom left" }} title={new Date(m.createdAt).toLocaleString()}>
       {mine && !m.pending && <Actions m={m} chatKey={chatKey} failed={failed} />}
-      {!mine && inGroup && <div className="w-6 shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={24} mood={m.streaming ? "working" : "idle"} />}</div>}
+      {!mine && named && <div className="w-6 shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={24} mood={m.streaming ? "working" : "idle"} />}</div>}
       <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[min(85%,560px)]`}>
-        {inGroup && first && !mine && author && <span className="text-[12px] text-ink-3 mb-1 ml-1">{author.name}</span>}
+        {named && first && !mine && author && <span className="text-[12px] text-ink-3 mb-1 ml-1">{author.name}</span>}
         <div className={`px-3.5 py-2 text-[15px] leading-[22px] ${shape} ${mine
           ? `bg-[var(--bubble-me)] text-[var(--bubble-me-ink)] ${m.pending ? "opacity-60" : ""} ${failed ? "ring-1 ring-danger" : ""}`
           : "bg-surface text-ink"}`}>
@@ -354,19 +361,86 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
 
 type Step = { label: string; detail?: string; ok: boolean };
 
-// What the bot did, as a quiet checklist above its reply (like Grok Bot
-// and Rakazo): "✓ Ran → python3 fib.py · exit 0".
+// What the bot did, as a quiet log above its reply (like Grok Bot's
+// "Ran full suite 212 passed"). Long runs fold into one line.
 function Activity({ m, enter }: { m: Message; enter: string }) {
   const steps = (m.data?.steps as Step[] | undefined) ?? [];
+  const long = steps.length > 4;
+  const [open, setOpen] = useState(!long);
+  const failed = steps.filter((s) => !s.ok).length;
   return (
-    <div className={`${enter} mt-3 max-w-[min(85%,560px)] rounded-2xl bg-surface px-3.5 py-2.5 text-[14px] leading-[22px]`}>
-      {steps.map((s, i) => (
-        <div key={i} className="flex items-baseline gap-2 min-w-0">
-          <span className={`shrink-0 [&_svg]:size-3.5 translate-y-[2px] ${s.ok ? "text-success" : "text-danger"}`}>{s.ok ? <Icon.check /> : <Icon.close />}</span>
-          <span className="font-medium shrink-0">{s.label}</span>
-          {s.detail && <><span className="text-ink-3 shrink-0">→</span><span className="text-ink-2 truncate font-mono text-[12.5px]">{s.detail}</span></>}
+    <div className={`${enter} mt-2 max-w-[min(85%,560px)] text-[13.5px] leading-[22px]`}>
+      {long && (
+        <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
+          className="flex items-center gap-1.5 -ml-1 px-1 rounded-md text-ink-3 hover:text-ink-2 cursor-pointer transition-colors duration-[120ms]">
+          <span>Worked through {steps.length} steps{failed ? ` · ${failed} failed` : ""}</span>
+          <motion.span className="inline-block text-[10px]" animate={{ rotate: open ? 90 : 0 }} transition={bouncy}>›</motion.span>
+        </button>
+      )}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.ul initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            transition={bouncy} className="overflow-hidden">
+            {steps.map((s, i) => (
+              <li key={i} className="flex items-center gap-2 min-w-0">
+                <span className={`shrink-0 size-1.5 rounded-full ${s.ok ? "bg-ink-3" : "bg-danger"}`} />
+                <span className="text-ink-2 shrink-0">{s.label}</span>
+                {s.detail && <span className={`text-ink-3 truncate ${s.label === "Ran" ? "font-mono text-[12.5px]" : ""}`}>{s.detail}</span>}
+              </li>
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+const exchangeStatus: Record<string, string> = { sent: "Sent", replied: "Replied", delivered: "Delivered", needs_you: "Waiting on you", failed: "No reply" };
+// What the other side of an exchange shows before (or instead of) a reply.
+const noReplyText: Record<string, string> = { sent: "No reply yet", delivered: "No reply needed" };
+
+// One bot messaging another ("Messaged Grok Bot", "Message from Pip"),
+// like Rakazo: a card in both chats that opens the exchange, view-only.
+function Exchange({ m, enter }: { m: Message; enter: string }) {
+  const [open, setOpen] = useState(false);
+  const bots = useStore((s) => s.bots);
+  const d = m.data as { from: string; to: string; message: string; reply?: string; status: string };
+  const from = bots.find((b) => b.id === d.from);
+  const to = bots.find((b) => b.id === d.to);
+  const peer = m.botId === d.from ? to : from;
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`${enter} mt-3 flex items-center gap-2.5 max-w-[min(85%,560px)] rounded-2xl bg-surface hover:bg-hover px-3.5 py-2.5 text-left cursor-pointer transition-colors duration-[120ms]`}>
+        {peer && <Gbot look={peer.look} seed={peer.id} size={24} mood={d.status === "sent" ? "working" : "idle"} />}
+        <span className="min-w-0">
+          <span className="block text-[14px] font-medium truncate">{m.content}</span>
+          <span className={`block text-[12.5px] truncate ${d.status === "failed" ? "text-danger" : "text-ink-2"}`}>{exchangeStatus[d.status] ?? d.status}</span>
+        </span>
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} width={520} title={`${from?.name ?? "A bot"} and ${to?.name ?? "a bot"}`}>
+        <div className="px-5 pb-5 overflow-y-auto space-y-4">
+          <ExchangeTurn bot={from}><div className="whitespace-pre-wrap break-words">{d.message}</div></ExchangeTurn>
+          <ExchangeTurn bot={to}>
+            {d.reply
+              ? <div className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.reply) }} />
+              : <div className="text-ink-2">{noReplyText[d.status] ?? exchangeStatus[d.status] ?? d.status}</div>}
+          </ExchangeTurn>
+          <p className="text-[12px] text-ink-3 text-center">View only. Bots write these to each other.</p>
         </div>
-      ))}
+      </Modal>
+    </>
+  );
+}
+
+function ExchangeTurn({ bot, children }: { bot?: Bot; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <div className="w-7 shrink-0 pt-0.5">{bot && <Gbot look={bot.look} seed={bot.id} size={28} mood="idle" />}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[12px] text-ink-3 mb-1">{bot?.name ?? "Removed bot"}</div>
+        <div className="rounded-2xl bg-surface px-3.5 py-2 text-[15px] leading-[22px]">{children}</div>
+      </div>
     </div>
   );
 }

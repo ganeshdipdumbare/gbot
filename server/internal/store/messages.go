@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,6 +19,9 @@ type Message struct {
 	Data      map[string]any `json:"data,omitempty"`
 	RunID     *string        `json:"runId,omitempty"`
 	CreatedAt time.Time      `json:"createdAt"`
+	// ChatUser is whose private chat a bot's message belongs to. It's
+	// server-side only: clients never see other people's chats in a list.
+	ChatUser string `json:"-"`
 }
 
 func nullable(s string) *string {
@@ -32,8 +36,13 @@ func (s *Store) AddMessage(ctx context.Context, m *Message, authorID *string) er
 	if m.Data != nil {
 		data, _ = json.Marshal(m.Data)
 	}
-	return s.DB.QueryRow(ctx, `INSERT INTO messages(bot_id,group_id,role,author_id,content,data,run_id) VALUES($1,$2,$3,$4,$5,$6,$7)
-		RETURNING id, created_at`, nullable(m.BotID), nullable(m.GroupID), m.Role, authorID, m.Content, data, m.RunID).Scan(&m.ID, &m.CreatedAt)
+	// A group's messages belong to the group, not to a person's private chat.
+	chatUser := nullable(m.ChatUser)
+	if m.GroupID != "" {
+		chatUser = nil
+	}
+	return s.DB.QueryRow(ctx, `INSERT INTO messages(bot_id,group_id,chat_user_id,role,author_id,content,data,run_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+		RETURNING id, created_at`, nullable(m.BotID), nullable(m.GroupID), chatUser, m.Role, authorID, m.Content, data, m.RunID).Scan(&m.ID, &m.CreatedAt)
 }
 
 func (s *Store) SetMessageContent(ctx context.Context, id, content string) error {
@@ -49,13 +58,13 @@ func (s *Store) MergeMessageData(ctx context.Context, id string, data map[string
 		RETURNING `+msgCols, id, raw))
 }
 
-const msgCols = `id, bot_id, group_id, role, content, data, run_id, created_at`
+const msgCols = `id, bot_id, group_id, role, content, data, run_id, created_at, chat_user_id`
 
 func scanMessage(row pgx.Row) (*Message, error) {
 	m := &Message{}
-	var bot, group *string
+	var bot, group, chatUser *string
 	var data []byte
-	if err := row.Scan(&m.ID, &bot, &group, &m.Role, &m.Content, &data, &m.RunID, &m.CreatedAt); err != nil {
+	if err := row.Scan(&m.ID, &bot, &group, &m.Role, &m.Content, &data, &m.RunID, &m.CreatedAt, &chatUser); err != nil {
 		return nil, notFound(err)
 	}
 	if bot != nil {
@@ -63,6 +72,9 @@ func scanMessage(row pgx.Row) (*Message, error) {
 	}
 	if group != nil {
 		m.GroupID = *group
+	}
+	if chatUser != nil {
+		m.ChatUser = *chatUser
 	}
 	_ = json.Unmarshal(data, &m.Data)
 	return m, nil
@@ -72,17 +84,14 @@ func (s *Store) GetMessage(ctx context.Context, id string) (*Message, error) {
 	return scanMessage(s.DB.QueryRow(ctx, `SELECT `+msgCols+` FROM messages WHERE id=$1`, id))
 }
 
-// PendingCards returns a chat's unanswered cards, oldest first.
-func (s *Store) PendingCards(ctx context.Context, botID, groupID string) ([]*Message, error) {
+// PendingCards returns a chat's unanswered cards, oldest first. A bot's
+// chat is one person's (userID); a group is identified by groupID alone.
+func (s *Store) PendingCards(ctx context.Context, botID, userID, groupID string) ([]*Message, error) {
 	q := `SELECT ` + msgCols + ` FROM messages WHERE role='card' AND data->>'status'='pending' AND `
-	arg := botID
 	if groupID != "" {
-		q += `group_id=$1`
-		arg = groupID
-	} else {
-		q += `bot_id=$1 AND group_id IS NULL`
+		return s.listMessages(ctx, q+`group_id=$1 ORDER BY created_at`, groupID)
 	}
-	return s.listMessages(ctx, q+` ORDER BY created_at`, arg)
+	return s.listMessages(ctx, q+`bot_id=$1 AND chat_user_id=$2 AND group_id IS NULL ORDER BY created_at`, botID, userID)
 }
 
 func (s *Store) listMessages(ctx context.Context, q string, args ...any) ([]*Message, error) {
@@ -102,30 +111,37 @@ func (s *Store) listMessages(ctx context.Context, q string, args ...any) ([]*Mes
 	return out, rows.Err()
 }
 
-// ListMessages pages backwards from before (keyset), newest last. The
-// caller must already have authorized the bot or group.
-func (s *Store) ListMessages(ctx context.Context, botID string, before *time.Time, limit int) ([]*Message, error) {
-	return s.page(ctx, `bot_id=$1 AND group_id IS NULL`, botID, before, limit)
+// ListMessages pages backwards from before (keyset), newest last, through
+// one person's chat with a bot. The caller must already have authorized
+// the bot for that person.
+func (s *Store) ListMessages(ctx context.Context, botID, userID string, before *time.Time, limit int) ([]*Message, error) {
+	return s.page(ctx, `bot_id=$1 AND chat_user_id=$2 AND group_id IS NULL`, []any{botID, userID}, before, limit)
 }
 
+// ListGroupMessages pages through a group chat. The caller must already
+// have authorized the group.
 func (s *Store) ListGroupMessages(ctx context.Context, groupID string, before *time.Time, limit int) ([]*Message, error) {
-	return s.page(ctx, `group_id=$1`, groupID, before, limit)
+	return s.page(ctx, `group_id=$1`, []any{groupID}, before, limit)
 }
 
-func (s *Store) page(ctx context.Context, where, id string, before *time.Time, limit int) ([]*Message, error) {
+func (s *Store) page(ctx context.Context, where string, args []any, before *time.Time, limit int) ([]*Message, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	n := len(args)
+	args = append(args, before, limit)
 	out, err := s.listMessages(ctx, `SELECT `+msgCols+` FROM messages WHERE `+where+`
-		AND ($2::timestamptz IS NULL OR created_at < $2) ORDER BY created_at DESC, id DESC LIMIT $3`, id, before, limit)
+		AND ($`+strconv.Itoa(n+1)+`::timestamptz IS NULL OR created_at < $`+strconv.Itoa(n+1)+`) ORDER BY created_at DESC, id DESC LIMIT $`+strconv.Itoa(n+2), args...)
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out, err
 }
 
-func (s *Store) StartRun(ctx context.Context, botID, trigger, model string) (id string, err error) {
-	err = s.DB.QueryRow(ctx, `INSERT INTO runs(bot_id,trigger,model) VALUES($1,$2,$3) RETURNING id`, botID, trigger, model).Scan(&id)
+// StartRun records a run and the person it was for.
+func (s *Store) StartRun(ctx context.Context, botID, userID, trigger, model string) (id string, err error) {
+	err = s.DB.QueryRow(ctx, `INSERT INTO runs(bot_id,user_id,trigger,model) VALUES($1,$2,$3,$4) RETURNING id`,
+		botID, nullable(userID), trigger, model).Scan(&id)
 	return
 }
 

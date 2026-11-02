@@ -78,7 +78,7 @@ export function Sidebar({ activeId, onSelect, onHatch, onSettings, onSearch, onN
                     <Row
                       active={groupKey(g.id) === activeId}
                       onClick={() => onSelect(groupKey(g.id))}
-                      avatar={<div className="size-9 grid place-items-center"><Stack bots={members} size={22} presence={presence} /></div>}
+                      avatar={<div className="size-[42px] grid place-items-center"><Stack bots={members} size={26} presence={presence} /></div>}
                       name={g.name}
                       time={timeAgo(g.lastMessage?.createdAt)}
                       preview={working ? `${working.name} is ${presence[working.id]?.state}…` : g.lastMessage ? clean(g.lastMessage.content) : members.map((b) => b.name).join(", ")}
@@ -120,9 +120,9 @@ function preview(b: Bot, p?: Presence) {
 function BotAvatar({ bot, p }: { bot: Bot; p?: Presence }) {
   return (
     <div className="relative shrink-0">
-      <Gbot look={bot.look} seed={bot.id} size={36} mood={moodOf(p, bot)} title={bot.name} />
+      <Gbot look={bot.look} seed={bot.id} size={42} mood={moodOf(p, bot)} title={bot.name} />
       {p?.state === "waiting" && <span className="absolute -top-px -right-px size-2.5 rounded-full bg-danger ring-2 ring-[var(--chrome)]" title="Needs you" />}
-      {p?.live && p.state !== "waiting" && <span className="absolute -bottom-px -right-px size-2.5 rounded-full bg-live ring-2 ring-[var(--chrome)]" title="Its computer is active" />}
+      {p?.live && p.state !== "waiting" && <span className="absolute -bottom-px -right-px size-2.5 rounded-full bg-live ring-2 ring-[var(--chrome)]" title="Its computer is on" />}
     </div>
   );
 }
@@ -134,7 +134,7 @@ function Row({ active, onClick, avatar, name, pinned, time, preview, busy, unrea
     <button
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors duration-[120ms] cursor-pointer ${active ? "bg-selected" : "hover:bg-hover"}`}
+      className={`w-full flex items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors duration-[120ms] cursor-pointer ${active ? "bg-selected" : "hover:bg-hover"}`}
     >
       {avatar}
       <div className="min-w-0 flex-1">

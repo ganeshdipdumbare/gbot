@@ -90,9 +90,14 @@ func run(cmd string, log *slog.Logger) error {
 	if env("GBOT_COMPUTER", "on") != "off" {
 		comp = computer.New(env("GBOT_COMPUTER_IMAGE", "gbot-computer:latest"), os.Getenv("GBOT_COMPUTER_BACKEND"), log)
 		comp.Adopt(ctx)
-		comp.OnChange = func(botID string, cs computer.Status) {
-			if b, err := st.GetBotAnySpace(context.Background(), botID); err == nil {
-				hub.Publish(b.SpaceID, runs.Event{Type: "computer", BotID: botID, Data: cs})
+		comp.OnChange = func(o computer.Owner, cs computer.Status) {
+			if o.Bot == "" {
+				return // adopted from a previous process; its owner is unknown
+			}
+			if b, err := st.GetBotAnySpace(context.Background(), o.Bot); err == nil {
+				// A computer is its person's: only they see it.
+				hub.Publish(b.SpaceID, []string{o.User}, runs.Event{Type: "computer", BotID: o.Bot, Data: cs})
+				rt.RefreshLive(b.SpaceID, o.Bot)
 			}
 		}
 	}
@@ -109,10 +114,17 @@ func run(cmd string, log *slog.Logger) error {
 		if trigger == "webhook" {
 			how = "started by its webhook"
 		}
-		rt.Note(bot, "Routine **"+r.Name+"** "+how, map[string]any{"kind": "routine", "routineId": r.ID})
-		rt.Enqueue(runs.Job{Bot: bot, Prompt: prompt, Trigger: trigger, Untrusted: input != ""})
+		rt.Note(bot, r.UserID, "Routine **"+r.Name+"** "+how, map[string]any{"kind": "routine", "routineId": r.ID})
+		rt.Enqueue(runs.Job{Bot: bot, For: r.UserID, Prompt: prompt, Trigger: trigger, Untrusted: input != ""})
 	}
 	rt.Use(comp, rs)
+	if comp != nil { // computers adopted from a previous run are still on
+		for _, o := range comp.Running() {
+			if b, err := st.GetBotAnySpace(ctx, o.Bot); err == nil {
+				rt.RefreshLive(b.SpaceID, o.Bot)
+			}
+		}
+	}
 	go rs.Run(ctx)
 	go rt.SyncMCP(ctx, sealer)
 

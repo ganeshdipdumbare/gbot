@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -43,6 +45,20 @@ func run(ctx context.Context, bin string, stdin []byte, args ...string) (string,
 
 func name(botID string) string { return "gbot-computer-" + botID }
 
+// hostTZ is this machine's time zone (e.g. "Europe/Berlin"), so the
+// computer's wallpaper follows its owner's day. Empty when unknown.
+func hostTZ() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		return strings.TrimPrefix(tz, ":")
+	}
+	if p, err := filepath.EvalSymlinks("/etc/localtime"); err == nil {
+		if _, zone, ok := strings.Cut(p, "zoneinfo/"); ok {
+			return zone
+		}
+	}
+	return ""
+}
+
 // ---- microsandbox: one lightweight microVM per bot ----
 
 type msbDriver struct{}
@@ -78,7 +94,11 @@ func (msbDriver) start(ctx context.Context, botID, image string, network bool) (
 		return "", fmt.Errorf("microsandbox: %s%v", strings.TrimSpace(errOut), errOrNil(err))
 	}
 	// create only boots the VM; the desktop runs as a managed job.
-	if _, errOut, code, err := run(ctx, "msb", nil, "exec", "-d", n, "-u", "gbot", "--", "/usr/local/bin/gbot-desktop"); err != nil || code != 0 {
+	desktop := []string{"exec", "-d", n, "-u", "gbot"}
+	if tz := hostTZ(); tz != "" {
+		desktop = append(desktop, "-e", "TZ="+tz)
+	}
+	if _, errOut, code, err := run(ctx, "msb", nil, append(desktop, "--", "/usr/local/bin/gbot-desktop")...); err != nil || code != 0 {
 		return "", fmt.Errorf("microsandbox: starting the desktop: %s%v", strings.TrimSpace(errOut), errOrNil(err))
 	}
 	return n, nil
@@ -141,6 +161,9 @@ func (dockerDriver) start(ctx context.Context, botID, image string, network bool
 		"--pids-limit=512", "--memory=1536m", "--cpus=2", "--shm-size=512m",
 		"--tmpfs", "/tmp:rw,nosuid,size=512m",
 		"-v", "gbot-home-" + botID + ":/home/gbot"}
+	if tz := hostTZ(); tz != "" {
+		args = append(args, "-e", "TZ="+tz)
+	}
 	if !network {
 		args = append(args, "--network", "none")
 	}

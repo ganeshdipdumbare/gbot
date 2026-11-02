@@ -7,11 +7,16 @@ export interface Message {
   data?: Record<string, unknown>; runId?: string; createdAt: string; pending?: boolean; streaming?: boolean;
 }
 export interface Bot {
-  id: string; spaceId: string; name: string; title: string; instructions: string; model: string;
+  id: string; spaceId: string; ownerId: string; name: string; title: string; instructions: string; model: string;
   look: Look; pinned: boolean; computerNetwork: boolean; voice: string; readAloud: boolean;
-  createdAt: string; lastMessage?: Message;
+  visibility: Visibility; role?: BotRole; createdAt: string; lastMessage?: Message;
 }
-export interface Group { id: string; spaceId: string; name: string; botIds: string[]; createdAt: string; lastMessage?: Message }
+export type Visibility = "private" | "team" | "invited";
+export type BotRole = "owner" | "manager" | "collaborator";
+export interface Member { userId: string; email: string; name: string; role: string }
+export interface Sharing { visibility: Visibility; members: Member[]; spaceMembers: Member[] }
+export interface Space { id: string; name: string; role: "owner" | "member" }
+export interface Group { id: string; spaceId: string; userId: string; name: string; botIds: string[]; createdAt: string; lastMessage?: Message }
 export interface Presence { state: "idle" | "thinking" | "working" | "waiting" | "blocked" | "done"; detail?: string; queued?: number; live?: boolean }
 export interface Model { id: string; label: string; provider: string; local: boolean; tools: boolean; caps?: string[] }
 export interface ComputerStatus { state: "off" | "starting" | "on"; controller: "bot" | "user"; network: boolean; available: boolean; backend: "microsandbox" | "docker" }
@@ -71,6 +76,18 @@ export const api = {
   computerAction: (id: string, action: "start" | "stop" | "control" | "input" | "show", body: unknown = {}) =>
     req<ComputerStatus>("POST", `${bot(id)}/computer/${action}`, body),
   screenUrl: (id: string) => `${bot(id)}/computer/screen?t=${Date.now()}`,
+
+  sharing: (id: string) => req<Sharing>("GET", `${bot(id)}/sharing`),
+  setVisibility: (id: string, visibility: Visibility) => req<Sharing>("PUT", `${bot(id)}/sharing`, { visibility }),
+  addBotMember: (id: string, email: string, role: "manager" | "collaborator") => req<Sharing>("POST", `${bot(id)}/sharing/members`, { email, role }),
+  removeBotMember: (id: string, userId: string) => req<Sharing>("DELETE", `${bot(id)}/sharing/members/${userId}`),
+
+  spaces: () => req<{ spaces: Space[]; current: string }>("GET", "/api/spaces"),
+  createSpace: (name: string) => req<Space>("POST", "/api/spaces", { name }),
+  selectSpace: (spaceId: string) => req<{ spaceId: string }>("PUT", "/api/me/space", { spaceId }),
+  spaceMembers: (id: string) => req<{ members: Member[] }>("GET", `/api/spaces/${id}/members`),
+  addSpaceMember: (id: string, email: string) => req<{ members: Member[] }>("POST", `/api/spaces/${id}/members`, { email }),
+  removeSpaceMember: (id: string, userId: string) => req<{ members: Member[] }>("DELETE", `/api/spaces/${id}/members/${userId}`),
 
   routines: (id: string) => req<{ routines: Routine[] }>("GET", `${bot(id)}/routines`),
   createRoutine: (id: string, b: { name: string; prompt: string; kind: string; schedule?: string }) => req<Routine>("POST", `${bot(id)}/routines`, b),

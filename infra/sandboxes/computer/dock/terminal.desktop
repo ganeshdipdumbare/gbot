@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Exec=gbot-terminal
+Icon=/usr/local/share/gbot/icons/terminal.svg

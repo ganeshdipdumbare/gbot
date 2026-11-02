@@ -5,6 +5,7 @@ package runs
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sync"
 	"time"
 )
@@ -17,15 +18,18 @@ type Event struct {
 	Data    any    `json:"data,omitempty"`
 }
 
-// Hub fans events out per space. Slow subscribers are dropped rather than
-// allowed to block a run; their client reconnects and refetches.
+// Hub fans events out per space, and only to the people each event is
+// for: a bot's chats are private to the person they belong to, so every
+// event names its audience and a client never receives events for others.
+// Slow subscribers are dropped rather than allowed to block a run; their
+// client reconnects and refetches.
 //
 // It also keeps a short numbered backlog per space for long-polling
 // clients, whose network path can't hold a stream open (some proxies and
 // tunnels buffer server-sent events until the response ends).
 type Hub struct {
 	mu   sync.Mutex
-	subs map[string]map[chan []byte]struct{}
+	subs map[string]map[chan []byte]string // space -> subscriber -> user
 	logs map[string]*backlog
 }
 
@@ -37,13 +41,14 @@ type backlog struct {
 
 type logged struct {
 	seq  int64
+	to   []string
 	data json.RawMessage
 }
 
 const backlogSize = 2000
 
 func NewHub() *Hub {
-	return &Hub{subs: map[string]map[chan []byte]struct{}{}, logs: map[string]*backlog{}}
+	return &Hub{subs: map[string]map[chan []byte]string{}, logs: map[string]*backlog{}}
 }
 
 func (h *Hub) log(space string) *backlog {
@@ -55,10 +60,10 @@ func (h *Hub) log(space string) *backlog {
 	return l
 }
 
-// Poll returns events after the given sequence number, waiting up to
-// wait for one to arrive. reset is true when the caller missed events
+// Poll returns the user's events after the given sequence number, waiting
+// up to wait for one to arrive. reset is true when the caller missed events
 // that left the backlog (or after=0 on first call) and should refetch.
-func (h *Hub) Poll(ctx context.Context, space string, after int64, wait time.Duration) (events []json.RawMessage, next int64, reset bool) {
+func (h *Hub) Poll(ctx context.Context, space, user string, after int64, wait time.Duration) (events []json.RawMessage, next int64, reset bool) {
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	for {
@@ -73,7 +78,7 @@ func (h *Hub) Poll(ctx context.Context, space string, after int64, wait time.Dur
 			reset = true
 		}
 		for _, e := range l.events {
-			if e.seq >= after {
+			if e.seq >= after && slices.Contains(e.to, user) {
 				events = append(events, e.data)
 			}
 		}
@@ -92,13 +97,14 @@ func (h *Hub) Poll(ctx context.Context, space string, after int64, wait time.Dur
 	}
 }
 
-func (h *Hub) Subscribe(space string) (chan []byte, func()) {
+// Subscribe opens a live stream of the space's events for one user.
+func (h *Hub) Subscribe(space, user string) (chan []byte, func()) {
 	ch := make(chan []byte, 256)
 	h.mu.Lock()
 	if h.subs[space] == nil {
-		h.subs[space] = map[chan []byte]struct{}{}
+		h.subs[space] = map[chan []byte]string{}
 	}
-	h.subs[space][ch] = struct{}{}
+	h.subs[space][ch] = user
 	h.mu.Unlock()
 	return ch, func() {
 		h.mu.Lock()
@@ -110,7 +116,12 @@ func (h *Hub) Subscribe(space string) (chan []byte, func()) {
 	}
 }
 
-func (h *Hub) Publish(space string, e Event) {
+// Publish sends an event to the users in to. An event with no audience
+// goes to nobody: publishing to everyone in a space must be spelled out.
+func (h *Hub) Publish(space string, to []string, e Event) {
+	if len(to) == 0 {
+		return
+	}
 	b, err := json.Marshal(e)
 	if err != nil {
 		return
@@ -118,14 +129,17 @@ func (h *Hub) Publish(space string, e Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	l := h.log(space)
-	l.events = append(l.events, logged{l.next, b})
+	l.events = append(l.events, logged{l.next, to, b})
 	if len(l.events) > backlogSize {
 		l.events = l.events[len(l.events)-backlogSize:]
 	}
 	l.next++
 	close(l.wake)
 	l.wake = make(chan struct{})
-	for ch := range h.subs[space] {
+	for ch, user := range h.subs[space] {
+		if !slices.Contains(to, user) {
+			continue
+		}
 		select {
 		case ch <- b:
 		default:

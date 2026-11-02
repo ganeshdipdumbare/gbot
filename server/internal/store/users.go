@@ -86,10 +86,21 @@ func (s *Store) DeleteSession(ctx context.Context, token string) error {
 }
 
 // UserBySession returns the session's user, or ErrNotFound when the
-// token is unknown or expired.
+// token is unknown or expired. The user's team is the one the session
+// picked, if they're still a member; otherwise their first team.
 func (s *Store) UserBySession(ctx context.Context, token string) (*User, error) {
-	return scanUser(s.DB.QueryRow(ctx, `SELECT `+userCols+` FROM sessions s JOIN users u ON u.id=s.user_id
+	return scanUser(s.DB.QueryRow(ctx, `SELECT u.id, u.email, u.name, u.default_model, u.approval_mode, u.password_hash,
+		COALESCE(
+			(SELECT m.space_id FROM space_members m WHERE m.user_id=u.id AND m.space_id=s.space_id),
+			(SELECT m.space_id FROM space_members m WHERE m.user_id=u.id ORDER BY space_id LIMIT 1))
+		FROM sessions s JOIN users u ON u.id=s.user_id
 		WHERE s.token_hash=$1 AND s.expires_at > now()`, hashToken(token)))
+}
+
+// SetSessionSpace makes spaceID the team this session works in.
+func (s *Store) SetSessionSpace(ctx context.Context, token, spaceID string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE sessions SET space_id=$2 WHERE token_hash=$1`, hashToken(token), spaceID)
+	return err
 }
 
 func (s *Store) PurgeExpiredSessions(ctx context.Context) error {
