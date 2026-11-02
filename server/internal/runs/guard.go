@@ -44,6 +44,9 @@ func runFrom(ctx context.Context) *runCtx { rc, _ := ctx.Value(rcKey{}).(*runCtx
 var internalTools = map[string]bool{
 	"remember": true, "recall": true, "current_time": true, "ask_user": true,
 	"request_takeover": true, "use_skill": true, "routine_list": true,
+	// Talking to the person's own bots; a tainted sender taints the
+	// other bot's run, so its own approvals still apply.
+	"message_bot": true,
 }
 
 func newID() string {

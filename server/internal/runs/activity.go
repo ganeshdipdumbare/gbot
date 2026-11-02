@@ -78,6 +78,8 @@ func describeStep(call *sdk.ToolCall, result string, connector func(prefix strin
 		st.Label = "Checked routines"
 	case "routine_delete":
 		st.Label = "Deleted a routine"
+	case "message_bot":
+		st.Label, st.Detail = "Messaged", str("to")
 	case "use_skill":
 		st.Label, st.Detail = "Used skill", str("name")
 	default:

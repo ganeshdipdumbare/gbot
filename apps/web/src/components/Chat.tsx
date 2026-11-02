@@ -148,6 +148,7 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
     settled.current = new Set(messages.map((m) => m.id));
     settledFor.current = chatKey;
   }
+  const bots = useStore((s) => s.bots);
   const byId = useMemo(() => Object.fromEntries((bot ? [bot] : members).map((b) => [b.id, b])), [bot, members]);
 
   // Who is thinking right now, without a streaming bubble to show for it.
@@ -205,7 +206,7 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
     const out: { m: Message; first: boolean; last: boolean; stamp?: string }[] = [];
     (messages ?? []).forEach((m, i, all) => {
       const prev = all[i - 1];
-      const same = (a?: Message) => !!a && a.role === m.role && a.botId === m.botId && a.role !== "card" && a.role !== "event";
+      const same = (a?: Message) => !!a && a.role === m.role && a.botId === m.botId && a.data?.from === m.data?.from && a.role !== "card" && a.role !== "event";
       // A quiet timestamp after a gap, like Grok Bot.
       const gap = !prev || new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() > 30 * 60_000;
       out.push({ m, first: !same(prev) || gap, last: !same(all[i + 1]), stamp: gap ? stampOf(m.createdAt) : undefined });
@@ -238,7 +239,9 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
         {messages && messages.length === 0 && (bot ? <Hello bot={bot} /> : <GroupHello group={group!} members={members} />)}
         {error && <p className="text-center text-danger text-[13px]">{error}</p>}
         {rows.map(({ m, first, last, stamp }) => {
-          const author = m.botId ? byId[m.botId] : undefined;
+          // Another bot's message to this one is shown as coming from it.
+          const from = typeof m.data?.from === "string" ? bots.find((b) => b.id === m.data!.from) : undefined;
+          const author = from ?? (m.botId ? byId[m.botId] : undefined);
           return (
             <div key={m.id}>
               {stamp && <div className="text-center text-[12px] text-ink-3 pt-5 pb-1">{stamp}</div>}
@@ -325,7 +328,9 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
       </div>
     );
   }
-  const mine = m.role === "user";
+  const fromBot = m.role === "user" && !!m.data?.from;
+  const mine = m.role === "user" && !fromBot;
+  const named = inGroup || fromBot;
   const failed = !!m.data?.failed;
   // Bubbles round their joined corners less, like Grok Bot.
   const shape = mine ? `rounded-2xl ${!first ? "rounded-tr-md" : ""} ${!last ? "rounded-br-md" : ""}` : `rounded-2xl ${!first ? "rounded-tl-md" : ""} ${!last ? "rounded-bl-md" : ""}`;
@@ -333,9 +338,9 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
     <div className={`${enter} group flex items-end gap-1.5 ${first ? "mt-3" : "mt-0.5"} ${mine ? "justify-end" : ""}`}
       style={{ transformOrigin: mine ? "bottom right" : "bottom left" }} title={new Date(m.createdAt).toLocaleString()}>
       {mine && !m.pending && <Actions m={m} chatKey={chatKey} failed={failed} />}
-      {!mine && inGroup && <div className="w-6 shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={24} mood={m.streaming ? "working" : "idle"} />}</div>}
+      {!mine && named && <div className="w-6 shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={24} mood={m.streaming ? "working" : "idle"} />}</div>}
       <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[min(85%,560px)]`}>
-        {inGroup && first && !mine && author && <span className="text-[12px] text-ink-3 mb-1 ml-1">{author.name}</span>}
+        {named && first && !mine && author && <span className="text-[12px] text-ink-3 mb-1 ml-1">{author.name}</span>}
         <div className={`px-3.5 py-2 text-[15px] leading-[22px] ${shape} ${mine
           ? `bg-[var(--bubble-me)] text-[var(--bubble-me-ink)] ${m.pending ? "opacity-60" : ""} ${failed ? "ring-1 ring-danger" : ""}`
           : "bg-surface text-ink"}`}>

@@ -38,13 +38,15 @@ type Job struct {
 	Group     *store.Group // set in a group chat
 	Prompt    string
 	Model     string
-	Trigger   string // chat | routine | webhook | resume | handoff
+	Trigger   string // chat | routine | webhook | resume | handoff | bot
 	Untrusted bool   // outside text started this run
 	Decisions []sdk.Decision
 	ResumeRun string // the run whose cards were answered
 	Depth     int    // handoffs so far in a group
 
 	skills []*store.Skill
+	peers  []*store.Bot // bots this run can message
+	reply  chan string  // set when another bot waits on this run's reply
 }
 
 func (j *Job) convo() convo {
@@ -270,6 +272,11 @@ func (r *Runtime) Stop(key string) bool {
 	if w == nil {
 		return false
 	}
+	for _, j := range w.queue {
+		if j.reply != nil {
+			j.reply <- j.Bot.Name + " was stopped before replying."
+		}
+	}
 	w.queue = nil
 	if w.cancel != nil {
 		w.cancel()
@@ -305,6 +312,11 @@ Never claim you did something you did not do.`)
 			}
 		}
 		sb.WriteString("Reply only as yourself, briefly. Messages from others are prefixed with their name. If a teammate fits a task better, hand it to them by writing @Name in your reply. Don't speak for others.")
+	} else if len(j.peers) > 0 {
+		sb.WriteString("\n\nThe person's other bots, which you can talk to with message_bot when they ask you to:\n")
+		for _, p := range j.peers {
+			fmt.Fprintf(&sb, "- %s: %s\n", p.Name, firstNonEmpty(p.Title, "teammate"))
+		}
 	}
 	if len(j.skills) > 0 {
 		sb.WriteString("\n\nSkills you can load with use_skill:\n")
@@ -332,6 +344,11 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	b := j.Bot
 	c := j.convo()
 	bg := context.WithoutCancel(ctx)
+	// A bot waiting on this run gets the reply, or why there isn't one.
+	outcome := b.Name + " didn't reply."
+	if j.reply != nil {
+		defer func() { j.reply <- outcome }()
+	}
 	owner, err := r.store.OwnerOfSpace(bg, b.SpaceID)
 	if err != nil {
 		r.log.Error("run owner", "err", err)
@@ -347,6 +364,16 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	}
 	rules, _ := r.store.ToolRules(bg, owner.ID)
 	j.skills, _ = r.store.ListSkills(bg, owner.ID)
+	// Bots can message each other from their own chats. A run another
+	// bot started can't, so two bots never wait on each other.
+	if j.Group == nil && j.Trigger != "bot" {
+		bots, _ := r.store.ListBots(bg, b.SpaceID)
+		for _, p := range bots {
+			if p.ID != b.ID {
+				j.peers = append(j.peers, p)
+			}
+		}
+	}
 	rc := &runCtx{botID: b.ID, ownerID: owner.ID, mode: owner.ApprovalMode, allow: map[string]bool{}, block: map[string]bool{},
 		mcpPrefix: r.mcpPrefixes(owner.ID), tainted: j.Untrusted}
 	for _, t := range rules {
@@ -482,13 +509,16 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
 		_ = r.store.FinishRun(bg, runID, "stopped", "", tokens)
+		outcome = b.Name + " was stopped before replying."
 		r.event(c, b, "Stopped", map[string]any{"kind": "stopped"})
 		r.setPresence(c, b, Presence{State: "idle"})
 	case err != nil:
 		_ = r.store.FinishRun(bg, runID, "error", sdk.Redact(err.Error()), tokens)
+		outcome = b.Name + " couldn't reply: " + friendlyError(model, err)
 		r.botError(c, b, friendlyError(model, err))
 	case res != nil && res.Interrupted():
 		_ = r.store.FinishRun(bg, runID, "waiting", "", tokens)
+		outcome = b.Name + " needs the person before it can reply; it asked in its own chat."
 		if j.Group != nil {
 			r.mu.Lock()
 			r.groupPending[runID] = res
@@ -500,10 +530,37 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		r.setPresence(c, b, Presence{State: "waiting", Detail: "Needs you"})
 	default:
 		_ = r.store.FinishRun(bg, runID, "done", "", tokens)
+		if s := strings.TrimSpace(final.String()); s != "" {
+			outcome = s
+		}
 		r.settle(c, b)
 		if j.Group != nil {
 			r.handoff(j, final.String())
 		}
+	}
+}
+
+// messageBot posts one bot's message in another bot's chat, runs that
+// bot on it, and waits for the reply.
+func (r *Runtime) messageBot(ctx context.Context, from, to *store.Bot, text string) (string, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", errors.New("the message is empty")
+	}
+	m := &store.Message{BotID: to.ID, Role: "user", Content: text, Data: map[string]any{"from": from.ID}}
+	if err := r.store.AddMessage(context.WithoutCancel(ctx), m, nil); err != nil {
+		return "", err
+	}
+	r.hub.Publish(to.SpaceID, Event{Type: "message", BotID: to.ID, Data: m})
+	reply := make(chan string, 1)
+	rc := runFrom(ctx)
+	r.Enqueue(Job{Bot: to, Prompt: fmt.Sprintf("Message from %s, another of the person's bots:\n\n%s", from.Name, text),
+		Trigger: "bot", Untrusted: rc != nil && rc.isTainted(), reply: reply})
+	select {
+	case s := <-reply:
+		return s, nil
+	case <-ctx.Done():
+		return "", fmt.Errorf("%s hasn't replied yet; its answer will be in its own chat", to.Name)
 	}
 }
 

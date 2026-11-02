@@ -63,8 +63,11 @@ export default function Chat() {
           ) : undefined}
           renderItem={({ item, index }) => {
             const prev = messages?.[index - 1];
-            const author = item.botId ? byId[item.botId] : undefined;
-            return <Row m={item} author={author} showName={isGroup && (!prev || prev.botId !== item.botId || prev.role !== item.role)} t={t} />;
+            // Another bot's message to this one is shown as coming from it.
+            const from = typeof item.data?.from === "string" ? bots.find((b) => b.id === item.data!.from) : undefined;
+            const author = from ?? (item.botId ? byId[item.botId] : undefined);
+            const showName = (isGroup || !!from) && (!prev || prev.botId !== item.botId || prev.role !== item.role || prev.data?.from !== item.data?.from);
+            return <Row m={item} author={author} showName={showName} t={t} />;
           }}
           ListFooterComponent={busy ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 8 }}>
@@ -102,7 +105,7 @@ function Row({ m, author, showName, t }: { m: Message; author?: Bot; showName: b
     return <Text style={{ alignSelf: "center", color: m.data?.kind === "error" ? t.danger : t.ink2, fontSize: 13, marginVertical: 6, textAlign: "center" }}>{m.content.replace(/\*\*/g, "")}</Text>;
   }
   if (m.role === "card") return author ? <CardRow m={m} bot={author} t={t} /> : null;
-  const mine = m.role === "user";
+  const mine = m.role === "user" && !m.data?.from;
   return (
     <View style={{ alignItems: mine ? "flex-end" : "flex-start", marginTop: showName ? 8 : 0 }}>
       {showName && !mine && author && <Text style={{ color: t.ink2, fontSize: 12, fontWeight: "600", marginLeft: 44, marginBottom: 2 }}>{author.name}</Text>}

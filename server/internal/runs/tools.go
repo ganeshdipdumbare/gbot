@@ -53,6 +53,11 @@ type idIn struct {
 	ID string `json:"id" desc:"routine id from routine_list"`
 }
 
+type messageBotIn struct {
+	To      string `json:"to" desc:"the other bot's name"`
+	Message string `json:"message" desc:"what to tell or ask them, written to them"`
+}
+
 type skillIn struct {
 	Name string `json:"name" desc:"the skill's name"`
 }
@@ -174,6 +179,22 @@ func (r *Runtime) runTools(j *Job) []sdk.Tool {
 		)
 	}
 
+	if len(j.peers) > 0 {
+		peers := j.peers
+		tools = append(tools, eipagent.Tool("message_bot", "Send a message to another of the person's bots and wait for its reply. Use it when the person asks you to ask, tell or work with another bot.",
+			func(ctx context.Context, in messageBotIn) (string, error) {
+				name := strings.TrimPrefix(strings.TrimSpace(in.To), "@")
+				var names []string
+				for _, p := range peers {
+					if strings.EqualFold(p.Name, name) {
+						return r.messageBot(ctx, b, p, in.Message)
+					}
+					names = append(names, p.Name)
+				}
+				return "", fmt.Errorf("no bot named %q; you can message %s", name, strings.Join(names, ", "))
+			}))
+	}
+
 	if len(j.skills) > 0 {
 		skills := j.skills
 		tools = append(tools, eipagent.ReadOnly(eipagent.Tool("use_skill", "Load a skill's full instructions before doing a task it covers.",
@@ -216,6 +237,7 @@ var toolLabels = map[string]string{
 	"routine_create":      "Setting up a routine",
 	"routine_list":        "Checking routines",
 	"use_skill":           "Using a skill",
+	"message_bot":         "Talking to a teammate",
 	"ask_user":            "Has a question",
 	"request_takeover":    "Needs you on its computer",
 }
