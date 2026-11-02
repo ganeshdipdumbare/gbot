@@ -9,7 +9,7 @@ import { Modal } from "./Modal";
 import { ModelSelect, useModels } from "./ModelSelect";
 import { invalidateSkills } from "./Composer";
 import { Toggle } from "./SidePanel";
-import { bouncy, Button, Icon, Input, Label, TextArea } from "./ui";
+import { bouncy, Button, Icon, Input, Label, leave, spring, TextArea } from "./ui";
 
 type Tab = "general" | "integrations" | "skills" | "voice";
 const tabs: { id: Tab; label: string }[] = [
@@ -150,7 +150,7 @@ function Integrations() {
       </div>
       <AnimatePresence initial={false}>
         {adding && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0, transition: leave }} transition={spring} className="overflow-hidden">
             <div className="rounded-2xl border border-line p-3 space-y-3">
               <div className="grid sm:grid-cols-2 gap-3">
                 <div><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="GitHub" /></div>

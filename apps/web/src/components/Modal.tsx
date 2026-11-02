@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { bouncy, Icon, IconButton } from "./ui";
+import { fade, Icon, IconButton, leave, spring } from "./ui";
 
 const focusable = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -40,7 +40,7 @@ export function Modal({ open, onClose, children, title, width = 520, side }: {
     <AnimatePresence>
       {open && (
         <div className={`fixed inset-0 z-50 flex ${side ? "justify-end" : "items-end sm:items-center justify-center"}`}>
-          <motion.div className="absolute inset-0 bg-black/40" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} onClick={onClose} aria-hidden />
+          <motion.div className="absolute inset-0 bg-black/40" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} onClick={onClose} aria-hidden />
           <motion.div
             ref={panel}
             role="dialog"
@@ -49,10 +49,10 @@ export function Modal({ open, onClose, children, title, width = 520, side }: {
             tabIndex={-1}
             className={`relative bg-bg shadow-pop overflow-hidden flex flex-col outline-none ${side ? "h-full w-full" : "w-full max-h-[88vh] rounded-t-2xl sm:rounded-2xl sm:mx-4"}`}
             style={{ maxWidth: width }}
-            initial={side ? { x: 24, opacity: 0 } : { y: 8, scale: 0.97, opacity: 0 }}
+            initial={side ? { x: 16, opacity: 0 } : { y: 4, scale: 0.98, opacity: 0 }}
             animate={side ? { x: 0, opacity: 1 } : { y: 0, scale: 1, opacity: 1 }}
-            exit={side ? { x: 24, opacity: 0, transition: { duration: 0.12 } } : { y: 4, scale: 0.98, opacity: 0, transition: { duration: 0.12 } }}
-            transition={bouncy}
+            exit={side ? { x: 16, opacity: 0, transition: leave } : { y: 2, scale: 0.99, opacity: 0, transition: leave }}
+            transition={spring}
           >
             {title !== undefined && (
               <div className="flex items-center justify-between pl-5 pr-3 h-12 shrink-0">

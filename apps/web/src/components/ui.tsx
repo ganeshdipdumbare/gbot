@@ -1,8 +1,11 @@
 import { motion, type HTMLMotionProps } from "motion/react";
 import { forwardRef, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 
-// Snappy motion, like Grok Bot: quick ease-outs with a hint of overshoot.
-export const spring = { type: "tween", duration: 0.2, ease: [0.2, 0.9, 0.3, 1] } as const;
+// Snappy motion, like Grok Bot. Panels and dialogs land fast with no
+// overshoot and leave faster still; small things keep a hint of bounce.
+export const spring = { type: "tween", duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
+export const leave = { type: "tween", duration: 0.12, ease: [0.4, 0, 1, 1] } as const;
+export const fade = { duration: 0.12 } as const;
 export const bouncy = { type: "tween", duration: 0.28, ease: [0.2, 0.9, 0.3, 1.15] } as const;
 
 type Variant = "primary" | "soft" | "ghost" | "danger";

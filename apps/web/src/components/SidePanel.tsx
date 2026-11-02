@@ -4,7 +4,7 @@ import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
 import { set, useStore } from "../lib/store";
 import { attempt } from "../lib/toast";
-import { bouncy, Button, Icon, IconButton, Input, Label, TextArea } from "./ui";
+import { bouncy, Button, fade, Icon, IconButton, Input, Label, leave, spring, TextArea } from "./ui";
 
 // The bot's own place: its computer (status → preview → takeover) and
 // the routines it runs by itself.
@@ -212,7 +212,7 @@ function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: ()
   return (
     <AnimatePresence>
       {open && (
-        <motion.div className="fixed inset-0 z-50 bg-[#0E0B12]/90 backdrop-blur-sm flex flex-col" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+        <motion.div className="fixed inset-0 z-50 bg-[#0E0B12]/90 backdrop-blur-sm flex flex-col" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade}>
           <div className="flex items-center gap-3 px-4 h-14 text-white">
             <Gbot look={bot.look} seed={bot.id} size={30} mood="waiting" live />
             <div className="font-semibold">You have control of {bot.name}'s computer</div>
@@ -229,7 +229,7 @@ function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: ()
               onDoubleClick={(e) => send({ type: "dblclick", ...pos(e) })}
               onContextMenu={(e) => { e.preventDefault(); send({ type: "rightclick", ...pos(e) }); }}
               onWheel={(e) => send({ type: "scroll", deltaY: e.deltaY, ...pos(e) })}
-              initial={{ scale: 0.96 }} animate={{ scale: 1 }} transition={bouncy}
+              initial={{ scale: 0.98 }} animate={{ scale: 1 }} transition={spring}
               className="relative w-full max-w-[1280px] aspect-[16/10] rounded-xl overflow-hidden ring-1 ring-live outline-none cursor-default bg-black"
               aria-label={`${bot.name}'s screen. Click and type to control it.`}
             >
@@ -338,7 +338,7 @@ function NewRoutine({ bot, onDone }: { bot: Bot; onDone: (r?: Routine) => void }
   }
 
   return (
-    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0, transition: leave }} transition={spring} className="overflow-hidden">
       <div className="rounded-2xl bg-surface p-3 space-y-3">
         <div><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Morning briefing" maxLength={80} /></div>
         <div><Label>Instruction</Label><TextArea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Summarize what's new and what needs me today." /></div>
