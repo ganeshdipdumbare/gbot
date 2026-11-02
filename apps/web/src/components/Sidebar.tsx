@@ -122,7 +122,7 @@ function BotAvatar({ bot, p }: { bot: Bot; p?: Presence }) {
     <div className="relative shrink-0">
       <Gbot look={bot.look} seed={bot.id} size={36} mood={moodOf(p, bot)} title={bot.name} />
       {p?.state === "waiting" && <span className="absolute -top-px -right-px size-2.5 rounded-full bg-danger ring-2 ring-[var(--chrome)]" title="Needs you" />}
-      {p?.live && p.state !== "waiting" && <span className="absolute -bottom-px -right-px size-2.5 rounded-full bg-live ring-2 ring-[var(--chrome)]" title="Its computer is active" />}
+      {p?.live && p.state !== "waiting" && <span className="absolute -bottom-px -right-px size-2.5 rounded-full bg-live ring-2 ring-[var(--chrome)]" title="Its computer is on" />}
     </div>
   );
 }

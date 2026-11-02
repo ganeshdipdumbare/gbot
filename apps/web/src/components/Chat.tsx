@@ -81,7 +81,7 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
         )}
         <div className="flex-1" />
         {bot && (
-          <IconButton label={live ? "Its computer is active" : "Computer and routines"} onClick={() => onComputer()}
+          <IconButton label={live ? "Its computer is on" : "Computer and routines"} onClick={() => onComputer()}
             className={`relative ${panelOpen ? "bg-selected text-ink!" : ""}`}>
             <span className={live ? "text-live" : ""}><Icon.screen /></span>
             {live && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-live" />}

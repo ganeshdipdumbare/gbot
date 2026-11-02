@@ -41,7 +41,6 @@ type box struct {
 	starting   bool
 	controller string
 	lastUsed   time.Time
-	lastAgent  time.Time
 }
 
 type Manager struct {
@@ -195,18 +194,25 @@ func (m *Manager) container(botID string, forAgent bool) (string, error) {
 		return "", ErrUserControl
 	}
 	b.lastUsed = time.Now()
-	if forAgent {
-		b.lastAgent = time.Now()
-	}
 	return b.id, nil
 }
 
-// Active reports whether the bot used its computer in the last minute.
+// Active reports whether the bot's computer is on or starting.
 func (m *Manager) Active(botID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	b := m.boxes[botID]
-	return b != nil && (b.starting || time.Since(b.lastAgent) < time.Minute || b.controller == "user")
+	return m.boxes[botID] != nil
+}
+
+// Running lists the bots whose computers are on or starting.
+func (m *Manager) Running() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.boxes))
+	for id := range m.boxes {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 type ExecResult struct {

@@ -114,6 +114,13 @@ func run(cmd string, log *slog.Logger) error {
 		rt.Enqueue(runs.Job{Bot: bot, Prompt: prompt, Trigger: trigger, Untrusted: input != ""})
 	}
 	rt.Use(comp, rs)
+	if comp != nil { // computers adopted from a previous run are still on
+		for _, id := range comp.Running() {
+			if b, err := st.GetBotAnySpace(ctx, id); err == nil {
+				rt.RefreshLive(b.SpaceID, id)
+			}
+		}
+	}
 	go rs.Run(ctx)
 	go rt.SyncMCP(ctx, sealer)
 
