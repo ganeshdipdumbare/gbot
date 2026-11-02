@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/ganeshdipdumbare/eipagent"
 	_ "github.com/ganeshdipdumbare/eipagent/drivers/postgres"
@@ -521,24 +521,38 @@ func (r *Runtime) settle(c convo, b *store.Bot) {
 	}()
 }
 
-var mention = regexp.MustCompile(`@([\p{L}\p{N}_-]+)`)
+// Mentions reports whether text @mentions name. Names can have spaces
+// ("@Grok Bot"), and the mention must sit on word boundaries so "@Al"
+// doesn't wake "Alex" and an email address wakes no one.
+func Mentions(text, name string) bool {
+	text, at := strings.ToLower(text), "@"+strings.ToLower(name)
+	word := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' }
+	for i := strings.Index(text, at); i >= 0; {
+		before, after := []rune(text[:i]), []rune(text[i+len(at):])
+		if (len(before) == 0 || !word(before[len(before)-1])) && (len(after) == 0 || !word(after[0])) {
+			return true
+		}
+		j := strings.Index(text[i+1:], at)
+		if j < 0 {
+			break
+		}
+		i += 1 + j
+	}
+	return false
+}
 
 // handoff wakes teammates a bot @mentioned in a group reply.
 func (r *Runtime) handoff(j *Job, reply string) {
-	if j.Depth >= 3 {
+	if j.Depth >= 3 || !strings.Contains(reply, "@") {
 		return
 	}
-	seen := map[string]bool{}
-	for _, m := range mention.FindAllStringSubmatch(reply, -1) {
-		for _, id := range j.Group.BotIDs {
-			if id == j.Bot.ID || seen[id] {
-				continue
-			}
-			mb, err := r.store.GetBot(context.Background(), j.Group.SpaceID, id)
-			if err == nil && strings.EqualFold(mb.Name, m[1]) {
-				seen[id] = true
-				r.Enqueue(Job{Bot: mb, Group: j.Group, Trigger: "handoff", Depth: j.Depth + 1})
-			}
+	for _, id := range j.Group.BotIDs {
+		if id == j.Bot.ID {
+			continue
+		}
+		mb, err := r.store.GetBot(context.Background(), j.Group.SpaceID, id)
+		if err == nil && Mentions(reply, mb.Name) {
+			r.Enqueue(Job{Bot: mb, Group: j.Group, Trigger: "handoff", Depth: j.Depth + 1})
 		}
 	}
 }

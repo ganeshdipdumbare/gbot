@@ -614,13 +614,12 @@ func (s *Server) sendGroupMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Hub.Publish(u.SpaceID, runs.Event{Type: "message", GroupID: g.ID, Data: m})
 	var bots []*store.Bot
-	lower := strings.ToLower(body.Text)
 	for _, id := range g.BotIDs {
 		b, err := s.Store.GetBot(r.Context(), u.SpaceID, id)
 		if err != nil {
 			continue
 		}
-		if strings.Contains(lower, "@"+strings.ToLower(b.Name)) {
+		if runs.Mentions(body.Text, b.Name) {
 			bots = append(bots, b)
 		}
 	}
