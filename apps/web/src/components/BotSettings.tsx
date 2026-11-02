@@ -7,6 +7,7 @@ import { Modal } from "./Modal";
 import { LookPicker, SurpriseButton } from "./LookPicker";
 import { ModelSelect } from "./ModelSelect";
 import { Toggle } from "./SidePanel";
+import { ShareSection } from "./Sharing";
 import { speak, useSystemVoices } from "../lib/voice";
 import { Button, Icon, Input, Label, TextArea } from "./ui";
 
@@ -33,6 +34,9 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
   }, [open, bot?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!bot) return null;
+  // Owners and managers change how a bot works; collaborators only chat with it.
+  const role = bot.role ?? "owner";
+  const canManage = role === "owner" || role === "manager";
 
   async function save() {
     setError("");
@@ -52,6 +56,9 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
       <span className="flex items-center gap-2"><Gbot look={look} seed={bot.id} size={34} mood={saved ? "happy" : "idle"} />{bot.name}</span>
     }>
       <div className="px-5 pb-6 space-y-5">
+        {!canManage && (
+          <p className="rounded-2xl bg-surface-2 p-3 text-[13px] text-ink-2">Shared with you. Only its owner and managers can change how it works.</p>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div><Label>Name</Label><Input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} /></div>
           <div><Label>Job</Label><Input value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} placeholder="What they do" /></div>
@@ -98,13 +105,14 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
           <LookPicker look={look} seed={bot.id} onChange={setLook} />
         </div>
         {error && <p className="text-danger text-sm" role="alert">{error}</p>}
-        <div className="flex items-center gap-2 sticky bottom-0 bg-bg py-3 -mb-3">
+        {canManage && <div className="border-t border-line pt-4"><ShareSection botId={bot.id} role={role} /></div>}
+        {canManage && <div className="flex items-center gap-2 sticky bottom-0 bg-bg py-3 -mb-3">
           <Button onClick={save} className="flex-1">Save changes</Button>
           <Button variant="soft" onClick={async () => { const b = await attempt(() => api.updateBot(bot.id, { pinned: !bot.pinned }), bot.pinned ? "Unpinned" : "Pinned"); if (b) upsertBot(b); }} aria-label={bot.pinned ? "Unpin" : "Pin"}>
             <Icon.pin /> {bot.pinned ? "Unpin" : "Pin"}
           </Button>
-        </div>
-        <div className="border-t border-line pt-4">
+        </div>}
+        {role === "owner" && <div className="border-t border-line pt-4">
           {confirm ? (
             <div className="flex items-center gap-2">
               <span className="text-[14px] flex-1">Archive {bot.name}? Their chat is kept.</span>
@@ -114,7 +122,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
           ) : (
             <Button variant="danger" onClick={() => setConfirm(true)}>Archive bot</Button>
           )}
-        </div>
+        </div>}
       </div>
     </Modal>
   );

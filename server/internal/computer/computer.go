@@ -8,6 +8,8 @@ package computer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -35,7 +37,21 @@ type Status struct {
 	Available  bool   `json:"available"` // the backend and the image are present
 }
 
+// Owner is whose computer it is: one person's computer with one bot. A
+// shared bot gets a separate computer for each person who uses it, so
+// one person's files and sign-ins are never visible to another.
+type Owner struct{ Bot, User string }
+
+// Key names the computer in the backend. It's a UUID-shaped hash of the
+// pair, so the same person and bot always get the same computer.
+func (o Owner) Key() string {
+	h := sha256.Sum256([]byte(o.Bot + "/" + o.User))
+	x := hex.EncodeToString(h[:16])
+	return x[0:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:32]
+}
+
 type box struct {
+	owner      Owner
 	id         string
 	network    bool
 	starting   bool
@@ -52,7 +68,7 @@ type Manager struct {
 	mu    sync.Mutex
 	boxes map[string]*box
 	// OnChange is told when a computer starts, stops or changes hands.
-	OnChange func(botID string, st Status)
+	OnChange func(o Owner, st Status)
 }
 
 // New picks a backend: "microsandbox", "docker", or "" for microsandbox
@@ -74,9 +90,10 @@ func (m *Manager) Available(ctx context.Context) bool {
 	return m.d.available(c, m.Image)
 }
 
-func (m *Manager) Status(ctx context.Context, botID string) Status {
+func (m *Manager) Status(ctx context.Context, o Owner) Status {
+	k := o.Key()
 	m.mu.Lock()
-	b := m.boxes[botID]
+	b := m.boxes[k]
 	st := Status{State: "off", Controller: "bot", Image: m.Image, Backend: m.d.name(), Available: true}
 	if b != nil {
 		st.State, st.Controller, st.Network = "on", b.controller, b.network
@@ -91,36 +108,37 @@ func (m *Manager) Status(ctx context.Context, botID string) Status {
 	return st
 }
 
-func (m *Manager) changed(botID string) {
+func (m *Manager) changed(o Owner) {
 	if m.OnChange != nil {
-		m.OnChange(botID, m.Status(context.Background(), botID))
+		m.OnChange(o, m.Status(context.Background(), o))
 	}
 }
 
 // Ensure starts the bot's computer if needed. network=false gives it no
 // network at all.
-func (m *Manager) Ensure(ctx context.Context, botID string, network bool) error {
-	if !safeID.MatchString(botID) {
+func (m *Manager) Ensure(ctx context.Context, o Owner, network bool) error {
+	k := o.Key()
+	if !safeID.MatchString(k) {
 		return errors.New("bad bot id")
 	}
 	m.mu.Lock()
-	if b := m.boxes[botID]; b != nil && !b.starting {
+	if b := m.boxes[k]; b != nil && !b.starting {
 		if b.network == network {
 			b.lastUsed = time.Now()
 			m.mu.Unlock()
 			return nil
 		}
 		m.mu.Unlock()
-		m.Stop(context.Background(), botID) // network setting changed: recreate
+		m.stopKey(context.Background(), k) // network setting changed: recreate
 		m.mu.Lock()
 	}
-	if b := m.boxes[botID]; b != nil && b.starting {
+	if b := m.boxes[k]; b != nil && b.starting {
 		m.mu.Unlock()
 		for i := 0; i < 300; i++ {
 			time.Sleep(100 * time.Millisecond)
 			m.mu.Lock()
-			ok := m.boxes[botID] != nil && !m.boxes[botID].starting
-			gone := m.boxes[botID] == nil
+			ok := m.boxes[k] != nil && !m.boxes[k].starting
+			gone := m.boxes[k] == nil
 			m.mu.Unlock()
 			if ok {
 				return nil
@@ -131,28 +149,28 @@ func (m *Manager) Ensure(ctx context.Context, botID string, network bool) error 
 		}
 		return errors.New("the computer is taking too long to start")
 	}
-	m.boxes[botID] = &box{starting: true, network: network, controller: "bot", lastUsed: time.Now()}
+	m.boxes[k] = &box{owner: o, starting: true, network: network, controller: "bot", lastUsed: time.Now()}
 	m.mu.Unlock()
-	m.changed(botID)
+	m.changed(o)
 
-	id, err := m.start(ctx, botID, network)
+	id, err := m.start(ctx, k, network)
 	m.mu.Lock()
 	if err != nil {
-		delete(m.boxes, botID)
+		delete(m.boxes, k)
 	} else {
-		m.boxes[botID].id, m.boxes[botID].starting = id, false
+		m.boxes[k].id, m.boxes[k].starting = id, false
 	}
 	m.mu.Unlock()
-	m.changed(botID)
+	m.changed(o)
 	return err
 }
 
-func (m *Manager) start(ctx context.Context, botID string, network bool) (string, error) {
+func (m *Manager) start(ctx context.Context, k string, network bool) (string, error) {
 	if !m.Available(ctx) {
 		return "", fmt.Errorf("the computer image %s isn't built for %s yet: run `make computer`", m.Image, m.d.name())
 	}
 	begin := time.Now()
-	id, err := m.d.start(ctx, botID, m.Image, network)
+	id, err := m.d.start(ctx, k, m.Image, network)
 	if err != nil {
 		return "", err
 	}
@@ -164,14 +182,33 @@ func (m *Manager) start(ctx context.Context, botID string, network bool) (string
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	m.log.Info("computer started", "bot", botID, "backend", m.d.name(), "network", network, "took", time.Since(begin).Round(time.Millisecond))
+	m.log.Info("computer started", "computer", k, "backend", m.d.name(), "network", network, "took", time.Since(begin).Round(time.Millisecond))
 	return id, nil
 }
 
-func (m *Manager) Stop(ctx context.Context, botID string) {
+// Stop turns one person's computer with a bot off.
+func (m *Manager) Stop(ctx context.Context, o Owner) { m.stopKey(ctx, o.Key()) }
+
+// StopBot turns off every person's computer with a bot, e.g. when the bot
+// is deleted.
+func (m *Manager) StopBot(ctx context.Context, botID string) {
 	m.mu.Lock()
-	b := m.boxes[botID]
-	delete(m.boxes, botID)
+	var keys []string
+	for k, b := range m.boxes {
+		if b.owner.Bot == botID {
+			keys = append(keys, k)
+		}
+	}
+	m.mu.Unlock()
+	for _, k := range keys {
+		m.stopKey(ctx, k)
+	}
+}
+
+func (m *Manager) stopKey(ctx context.Context, k string) {
+	m.mu.Lock()
+	b := m.boxes[k]
+	delete(m.boxes, k)
 	m.mu.Unlock()
 	if b == nil {
 		return
@@ -179,14 +216,15 @@ func (m *Manager) Stop(ctx context.Context, botID string) {
 	if b.id != "" {
 		m.d.stop(ctx, b.id)
 	}
-	m.log.Info("computer stopped", "bot", botID)
-	m.changed(botID)
+	m.log.Info("computer stopped", "computer", k)
+	m.changed(b.owner)
 }
 
-func (m *Manager) container(botID string, forAgent bool) (string, error) {
+func (m *Manager) container(o Owner, forAgent bool) (string, error) {
+	k := o.Key()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	b := m.boxes[botID]
+	b := m.boxes[k]
 	if b == nil || b.starting {
 		return "", ErrNotRunning
 	}
@@ -197,22 +235,37 @@ func (m *Manager) container(botID string, forAgent bool) (string, error) {
 	return b.id, nil
 }
 
-// Active reports whether the bot's computer is on or starting.
-func (m *Manager) Active(botID string) bool {
+// Active reports whether one person's computer with a bot is on or starting.
+func (m *Manager) Active(o Owner) bool {
+	k := o.Key()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.boxes[botID] != nil
+	return m.boxes[k] != nil
 }
 
-// Running lists the bots whose computers are on or starting.
-func (m *Manager) Running() []string {
+// ActiveBot reports whether any person's computer with the bot is on.
+func (m *Manager) ActiveBot(botID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ids := make([]string, 0, len(m.boxes))
-	for id := range m.boxes {
-		ids = append(ids, id)
+	for _, b := range m.boxes {
+		if b.owner.Bot == botID {
+			return true
+		}
 	}
-	return ids
+	return false
+}
+
+// Running lists the computers that are on or starting. Computers adopted
+// from a previous server process have no known owner until used again;
+// their Bot is empty.
+func (m *Manager) Running() []Owner {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Owner, 0, len(m.boxes))
+	for _, b := range m.boxes {
+		out = append(out, b.owner)
+	}
+	return out
 }
 
 type ExecResult struct {
@@ -222,8 +275,8 @@ type ExecResult struct {
 
 // Exec runs a shell command as the computer's unprivileged user. It also
 // appears in the Activity terminal on the computer's screen.
-func (m *Manager) Exec(ctx context.Context, botID, command string, timeout time.Duration) (*ExecResult, error) {
-	id, err := m.container(botID, true)
+func (m *Manager) Exec(ctx context.Context, o Owner, command string, timeout time.Duration) (*ExecResult, error) {
+	id, err := m.container(o, true)
 	if err != nil {
 		return nil, err
 	}
@@ -242,8 +295,8 @@ func (m *Manager) note(ctx context.Context, id, symbol, color, text string) {
 	_, _, _, _ = m.d.exec(ctx, id, "gbot", nil, []byte(line), false, "sh", "-c", "cat >> /tmp/gbot/activity.log")
 }
 
-func (m *Manager) WriteFile(ctx context.Context, botID, path string, content []byte) error {
-	id, err := m.container(botID, true)
+func (m *Manager) WriteFile(ctx context.Context, o Owner, path string, content []byte) error {
+	id, err := m.container(o, true)
 	if err != nil {
 		return err
 	}
@@ -257,8 +310,8 @@ func (m *Manager) WriteFile(ctx context.Context, botID, path string, content []b
 	return err
 }
 
-func (m *Manager) ReadFile(ctx context.Context, botID, path string, max int) (string, error) {
-	id, err := m.container(botID, true)
+func (m *Manager) ReadFile(ctx context.Context, o Owner, path string, max int) (string, error) {
+	id, err := m.container(o, true)
 	if err != nil {
 		return "", err
 	}
@@ -273,7 +326,7 @@ func (m *Manager) ReadFile(ctx context.Context, botID, path string, max int) (st
 }
 
 // Show raises one app on the screen: the browser, the shell, or the file manager.
-func (m *Manager) Show(ctx context.Context, botID, app string) error {
+func (m *Manager) Show(ctx context.Context, o Owner, app string) error {
 	script, ok := map[string]string{
 		"browser":  "/usr/local/bin/gbot-browser",
 		"terminal": "/usr/local/bin/gbot-terminal",
@@ -282,7 +335,7 @@ func (m *Manager) Show(ctx context.Context, botID, app string) error {
 	if !ok {
 		return errors.New("unknown app")
 	}
-	id, err := m.container(botID, false)
+	id, err := m.container(o, false)
 	if err != nil {
 		return err
 	}
@@ -294,8 +347,8 @@ func (m *Manager) Show(ctx context.Context, botID, app string) error {
 }
 
 // OpenBrowser shows a page on the computer's screen, maximized.
-func (m *Manager) OpenBrowser(ctx context.Context, botID, url string) error {
-	id, err := m.container(botID, true)
+func (m *Manager) OpenBrowser(ctx context.Context, o Owner, url string) error {
+	id, err := m.container(o, true)
 	if err != nil {
 		return err
 	}
@@ -307,8 +360,8 @@ func (m *Manager) OpenBrowser(ctx context.Context, botID, url string) error {
 }
 
 // ReadPage fetches a page with headless Chromium and returns its text.
-func (m *Manager) ReadPage(ctx context.Context, botID, url string) (string, error) {
-	id, err := m.container(botID, true)
+func (m *Manager) ReadPage(ctx context.Context, o Owner, url string) (string, error) {
+	id, err := m.container(o, true)
 	if err != nil {
 		return "", err
 	}
@@ -325,8 +378,8 @@ print(re.sub(r"\s+", " ", html.unescape(s)).strip()[:12000])'`)
 }
 
 // Screenshot returns the screen as a JPEG.
-func (m *Manager) Screenshot(ctx context.Context, botID string) ([]byte, error) {
-	id, err := m.container(botID, false)
+func (m *Manager) Screenshot(ctx context.Context, o Owner) ([]byte, error) {
+	id, err := m.container(o, false)
 	if err != nil {
 		return nil, err
 	}
@@ -340,9 +393,10 @@ func (m *Manager) Screenshot(ctx context.Context, botID string) ([]byte, error) 
 }
 
 // TakeControl hands the screen to the person (true) or back to the bot.
-func (m *Manager) TakeControl(botID string, user bool) error {
+func (m *Manager) TakeControl(o Owner, user bool) error {
+	k := o.Key()
 	m.mu.Lock()
-	b := m.boxes[botID]
+	b := m.boxes[k]
 	if b == nil || b.starting {
 		m.mu.Unlock()
 		return ErrNotRunning
@@ -359,7 +413,7 @@ func (m *Manager) TakeControl(botID string, user bool) error {
 	} else {
 		m.note(context.Background(), id, "◑", "141", "Control handed back")
 	}
-	m.changed(botID)
+	m.changed(o)
 	return nil
 }
 
@@ -376,9 +430,10 @@ var keyName = regexp.MustCompile(`^[A-Za-z0-9_+]{1,40}$`)
 
 // Send replays the person's input on the screen. Only allowed while the
 // person has control.
-func (m *Manager) Send(ctx context.Context, botID string, in Input) error {
+func (m *Manager) Send(ctx context.Context, o Owner, in Input) error {
+	k := o.Key()
 	m.mu.Lock()
-	b := m.boxes[botID]
+	b := m.boxes[k]
 	if b == nil || b.starting {
 		m.mu.Unlock()
 		return ErrNotRunning
@@ -445,14 +500,14 @@ func (m *Manager) reap() {
 	for range time.Tick(time.Minute) {
 		m.mu.Lock()
 		var idle []string
-		for id, b := range m.boxes {
+		for k, b := range m.boxes {
 			if !b.starting && b.controller == "bot" && time.Since(b.lastUsed) > m.IdleTTL {
-				idle = append(idle, id)
+				idle = append(idle, k)
 			}
 		}
 		m.mu.Unlock()
-		for _, id := range idle {
-			m.Stop(context.Background(), id)
+		for _, k := range idle {
+			m.stopKey(context.Background(), k)
 		}
 	}
 }

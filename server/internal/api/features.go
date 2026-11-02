@@ -99,15 +99,19 @@ func (s *Server) answerCard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "card not found")
 		return
 	}
-	// The card must belong to a chat in the caller's space.
+	// The card must sit in a chat the caller can see: their own chat with
+	// a bot they can use, or a group they made.
 	var group *store.Group
 	if card.GroupID != "" {
-		if group, err = s.Store.GetGroup(r.Context(), u.SpaceID, card.GroupID); err != nil {
+		if group, err = s.Store.GroupFor(r.Context(), u.SpaceID, u.ID, card.GroupID); err != nil {
 			writeErr(w, 404, "card not found")
 			return
 		}
+	} else if card.ChatUser != u.ID {
+		writeErr(w, 404, "card not found")
+		return
 	}
-	bot, err := s.Store.GetBot(r.Context(), u.SpaceID, card.BotID)
+	bot, err := s.Store.GetBotFor(r.Context(), u.SpaceID, u.ID, card.BotID)
 	if err != nil {
 		writeErr(w, 404, "card not found")
 		return
@@ -119,8 +123,11 @@ func (s *Server) answerCard(w http.ResponseWriter, r *http.Request) {
 	upd, err := s.Runtime.Answer(r.Context(), u, card, bot, group, body.Decision, strings.TrimSpace(body.Text), body.Always)
 	if err != nil {
 		code := 400
-		if errors.Is(err, runs.ErrCardDone) {
+		switch {
+		case errors.Is(err, runs.ErrCardDone):
 			code = 409
+		case errors.Is(err, runs.ErrNotRequester):
+			code = 403
 		}
 		writeErr(w, code, err.Error())
 		return
@@ -138,25 +145,35 @@ func (s *Server) needComputer(w http.ResponseWriter) bool {
 	return true
 }
 
-func (s *Server) computerStatus(w http.ResponseWriter, r *http.Request) {
+// computerOf is the caller's own computer with the bot: each person who
+// uses a shared bot has a separate one.
+func (s *Server) computerOf(w http.ResponseWriter, r *http.Request) (*store.Bot, computer.Owner, bool) {
 	b := s.bot(w, r)
 	if b == nil || !s.needComputer(w) {
+		return nil, computer.Owner{}, false
+	}
+	return b, computer.Owner{Bot: b.ID, User: userFrom(r).ID}, true
+}
+
+func (s *Server) computerStatus(w http.ResponseWriter, r *http.Request) {
+	_, o, ok := s.computerOf(w, r)
+	if !ok {
 		return
 	}
-	writeJSON(w, 200, s.Computer.Status(r.Context(), b.ID))
+	writeJSON(w, 200, s.Computer.Status(r.Context(), o))
 }
 
 func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
-	b := s.bot(w, r)
-	if b == nil || !s.needComputer(w) {
+	b, o, ok := s.computerOf(w, r)
+	if !ok {
 		return
 	}
 	var err error
 	switch r.PathValue("action") {
 	case "start":
-		err = s.Computer.Ensure(r.Context(), b.ID, b.Network)
+		err = s.Computer.Ensure(r.Context(), o, b.Network)
 	case "stop":
-		s.Computer.Stop(r.Context(), b.ID)
+		s.Computer.Stop(r.Context(), o)
 	case "control":
 		var body struct {
 			User bool `json:"user"`
@@ -165,18 +182,18 @@ func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if body.User {
-			if err = s.Computer.Ensure(r.Context(), b.ID, b.Network); err == nil {
-				err = s.Computer.TakeControl(b.ID, true)
+			if err = s.Computer.Ensure(r.Context(), o, b.Network); err == nil {
+				err = s.Computer.TakeControl(o, true)
 			}
 		} else {
-			err = s.Computer.TakeControl(b.ID, false)
+			err = s.Computer.TakeControl(o, false)
 		}
 	case "input":
 		var in computer.Input
 		if !readJSON(w, r, &in) {
 			return
 		}
-		err = s.Computer.Send(r.Context(), b.ID, in)
+		err = s.Computer.Send(r.Context(), o, in)
 	case "show":
 		var body struct {
 			App string `json:"app"`
@@ -184,8 +201,8 @@ func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
 		if !readJSON(w, r, &body) {
 			return
 		}
-		if err = s.Computer.Ensure(r.Context(), b.ID, b.Network); err == nil {
-			err = s.Computer.Show(r.Context(), b.ID, body.App)
+		if err = s.Computer.Ensure(r.Context(), o, b.Network); err == nil {
+			err = s.Computer.Show(r.Context(), o, body.App)
 		}
 	default:
 		writeErr(w, 404, "not found")
@@ -195,15 +212,15 @@ func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, err.Error())
 		return
 	}
-	writeJSON(w, 200, s.Computer.Status(r.Context(), b.ID))
+	writeJSON(w, 200, s.Computer.Status(r.Context(), o))
 }
 
 func (s *Server) computerScreen(w http.ResponseWriter, r *http.Request) {
-	b := s.bot(w, r)
-	if b == nil || !s.needComputer(w) {
+	_, o, ok := s.computerOf(w, r)
+	if !ok {
 		return
 	}
-	img, err := s.Computer.Screenshot(r.Context(), b.ID)
+	img, err := s.Computer.Screenshot(r.Context(), o)
 	if err != nil {
 		writeErr(w, 409, err.Error())
 		return
@@ -240,7 +257,7 @@ func (s *Server) listRoutines(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		return
 	}
-	list, err := s.Store.ListRoutines(r.Context(), b.ID)
+	list, err := s.Store.ListRoutines(r.Context(), b.ID, userFrom(r).ID)
 	if err != nil {
 		writeErr(w, 500, "could not load routines")
 		return
@@ -266,7 +283,7 @@ func (s *Server) createRoutine(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	rt, secret, err := s.Routines.Create(r.Context(), b.ID, body.Name, body.Prompt, body.Kind, body.Schedule)
+	rt, secret, err := s.Routines.Create(r.Context(), b.ID, userFrom(r).ID, body.Name, body.Prompt, body.Kind, body.Schedule)
 	if err != nil {
 		if errors.Is(err, routines.ErrInvalid) {
 			writeErr(w, 400, strings.TrimPrefix(err.Error(), routines.ErrInvalid.Error()+"\n"))
@@ -293,14 +310,14 @@ func (s *Server) updateRoutine(w http.ResponseWriter, r *http.Request) {
 	}
 	var next *time.Time
 	if body.Active != nil && *body.Active {
-		if rt, err := s.Store.GetRoutine(r.Context(), b.ID, r.PathValue("rid")); err == nil && rt.Kind == "schedule" {
+		if rt, err := s.Store.GetRoutine(r.Context(), b.ID, userFrom(r).ID, r.PathValue("rid")); err == nil && rt.Kind == "schedule" {
 			if sc, err := cron.Parse(rt.Schedule); err == nil {
 				n := sc.Next(time.Now())
 				next = &n
 			}
 		}
 	}
-	rt, err := s.Store.UpdateRoutine(r.Context(), b.ID, r.PathValue("rid"), body.Active, next)
+	rt, err := s.Store.UpdateRoutine(r.Context(), b.ID, userFrom(r).ID, r.PathValue("rid"), body.Active, next)
 	if err != nil {
 		writeErr(w, 404, "routine not found")
 		return
@@ -313,7 +330,7 @@ func (s *Server) deleteRoutine(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		return
 	}
-	if err := s.Store.DeleteRoutine(r.Context(), b.ID, r.PathValue("rid")); err != nil {
+	if err := s.Store.DeleteRoutine(r.Context(), b.ID, userFrom(r).ID, r.PathValue("rid")); err != nil {
 		writeErr(w, 404, "routine not found")
 		return
 	}
@@ -325,7 +342,7 @@ func (s *Server) runRoutine(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		return
 	}
-	rt, err := s.Store.GetRoutine(r.Context(), b.ID, r.PathValue("rid"))
+	rt, err := s.Store.GetRoutine(r.Context(), b.ID, userFrom(r).ID, r.PathValue("rid"))
 	if err != nil {
 		writeErr(w, 404, "routine not found")
 		return
@@ -501,7 +518,8 @@ func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
 // ---- Groups ----
 
 func (s *Server) group(w http.ResponseWriter, r *http.Request) *store.Group {
-	g, err := s.Store.GetGroup(r.Context(), userFrom(r).SpaceID, r.PathValue("id"))
+	u := userFrom(r)
+	g, err := s.Store.GroupFor(r.Context(), u.SpaceID, u.ID, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, 404, "group not found")
 		return nil
@@ -510,7 +528,8 @@ func (s *Server) group(w http.ResponseWriter, r *http.Request) *store.Group {
 }
 
 func (s *Server) listGroups(w http.ResponseWriter, r *http.Request) {
-	list, err := s.Store.ListGroups(r.Context(), userFrom(r).SpaceID)
+	u := userFrom(r)
+	list, err := s.Store.ListGroups(r.Context(), u.SpaceID, u.ID)
 	if err != nil {
 		writeErr(w, 500, "could not load groups")
 		return
@@ -539,23 +558,29 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := userFrom(r)
-	g, err := s.Store.CreateGroup(r.Context(), u.SpaceID, body.Name, body.BotIDs)
+	for _, id := range body.BotIDs {
+		if _, err := s.Store.GetBotFor(r.Context(), u.SpaceID, u.ID, id); err != nil {
+			writeErr(w, 400, "you can only put bots you can use in a group")
+			return
+		}
+	}
+	g, err := s.Store.CreateGroup(r.Context(), u.SpaceID, u.ID, body.Name, body.BotIDs)
 	if err != nil {
-		writeErr(w, 400, "those bots aren't all yours")
+		writeErr(w, 400, "those bots aren't all in this team")
 		return
 	}
-	s.Hub.Publish(u.SpaceID, runs.Event{Type: "group", GroupID: g.ID, Data: g})
+	s.Hub.Publish(u.SpaceID, []string{u.ID}, runs.Event{Type: "group", GroupID: g.ID, Data: g})
 	writeJSON(w, 201, g)
 }
 
 func (s *Server) archiveGroup(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
-	if err := s.Store.ArchiveGroup(r.Context(), u.SpaceID, r.PathValue("id")); err != nil {
+	if err := s.Store.ArchiveGroup(r.Context(), u.SpaceID, u.ID, r.PathValue("id")); err != nil {
 		writeErr(w, 404, "group not found")
 		return
 	}
-	s.Runtime.Stop("g:" + r.PathValue("id"))
-	s.Hub.Publish(u.SpaceID, runs.Event{Type: "group_removed", GroupID: r.PathValue("id")})
+	s.Runtime.Stop(runs.GroupKey(r.PathValue("id")))
+	s.Hub.Publish(u.SpaceID, []string{u.ID}, runs.Event{Type: "group_removed", GroupID: r.PathValue("id")})
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -612,10 +637,10 @@ func (s *Server) sendGroupMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "could not send")
 		return
 	}
-	s.Hub.Publish(u.SpaceID, runs.Event{Type: "message", GroupID: g.ID, Data: m})
+	s.Hub.Publish(u.SpaceID, []string{u.ID}, runs.Event{Type: "message", GroupID: g.ID, Data: m})
 	var bots []*store.Bot
 	for _, id := range g.BotIDs {
-		b, err := s.Store.GetBot(r.Context(), u.SpaceID, id)
+		b, err := s.Store.GetBotFor(r.Context(), u.SpaceID, u.ID, id)
 		if err != nil {
 			continue
 		}
@@ -624,7 +649,7 @@ func (s *Server) sendGroupMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(bots) == 0 && len(g.BotIDs) > 0 {
-		if b, err := s.Store.GetBot(r.Context(), u.SpaceID, g.BotIDs[0]); err == nil {
+		if b, err := s.Store.GetBotFor(r.Context(), u.SpaceID, u.ID, g.BotIDs[0]); err == nil {
 			bots = append(bots, b)
 		}
 	}
@@ -636,6 +661,6 @@ func (s *Server) sendGroupMessage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) stopGroup(w http.ResponseWriter, r *http.Request) {
 	if g := s.group(w, r); g != nil {
-		writeJSON(w, 200, map[string]bool{"stopped": s.Runtime.Stop("g:" + g.ID)})
+		writeJSON(w, 200, map[string]bool{"stopped": s.Runtime.Stop(runs.GroupKey(g.ID))})
 	}
 }

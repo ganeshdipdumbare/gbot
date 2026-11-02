@@ -10,6 +10,7 @@ import (
 type Routine struct {
 	ID        string     `json:"id"`
 	BotID     string     `json:"botId"`
+	UserID    string     `json:"userId"` // who created it; its runs are theirs
 	Name      string     `json:"name"`
 	Prompt    string     `json:"prompt"`
 	Kind      string     `json:"kind"` // schedule | webhook
@@ -23,11 +24,11 @@ type Routine struct {
 
 func (r *Routine) SecretHash() []byte { return r.secret }
 
-const routineCols = `id, bot_id, name, prompt, kind, schedule, secret_hash, active, next_run_at, last_run_at, created_at`
+const routineCols = `id, bot_id, name, prompt, kind, schedule, secret_hash, active, next_run_at, last_run_at, created_at, user_id`
 
 func scanRoutine(row pgx.Row) (*Routine, error) {
 	r := &Routine{}
-	if err := row.Scan(&r.ID, &r.BotID, &r.Name, &r.Prompt, &r.Kind, &r.Schedule, &r.secret, &r.Active, &r.NextRunAt, &r.LastRunAt, &r.CreatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.BotID, &r.Name, &r.Prompt, &r.Kind, &r.Schedule, &r.secret, &r.Active, &r.NextRunAt, &r.LastRunAt, &r.CreatedAt, &r.UserID); err != nil {
 		return nil, notFound(err)
 	}
 	return r, nil
@@ -50,12 +51,13 @@ func (s *Store) routines(ctx context.Context, q string, args ...any) ([]*Routine
 	return out, rows.Err()
 }
 
-func (s *Store) ListRoutines(ctx context.Context, botID string) ([]*Routine, error) {
-	return s.routines(ctx, `SELECT `+routineCols+` FROM routines WHERE bot_id=$1 ORDER BY created_at`, botID)
+// ListRoutines returns the routines the person created on a bot.
+func (s *Store) ListRoutines(ctx context.Context, botID, userID string) ([]*Routine, error) {
+	return s.routines(ctx, `SELECT `+routineCols+` FROM routines WHERE bot_id=$1 AND user_id=$2 ORDER BY created_at`, botID, userID)
 }
 
-func (s *Store) GetRoutine(ctx context.Context, botID, id string) (*Routine, error) {
-	return scanRoutine(s.DB.QueryRow(ctx, `SELECT `+routineCols+` FROM routines WHERE id=$1 AND bot_id=$2`, id, botID))
+func (s *Store) GetRoutine(ctx context.Context, botID, userID, id string) (*Routine, error) {
+	return scanRoutine(s.DB.QueryRow(ctx, `SELECT `+routineCols+` FROM routines WHERE id=$1 AND bot_id=$2 AND user_id=$3`, id, botID, userID))
 }
 
 // RoutineByID is for webhooks, which authenticate by the routine's secret.
@@ -64,17 +66,17 @@ func (s *Store) RoutineByID(ctx context.Context, id string) (*Routine, error) {
 }
 
 func (s *Store) CreateRoutine(ctx context.Context, r *Routine, secretHash []byte) (*Routine, error) {
-	return scanRoutine(s.DB.QueryRow(ctx, `INSERT INTO routines(bot_id,name,prompt,kind,schedule,secret_hash,next_run_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING `+routineCols, r.BotID, r.Name, r.Prompt, r.Kind, r.Schedule, secretHash, r.NextRunAt))
+	return scanRoutine(s.DB.QueryRow(ctx, `INSERT INTO routines(bot_id,user_id,name,prompt,kind,schedule,secret_hash,next_run_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING `+routineCols, r.BotID, r.UserID, r.Name, r.Prompt, r.Kind, r.Schedule, secretHash, r.NextRunAt))
 }
 
-func (s *Store) UpdateRoutine(ctx context.Context, botID, id string, active *bool, next *time.Time) (*Routine, error) {
+func (s *Store) UpdateRoutine(ctx context.Context, botID, userID, id string, active *bool, next *time.Time) (*Routine, error) {
 	return scanRoutine(s.DB.QueryRow(ctx, `UPDATE routines SET active=COALESCE($3,active), next_run_at=COALESCE($4,next_run_at)
-		WHERE id=$1 AND bot_id=$2 RETURNING `+routineCols, id, botID, active, next))
+		WHERE id=$1 AND bot_id=$2 AND user_id=$5 RETURNING `+routineCols, id, botID, active, next, userID))
 }
 
-func (s *Store) DeleteRoutine(ctx context.Context, botID, id string) error {
-	t, err := s.DB.Exec(ctx, `DELETE FROM routines WHERE id=$1 AND bot_id=$2`, id, botID)
+func (s *Store) DeleteRoutine(ctx context.Context, botID, userID, id string) error {
+	t, err := s.DB.Exec(ctx, `DELETE FROM routines WHERE id=$1 AND bot_id=$2 AND user_id=$3`, id, botID, userID)
 	if err == nil && t.RowsAffected() == 0 {
 		return ErrNotFound
 	}

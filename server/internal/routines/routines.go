@@ -23,7 +23,7 @@ import (
 type Service struct {
 	Store *store.Store
 	Log   *slog.Logger
-	// Fire starts a routine run on its bot.
+	// Fire starts a routine run on its bot, for the routine's creator.
 	Fire func(ctx context.Context, bot *store.Bot, r *store.Routine, input string)
 }
 
@@ -31,7 +31,7 @@ var ErrInvalid = errors.New("invalid routine")
 
 // Create validates and saves a routine. For webhooks it returns the
 // secret, which is shown once and only its hash is kept.
-func (s *Service) Create(ctx context.Context, botID, name, prompt, kind, schedule string) (*store.Routine, string, error) {
+func (s *Service) Create(ctx context.Context, botID, userID, name, prompt, kind, schedule string) (*store.Routine, string, error) {
 	name, prompt = strings.TrimSpace(name), strings.TrimSpace(prompt)
 	if name == "" || utf8.RuneCountInString(name) > 80 {
 		return nil, "", errors.Join(ErrInvalid, errors.New("give the routine a short name"))
@@ -39,7 +39,7 @@ func (s *Service) Create(ctx context.Context, botID, name, prompt, kind, schedul
 	if prompt == "" || len(prompt) > 8000 {
 		return nil, "", errors.Join(ErrInvalid, errors.New("say what the routine should do"))
 	}
-	r := &store.Routine{BotID: botID, Name: name, Prompt: prompt, Kind: kind}
+	r := &store.Routine{BotID: botID, UserID: userID, Name: name, Prompt: prompt, Kind: kind}
 	var secret string
 	var hash []byte
 	switch kind {

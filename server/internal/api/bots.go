@@ -15,7 +15,8 @@ import (
 )
 
 func (s *Server) listBots(w http.ResponseWriter, r *http.Request) {
-	bots, err := s.Store.ListBots(r.Context(), userFrom(r).SpaceID)
+	u := userFrom(r)
+	bots, err := s.Store.ListBots(r.Context(), u.SpaceID, u.ID)
 	if err != nil {
 		s.Log.Error("list bots", "err", err)
 		writeErr(w, 500, "could not load bots")
@@ -24,13 +25,25 @@ func (s *Server) listBots(w http.ResponseWriter, r *http.Request) {
 	if bots == nil {
 		bots = []*store.Bot{}
 	}
-	writeJSON(w, 200, map[string]any{"bots": bots, "presence": s.Runtime.PresenceSnapshot()})
+	// Presence only for bots the person can see.
+	visible := map[string]bool{}
+	for _, b := range bots {
+		visible[b.ID] = true
+	}
+	presence := map[string]runs.Presence{}
+	for id, p := range s.Runtime.PresenceSnapshot() {
+		if visible[id] {
+			presence[id] = p
+		}
+	}
+	writeJSON(w, 200, map[string]any{"bots": bots, "presence": presence})
 }
 
-// bot loads the path's bot inside the caller's space. Another space's
-// bot is indistinguishable from a missing one.
+// bot loads the path's bot if the caller can use it. Another space's bot,
+// or one that isn't shared with them, is indistinguishable from a missing one.
 func (s *Server) bot(w http.ResponseWriter, r *http.Request) *store.Bot {
-	b, err := s.Store.GetBot(r.Context(), userFrom(r).SpaceID, r.PathValue("id"))
+	u := userFrom(r)
+	b, err := s.Store.GetBotFor(r.Context(), u.SpaceID, u.ID, r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) || strings.Contains(err.Error(), "invalid input syntax") {
 			writeErr(w, 404, "bot not found")
@@ -38,6 +51,19 @@ func (s *Server) bot(w http.ResponseWriter, r *http.Request) *store.Bot {
 			s.Log.Error("get bot", "err", err)
 			writeErr(w, 500, "could not load bot")
 		}
+		return nil
+	}
+	return b
+}
+
+// manage loads a bot the caller owns or manages, for changes to how it works.
+func (s *Server) manage(w http.ResponseWriter, r *http.Request) *store.Bot {
+	b := s.bot(w, r)
+	if b == nil {
+		return nil
+	}
+	if b.Role != "owner" && b.Role != "manager" {
+		writeErr(w, 403, "only the owner or a manager can change this bot")
 		return nil
 	}
 	return b
@@ -96,7 +122,8 @@ func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "could not create bot")
 		return
 	}
-	s.Hub.Publish(u.SpaceID, runs.Event{Type: "bot", BotID: b.ID, Data: b})
+	// A new bot is private to its owner until they share it.
+	s.Hub.Publish(u.SpaceID, []string{u.ID}, runs.Event{Type: "bot", BotID: b.ID, Data: b})
 	writeJSON(w, 201, b)
 }
 
@@ -113,27 +140,39 @@ func (s *Server) updateBot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "that model isn't available")
 		return
 	}
-	u := userFrom(r)
-	b, err := s.Store.UpdateBot(r.Context(), u.SpaceID, r.PathValue("id"), p)
+	cur := s.manage(w, r)
+	if cur == nil {
+		return
+	}
+	b, err := s.Store.UpdateBot(r.Context(), cur.SpaceID, cur.ID, p)
 	if err != nil {
 		writeErr(w, 404, "bot not found")
 		return
 	}
-	s.Hub.Publish(u.SpaceID, runs.Event{Type: "bot", BotID: b.ID, Data: b})
+	s.Hub.Publish(b.SpaceID, s.Runtime.Audience(b.ID), runs.Event{Type: "bot", BotID: b.ID, Data: b})
 	writeJSON(w, 200, b)
 }
 
+// archiveBot deletes a bot for everyone. Only its owner can.
 func (s *Server) archiveBot(w http.ResponseWriter, r *http.Request) {
-	u := userFrom(r)
-	if err := s.Store.ArchiveBot(r.Context(), u.SpaceID, r.PathValue("id")); err != nil {
+	b := s.bot(w, r)
+	if b == nil {
+		return
+	}
+	if b.Role != "owner" {
+		writeErr(w, 403, "only the owner can delete this bot")
+		return
+	}
+	audience := s.Runtime.Audience(b.ID)
+	if err := s.Store.ArchiveBot(r.Context(), b.SpaceID, b.ID); err != nil {
 		writeErr(w, 404, "bot not found")
 		return
 	}
-	s.Runtime.Stop(r.PathValue("id"))
+	s.Runtime.StopBot(b.ID)
 	if s.Computer != nil {
-		s.Computer.Stop(r.Context(), r.PathValue("id"))
+		s.Computer.StopBot(r.Context(), b.ID)
 	}
-	s.Hub.Publish(u.SpaceID, runs.Event{Type: "bot_removed", BotID: r.PathValue("id")})
+	s.Hub.Publish(b.SpaceID, audience, runs.Event{Type: "bot_removed", BotID: b.ID})
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -151,7 +190,8 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		before = &t
 	}
-	msgs, err := s.Store.ListMessages(r.Context(), b.ID, before, 100)
+	// Each person sees only their own chat with the bot.
+	msgs, err := s.Store.ListMessages(r.Context(), b.ID, userFrom(r).ID, before, 100)
 	if err != nil {
 		writeErr(w, 500, "could not load messages")
 		return
@@ -183,23 +223,23 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "message must be 1 to 32000 characters")
 		return
 	}
-	m := &store.Message{BotID: b.ID, Role: "user", Content: body.Text}
+	m := &store.Message{BotID: b.ID, Role: "user", Content: body.Text, ChatUser: u.ID}
 	if err := s.Store.AddMessage(r.Context(), m, &u.ID); err != nil {
 		writeErr(w, 500, "could not send")
 		return
 	}
-	s.Hub.Publish(u.SpaceID, runs.Event{Type: "message", BotID: b.ID, Data: m})
-	s.Runtime.Enqueue(runs.Job{Bot: b, Prompt: body.Text, Trigger: "chat"})
+	s.Hub.Publish(u.SpaceID, []string{u.ID}, runs.Event{Type: "message", BotID: b.ID, Data: m})
+	s.Runtime.Enqueue(runs.Job{Bot: b, For: u.ID, Prompt: body.Text, Trigger: "chat"})
 	writeJSON(w, 201, m)
 }
 
 func (s *Server) stopBot(w http.ResponseWriter, r *http.Request) {
 	if b := s.bot(w, r); b != nil {
-		writeJSON(w, 200, map[string]bool{"stopped": s.Runtime.Stop(b.ID)})
+		writeJSON(w, 200, map[string]bool{"stopped": s.Runtime.Stop(runs.ChatKey(b.ID, userFrom(r).ID))})
 	}
 }
 
-// events streams the space's live events over SSE.
+// events streams the events meant for the caller over SSE.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
@@ -207,7 +247,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := userFrom(r)
-	ch, unsub := s.Hub.Subscribe(u.SpaceID)
+	ch, unsub := s.Hub.Subscribe(u.SpaceID, u.ID)
 	defer unsub()
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
@@ -239,10 +279,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 }
 
 // pollEvents is the long-polling alternative to the event stream: it
-// returns events after ?after=N, waiting up to 20s for one.
+// returns the caller's events after ?after=N, waiting up to 20s for one.
 func (s *Server) pollEvents(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	events, next, reset := s.Hub.Poll(r.Context(), userFrom(r).SpaceID, after, 20*time.Second)
+	u := userFrom(r)
+	events, next, reset := s.Hub.Poll(r.Context(), u.SpaceID, u.ID, after, 20*time.Second)
 	if events == nil {
 		events = []json.RawMessage{}
 	}

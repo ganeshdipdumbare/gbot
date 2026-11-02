@@ -24,7 +24,7 @@ func testComputer(t *testing.T, backend string) {
 	if !m.Available(ctx) {
 		t.Skip("gbot-computer image not available on " + backend + " (make computer)")
 	}
-	bot := "00000000-0000-4000-8000-000000000001"
+	bot := Owner{Bot: "00000000-0000-4000-8000-000000000001", User: "00000000-0000-4000-8000-000000000002"}
 	defer m.Stop(ctx, bot)
 	if err := m.Ensure(ctx, bot, false); err != nil {
 		t.Fatal(err)
@@ -63,5 +63,22 @@ func testComputer(t *testing.T, backend string) {
 	}
 	if err := m.Send(ctx, bot, Input{Type: "key", Key: "ctrl+a; rm -rf /"}); err == nil {
 		t.Fatal("unsafe key name accepted")
+	}
+}
+
+// Every person gets their own computer with a shared bot, and the same
+// pair always maps to the same one.
+func TestOwnerKey(t *testing.T) {
+	bot := "00000000-0000-4000-8000-000000000001"
+	alice := Owner{Bot: bot, User: "00000000-0000-4000-8000-00000000000a"}
+	bob := Owner{Bot: bot, User: "00000000-0000-4000-8000-00000000000b"}
+	if alice.Key() == bob.Key() {
+		t.Fatal("two people share one computer")
+	}
+	if alice.Key() != (Owner{Bot: bot, User: alice.User}).Key() {
+		t.Fatal("key is not stable")
+	}
+	if !safeID.MatchString(alice.Key()) {
+		t.Fatalf("key %q is not accepted by the backends", alice.Key())
 	}
 }

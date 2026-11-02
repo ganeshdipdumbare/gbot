@@ -101,6 +101,7 @@ export default function Chat() {
 const plain = (s: string) => s.replace(/```[a-z]*\n?/g, "").replace(/`([^`]+)`/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/^#+\s*/gm, "").replace(/^\s*[-*]\s+/gm, "• ");
 
 function Row({ m, author, showName, t }: { m: Message; author?: Bot; showName: boolean; t: Theme }) {
+  if (m.role === "event" && m.data?.kind === "botmsg") return <Exchange m={m} t={t} />;
   if (m.role === "event") {
     return <Text style={{ alignSelf: "center", color: m.data?.kind === "error" ? t.danger : t.ink2, fontSize: 13, marginVertical: 6, textAlign: "center" }}>{m.content.replace(/\*\*/g, "")}</Text>;
   }
@@ -116,6 +117,44 @@ function Row({ m, author, showName, t }: { m: Message; author?: Bot; showName: b
         </View>
       </View>
     </View>
+  );
+}
+
+const exchangeStatus: Record<string, string> = { sent: "Sent", replied: "Replied", delivered: "Delivered", needs_you: "Waiting on you", failed: "No reply" };
+// What the other side of an exchange shows before (or instead of) a reply.
+const noReplyText: Record<string, string> = { sent: "No reply yet", delivered: "No reply needed" };
+
+// One bot messaging another ("Messaged Grok Bot"). Tap to read the
+// exchange; it's view-only.
+function Exchange({ m, t }: { m: Message; t: Theme }) {
+  const [open, setOpen] = useState(false);
+  const bots = useStore((s) => s.bots);
+  const d = m.data as { from: string; to: string; message: string; reply?: string; status: string };
+  const from = bots.find((b) => b.id === d.from);
+  const to = bots.find((b) => b.id === d.to);
+  const peer = m.botId === d.from ? to : from;
+  const turn = (bot: Bot | undefined, text: string) => (
+    <View style={{ marginTop: 10 }}>
+      <Text style={{ color: t.ink2, fontSize: 12, fontWeight: "600", marginBottom: 2 }}>{bot?.name ?? "Removed bot"}</Text>
+      <Text style={{ color: t.ink, fontSize: 15, lineHeight: 21 }}>{plain(text)}</Text>
+    </View>
+  );
+  return (
+    <Pressable onPress={() => setOpen(!open)} style={{ alignSelf: "flex-start", maxWidth: "86%", marginVertical: 6, padding: 12, borderRadius: 18, backgroundColor: t.surface, borderWidth: 1, borderColor: t.line }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        {peer && <Gbot look={peer.look} seed={peer.id} size={26} mood={d.status === "sent" ? "working" : "idle"} />}
+        <View style={{ flexShrink: 1 }}>
+          <Text style={{ color: t.ink, fontSize: 14, fontWeight: "600" }}>{m.content}</Text>
+          <Text style={{ color: d.status === "failed" ? t.danger : t.ink2, fontSize: 12.5 }}>{exchangeStatus[d.status] ?? d.status}</Text>
+        </View>
+      </View>
+      {open && (
+        <>
+          {turn(from, d.message)}
+          {turn(to, d.reply ?? (noReplyText[d.status] ?? exchangeStatus[d.status] ?? ""))}
+        </>
+      )}
+    </Pressable>
   );
 }
 

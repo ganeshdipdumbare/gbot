@@ -15,12 +15,12 @@ import (
 // runCtx is what the guard knows about the run in progress. It travels
 // in the context, so concurrent runs of the same bot never mix.
 type runCtx struct {
-	botID   string
-	ownerID string
-	mode    string // ask | auto | never
-	allow   map[string]bool
-	block   map[string]bool
-	// mcpPrefix lists the tool prefixes of MCP servers the owner added;
+	botID  string
+	userID string // the person the run is for
+	mode   string // ask | auto | never
+	allow  map[string]bool
+	block  map[string]bool
+	// mcpPrefix lists the tool prefixes of MCP servers the person added;
 	// other accounts' MCP tools are hidden from this run.
 	mcpPrefix map[string]bool
 
@@ -71,7 +71,7 @@ func metaString(t *sdk.Tool, k string) string {
 	return v
 }
 
-// needsApproval applies the owner's approval mode to one call.
+// needsApproval applies the requester's approval mode to one call.
 func needsApproval(rc *runCtx, name string, t *sdk.Tool) bool {
 	if internalTools[name] || rc.allow[name] {
 		return false

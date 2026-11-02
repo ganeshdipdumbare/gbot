@@ -37,10 +37,11 @@ func hostPath(raw string) string {
 }
 
 // describeStep turns a finished tool call into a summary line. It
-// returns false for calls that don't belong in the summary (questions
-// and takeovers have their own cards; calls to tools that don't exist
-// are the model correcting itself). connector names the MCP server
-// behind a tool prefix, so its tools read apart from built-in ones.
+// returns false for calls that don't belong in the summary (questions,
+// takeovers and messages to other bots have their own cards; calls to
+// tools that don't exist are the model correcting itself). connector
+// names the MCP server behind a tool prefix, so its tools read apart
+// from built-in ones.
 func describeStep(call *sdk.ToolCall, result string, connector func(prefix string) string) (step, bool) {
 	if call == nil || strings.HasPrefix(result, "error: unknown tool ") {
 		return step{}, false
@@ -50,7 +51,7 @@ func describeStep(call *sdk.ToolCall, result string, connector func(prefix strin
 	failed := strings.HasPrefix(strings.ToLower(result), "error") || strings.Contains(result, "isn't available") || strings.Contains(result, "blocked this tool")
 	st := step{OK: !failed}
 	switch call.Name {
-	case "ask_user", "request_takeover":
+	case "ask_user", "request_takeover", "message_bot":
 		return step{}, false
 	case "computer_shell":
 		st.Label, st.Detail = "Ran", short(str("command"), 60)
@@ -78,8 +79,6 @@ func describeStep(call *sdk.ToolCall, result string, connector func(prefix strin
 		st.Label = "Checked routines"
 	case "routine_delete":
 		st.Label = "Deleted a routine"
-	case "message_bot":
-		st.Label, st.Detail = "Messaged", str("to")
 	case "use_skill":
 		st.Label, st.Detail = "Used skill", str("name")
 	default:

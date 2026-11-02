@@ -115,19 +115,19 @@ func (r *Runtime) MCPTools(id string) []string {
 	return out
 }
 
-func (r *Runtime) mcpPrefixes(owner string) map[string]bool {
+func (r *Runtime) mcpPrefixes(user string) map[string]bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := map[string]bool{}
 	for _, st := range r.mcp {
-		if st.owner == owner && st.status == "connected" {
+		if st.owner == user && st.status == "connected" {
 			out[st.prefix] = true
 		}
 	}
 	return out
 }
 
-// mcpName is the name the owner gave the server behind a tool prefix.
+// mcpName is the name the person gave the server behind a tool prefix.
 func (r *Runtime) mcpName(prefix string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

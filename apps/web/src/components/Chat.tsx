@@ -11,6 +11,7 @@ import { renderMarkdown } from "../lib/markdown";
 import { speak, stopSpeaking } from "../lib/voice";
 import { Card } from "./Card";
 import { Composer } from "./Composer";
+import { Modal } from "./Modal";
 import { bouncy, Button, Icon, IconButton } from "./ui";
 
 export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOpen }: {
@@ -318,6 +319,7 @@ function GroupHello({ group, members }: { group: Group; members: Bot[] }) {
 const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animate }: { m: Message; author?: Bot; first: boolean; last: boolean; inGroup: boolean; chatKey: ChatKey; animate: boolean }) {
   const enter = animate ? "entry-in" : "";
   if (m.role === "event" && m.data?.kind === "activity") return <Activity m={m} enter={enter} />;
+  if (m.role === "event" && m.data?.kind === "botmsg") return <Exchange m={m} enter={enter} />;
   if (m.role === "event") {
     const err = m.data?.kind === "error";
     return (
@@ -372,6 +374,56 @@ function Activity({ m, enter }: { m: Message; enter: string }) {
           {s.detail && <><span className="text-ink-3 shrink-0">→</span><span className="text-ink-2 truncate font-mono text-[12.5px]">{s.detail}</span></>}
         </div>
       ))}
+    </div>
+  );
+}
+
+const exchangeStatus: Record<string, string> = { sent: "Sent", replied: "Replied", delivered: "Delivered", needs_you: "Waiting on you", failed: "No reply" };
+// What the other side of an exchange shows before (or instead of) a reply.
+const noReplyText: Record<string, string> = { sent: "No reply yet", delivered: "No reply needed" };
+
+// One bot messaging another ("Messaged Grok Bot", "Message from Pip"),
+// like Rakazo: a card in both chats that opens the exchange, view-only.
+function Exchange({ m, enter }: { m: Message; enter: string }) {
+  const [open, setOpen] = useState(false);
+  const bots = useStore((s) => s.bots);
+  const d = m.data as { from: string; to: string; message: string; reply?: string; status: string };
+  const from = bots.find((b) => b.id === d.from);
+  const to = bots.find((b) => b.id === d.to);
+  const peer = m.botId === d.from ? to : from;
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`${enter} mt-3 flex items-center gap-2.5 max-w-[min(85%,560px)] rounded-2xl bg-surface hover:bg-hover px-3.5 py-2.5 text-left cursor-pointer transition-colors duration-[120ms]`}>
+        {peer && <Gbot look={peer.look} seed={peer.id} size={24} mood={d.status === "sent" ? "working" : "idle"} />}
+        <span className="min-w-0">
+          <span className="block text-[14px] font-medium truncate">{m.content}</span>
+          <span className={`block text-[12.5px] truncate ${d.status === "failed" ? "text-danger" : "text-ink-2"}`}>{exchangeStatus[d.status] ?? d.status}</span>
+        </span>
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} width={520} title={`${from?.name ?? "A bot"} and ${to?.name ?? "a bot"}`}>
+        <div className="px-5 pb-5 overflow-y-auto space-y-4">
+          <ExchangeTurn bot={from}><div className="whitespace-pre-wrap break-words">{d.message}</div></ExchangeTurn>
+          <ExchangeTurn bot={to}>
+            {d.reply
+              ? <div className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.reply) }} />
+              : <div className="text-ink-2">{noReplyText[d.status] ?? exchangeStatus[d.status] ?? d.status}</div>}
+          </ExchangeTurn>
+          <p className="text-[12px] text-ink-3 text-center">View only. Bots write these to each other.</p>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function ExchangeTurn({ bot, children }: { bot?: Bot; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <div className="w-7 shrink-0 pt-0.5">{bot && <Gbot look={bot.look} seed={bot.id} size={28} mood="idle" />}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[12px] text-ink-3 mb-1">{bot?.name ?? "Removed bot"}</div>
+        <div className="rounded-2xl bg-surface px-3.5 py-2 text-[15px] leading-[22px]">{children}</div>
+      </div>
     </div>
   );
 }
