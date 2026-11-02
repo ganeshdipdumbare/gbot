@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { hues } from "@gbot/ui-tokens";
+import { bodies, eyeSizes, mix } from "./parts";
 import { resolveLook, type Look } from "./traits";
-import { type Mood } from "./pose";
-import { blend, BLEND, headTransform, poseAt, rig, type Pose } from "./motion";
+import { pose, type Mood } from "./pose";
 
 export type { Mood };
 
@@ -16,131 +16,175 @@ export interface GbotProps {
   lookAt?: { x: number; y: number } | null;
   /** The bot's computer is running. */
   live?: boolean;
-  /** Kept for compatibility; the flat style draws no props. */
+  /** Kept for compatibility; the bots draw no props. */
   props?: boolean;
   className?: string;
   style?: CSSProperties;
   title?: string;
 }
 
-// One animation frame loop for every avatar on the page.
-const subscribers = new Set<(now: number) => void>();
-let frame = 0;
-function loop(now: number) {
-  subscribers.forEach((fn) => fn(now));
-  frame = subscribers.size ? requestAnimationFrame(loop) : 0;
-}
-function subscribe(fn: (now: number) => void) {
-  subscribers.add(fn);
-  if (!frame) frame = requestAnimationFrame(loop);
-  return () => { subscribers.delete(fn); };
+function useBlink(enabled: boolean) {
+  const [blink, setBlink] = useState(false);
+  useEffect(() => {
+    if (!enabled) return;
+    let t: ReturnType<typeof setTimeout>;
+    const loop = () => {
+      t = setTimeout(() => {
+        setBlink(true);
+        setTimeout(() => setBlink(false), 120);
+        loop();
+      }, 2600 + Math.random() * 4400);
+    };
+    loop();
+    return () => clearTimeout(t);
+  }, [enabled]);
+  return blink;
 }
 
-const reducedMotion = () => typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 const clamp = (v: number) => Math.max(-1, Math.min(1, v));
 
-// The head is one solid shape; the eyes are holes masked out of it, so
-// whatever the bot sits on shows through. Each frame the motion rig turns
-// the mood and the time into a pose, written straight to the SVG.
+// Geometric bots with soft, quiet volume: a gentle light from above, the
+// form easing into shade below, soft inner edges and a diffuse highlight,
+// resting on a faint contact shadow. The eyes stay flat, like Grok Bot's:
+// upright pills cut clean through the head. When a bot looks somewhere
+// its face slides that way while the light stays put.
 export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, live, className, style, title }: GbotProps) {
   const t = resolveLook(look, seed);
-  const r = rig(t.shape, t.eyes, look?.seed || seed);
-  const color = hues[t.hue].body;
-  const mask = useId().replace(/:/g, "");
+  const color = hues[t.hue];
+  const body = bodies[t.shape];
+  const uid = useId().replace(/:/g, "");
+  const happy = mood === "done" || mood === "happy";
+  const blink = useBlink(!happy && mood !== "sleepy");
 
-  const svg = useRef<SVGSVGElement>(null);
-  const head = useRef<SVGGElement>(null);
-  const eyes = [useRef<SVGRectElement>(null), useRef<SVGRectElement>(null)];
-  const dots = [useRef<SVGGElement>(null), useRef<SVGGElement>(null)];
-  const bang = useRef<SVGRectElement>(null);
-
-  const state = useRef({ mood, since: 0, from: null as Pose | null, last: null as Pose | null, gaze: lookAt, rig: r });
-  state.current.gaze = lookAt ? { x: clamp(lookAt.x), y: clamp(lookAt.y) } : null;
-  state.current.rig = r;
-
-  const draw = (p: Pose) => {
-    head.current?.setAttribute("transform", headTransform(p.head));
-    head.current?.setAttribute("opacity", p.head.o.toFixed(3));
-    p.eyes.forEach((e, i) => {
-      const el = eyes[i].current;
-      if (!el) return;
-      el.setAttribute("x", (e.x - e.w / 2).toFixed(2));
-      el.setAttribute("y", (e.y - e.h / 2).toFixed(2));
-      el.setAttribute("width", Math.max(e.w, 0).toFixed(2));
-      el.setAttribute("height", Math.max(e.h, 0).toFixed(2));
-      el.setAttribute("rx", (Math.min(e.w, e.h) / 2).toFixed(2));
-      el.setAttribute("transform", `rotate(${e.rot.toFixed(2)} ${e.x.toFixed(2)} ${e.y.toFixed(2)})`);
-    });
-    p.dots.forEach((d, i) => {
-      const el = dots[i].current;
-      el?.setAttribute("transform", `translate(${d.x} ${d.y}) scale(${d.s}) translate(-50 -50)`);
-      el?.setAttribute("opacity", d.o.toFixed(3));
-    });
-    bang.current?.setAttribute("opacity", p.bang.o.toFixed(3));
-    bang.current?.setAttribute("transform", `rotate(${p.bang.rot.toFixed(2)} 50 17.6)`);
-  };
-
-  // A new mood blends in from wherever the bot is now.
+  // At rest the eyes wander now and then: calm, slightly curious.
+  const [drift, setDrift] = useState({ x: 0, y: 0 });
+  const steered = useRef(false);
+  steered.current = !!lookAt;
   useEffect(() => {
-    const s = state.current;
-    if (s.mood === mood && s.since) return;
-    s.from = s.last;
-    s.mood = mood;
-    s.since = performance.now();
+    if (mood !== "idle") return;
+    const id = setInterval(() => {
+      if (steered.current) return;
+      const r = Math.random();
+      setDrift(r < 0.45 ? { x: 0, y: 0 } : { x: (Math.random() - 0.5) * 1.6, y: (Math.random() - 0.5) * 0.8 });
+    }, 2800 + Math.random() * 2400);
+    return () => clearInterval(id);
   }, [mood]);
 
-  useEffect(() => {
-    const s = state.current;
-    if (!s.since) s.since = performance.now();
-    const tick = (now: number) => {
-      const el = (now - s.since) / 1000;
-      let p = poseAt(s.rig, s.mood, el, s.gaze);
-      if (s.from && el < BLEND) p = blend(s.from, p, el / BLEND);
-      s.last = p;
-      draw(p);
-    };
-    if (reducedMotion()) {
-      tick(s.since + 1200);
-      return;
-    }
-    // Only animate while on screen.
-    let off: (() => void) | null = null;
-    const io = new IntersectionObserver(([e]) => {
-      if (e.isIntersecting && !off) off = subscribe(tick);
-      else if (!e.isIntersecting && off) { off(); off = null; }
-    });
-    if (svg.current) io.observe(svg.current);
-    tick(performance.now());
-    return () => { io.disconnect(); off?.(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mood]);
+  const gaze = lookAt ? { x: clamp(lookAt.x), y: clamp(lookAt.y) } : drift;
+  const gx = gaze.x * 2.4;
+  const gy = gaze.y * 1.6;
+  // The face turns with the gaze: depth by parallax.
+  const px = gaze.x * 3;
+  const py = gaze.y * 2;
+
+  const [fx, fy] = body.face;
+  const s = body.eyeScale;
+  const [ew, eh] = eyeSizes[t.eyes];
+  const w = ew * s;
+  const h = eh * s;
+  const gap = 12 * s;
+  const dark = t.hue === "ink";
+  const id = (k: string) => `${k}${uid}`;
+  const url = (k: string) => `url(#${id(k)})`;
+  const lit = mix(color.body, "#ffffff", dark ? 0.1 : 0.2);
+  const shade = mix(color.body, "#000000", dark ? 0.2 : 0.1);
 
   return (
     <svg
-      ref={svg}
-      viewBox="-7 -7 114 114"
+      viewBox="-3 -3 106 106"
       width={size}
       height={size}
       className={`gbot ${className ?? ""}`}
       data-mood={mood}
+      data-small={size < 48 ? "" : undefined}
       style={style}
       role="img"
       aria-label={title ?? "bot"}
     >
       <defs>
-        <mask id={mask} maskUnits="userSpaceOnUse" x="-200" y="-200" width="500" height="500">
-          <rect x="-200" y="-200" width="500" height="500" fill="#fff" />
-          <rect ref={eyes[0]} fill="#000" />
-          <rect ref={eyes[1]} fill="#000" />
+        {/* Light from above, easing into shade below. */}
+        <radialGradient id={id("body")} cx="0.5" cy="0.12" r="0.95">
+          <stop offset="0" stopColor={lit} />
+          <stop offset="0.55" stopColor={color.body} />
+          <stop offset="1" stopColor={shade} />
+        </radialGradient>
+        <radialGradient id={id("sheen")} cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stopColor="#fff" stopOpacity={dark ? 0.12 : 0.28} />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </radialGradient>
+        {/* Soft inner edges: a lit rim on top, a shaded one below. */}
+        <filter id={id("form")} x="-10%" y="-10%" width="120%" height="120%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="blur" />
+          <feOffset in="blur" dy="-3.5" result="up" />
+          <feComposite in="SourceAlpha" in2="up" operator="out" result="bottomEdge" />
+          <feFlood floodColor="#000" floodOpacity={dark ? 0.35 : 0.16} />
+          <feComposite in2="bottomEdge" operator="in" result="shade" />
+          <feOffset in="blur" dy="2.5" result="down" />
+          <feComposite in="SourceAlpha" in2="down" operator="out" result="topEdge" />
+          <feFlood floodColor="#fff" floodOpacity={dark ? 0.14 : 0.3} />
+          <feComposite in2="topEdge" operator="in" result="light" />
+          <feMerge>
+            <feMergeNode in="SourceGraphic" />
+            <feMergeNode in="shade" />
+            <feMergeNode in="light" />
+          </feMerge>
+        </filter>
+        <radialGradient id={id("ground")}>
+          <stop offset="0" stopColor="#000" stopOpacity="0.2" />
+          <stop offset="0.6" stopColor="#000" stopOpacity="0.07" />
+          <stop offset="1" stopColor="#000" stopOpacity="0" />
+        </radialGradient>
+        <clipPath id={id("clip")}><path d={body.d} /></clipPath>
+        <mask id={id("eyes")} maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140">
+          <rect x="-20" y="-20" width="140" height="140" fill="#fff" />
+          <g className="gbot-face" style={{ transform: `translate(${px}px, ${py}px)` }}>
+            <g className={`gbot-eyes${blink ? " is-blink" : ""}`}>
+              {([-1, 1] as const).map((side) => {
+                const cx = fx + side * gap;
+                const p = pose(mood, side, gx, gy);
+                return (
+                  <g key={side}>
+                    <rect
+                        className="gbot-eye"
+                        x={cx - w / 2}
+                        y={fy - h / 2}
+                        width={w}
+                        height={h}
+                        rx={Math.min(w, h) / 2}
+                        fill="#000"
+                        style={{
+                          transform: `translate(${p.tx}px, ${p.ty}px) rotate(${p.rot}deg) scale(${p.sx}, ${p.sy})`,
+                          opacity: happy ? 0 : 1,
+                        }}
+                      />
+                    <path
+                      className="gbot-eye"
+                      d={`M${cx - 7 * s} ${fy + 3}Q${cx} ${fy - 7 * s} ${cx + 7 * s} ${fy + 3}`}
+                      fill="none"
+                      stroke="#000"
+                      strokeWidth={6 * s}
+                      strokeLinecap="round"
+                      style={{ opacity: happy ? 1 : 0 }}
+                    />
+                  </g>
+                );
+              })}
+            </g>
+          </g>
         </mask>
       </defs>
-      <g ref={dots[0]} opacity="0"><path d={r.body.d} fill={color} /></g>
-      <g ref={dots[1]} opacity="0"><path d={r.body.d} fill={color} /></g>
-      <rect ref={bang} x="43.5" y="17.6" width="13" height="42" rx="6.5" fill={color} opacity="0" />
-      <g ref={head}>
-        <path d={r.body.d} fill={color} mask={`url(#${mask})`} />
+
+      <ellipse className="gbot-shadow" cx="50" cy="95.5" rx="27" ry="3.4" fill={url("ground")} />
+
+      <g className="gbot-body" style={{ "--tilt": `${gaze.x * 3}deg` } as CSSProperties}>
+       <g mask={url("eyes")}>
+        <path d={body.d} fill={url("body")} filter={url("form")} />
+        <g clipPath={url("clip")}>
+          <ellipse cx={42 - px * 0.3} cy={24 - py * 0.3} rx="28" ry="16" fill={url("sheen")} />
+        </g>
+       </g>
       </g>
-      {live && <circle className="gbot-live" cx="88" cy="88" r="9" fill="#8B5CF6" stroke="var(--bg, #fff)" strokeWidth="4" />}
+      {live && <circle className="gbot-live" cx="84" cy="84" r="7.5" fill="#8B5CF6" stroke="var(--bg, #fff)" strokeWidth="3" />}
     </svg>
   );
 }

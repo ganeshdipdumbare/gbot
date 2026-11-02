@@ -3,9 +3,8 @@ import { hues, type Hue } from "@gbot/ui-tokens";
 // A gbot's look is three discrete traits picked from a seed: every bot is
 // recognizable, and all of them read as one family.
 
-export const shapes = ["circle", "blob", "squircle", "pill", "triangle", "hexagon", "cloud", "drop"] as const;
-// Where the two eyes sit on the head.
-export const eyeStyles = ["up", "side", "center"] as const;
+export const shapes = ["circle", "square", "triangle", "hexagon", "cloud", "pill", "arch", "diamond"] as const;
+export const eyeStyles = ["dot", "pill", "wide"] as const;
 export const hueNames = Object.keys(hues) as Hue[];
 
 export type Shape = (typeof shapes)[number];
@@ -45,24 +44,31 @@ export function rng(seed: string) {
 
 const pick = <T,>(r: () => number, list: readonly T[]) => list[Math.floor(r() * list.length)];
 
-// Looks saved before the Grok-style heads map onto the closest new trait.
-const oldShapes: Record<string, Shape> = { square: "squircle", arch: "squircle", diamond: "drop" };
-const oldHues: Record<string, Hue> = { cobalt: "blue", coral: "orange", mint: "teal", sun: "amber", grape: "purple", bubblegum: "pink", sky: "blue", cream: "brown", ink: "red" };
-
 export function traitsFromSeed(seed: string): Traits {
   const r = rng(seed);
   return { shape: pick(r, shapes), hue: pick(r, hueNames), eyes: pick(r, eyeStyles) };
 }
 
-// Unknown values (including looks saved by older versions) fall back to
-// the seed, so every stored bot still renders.
+// Looks saved by other character versions map onto the nearest trait.
+const otherShapes: Record<string, Shape> = {
+  blob: "circle", squircle: "square", drop: "diamond",
+  mochi: "circle", bun: "arch", bean: "pill", ghost: "cloud",
+};
+const otherHues: Record<string, Hue> = {
+  blue: "cobalt", orange: "coral", teal: "mint", red: "coral", pink: "bubblegum", purple: "grape", amber: "sun", brown: "cream",
+  peach: "coral", lilac: "grape", butter: "sun", rose: "bubblegum",
+};
+const otherEyes: Record<string, EyeStyle> = { round: "dot", tall: "pill", sparkle: "dot" };
+
+// Unknown values fall back to the seed, so every stored bot still renders.
 export function resolveLook(look: Look | undefined, fallbackSeed: string): Traits {
   const t = traitsFromSeed(look?.seed || fallbackSeed);
-  const shape = look?.shape && (oldShapes[look.shape] ?? look.shape);
-  const hue = look?.hue && (oldHues[look.hue] ?? look.hue);
+  const shape = look?.shape && (otherShapes[look.shape] ?? look.shape);
+  const hue = look?.hue && (otherHues[look.hue] ?? look.hue);
+  const eyes = look?.eyes && (otherEyes[look.eyes] ?? look.eyes);
   if (shape && shapes.includes(shape)) t.shape = shape;
   if (hue && hue in hues) t.hue = hue;
-  if (look?.eyes && eyeStyles.includes(look.eyes)) t.eyes = look.eyes;
+  if (eyes && eyeStyles.includes(eyes)) t.eyes = eyes;
   return t;
 }
 

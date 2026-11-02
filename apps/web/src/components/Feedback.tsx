@@ -41,7 +41,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
     return (
       <div className="h-full grid place-items-center p-6 text-center">
         <div className="max-w-[360px]">
-          <Gbot seed="crash" look={{ shape: "squircle", hue: "red", eyes: "center" }} mood="blocked" size={56} className="mx-auto" />
+          <Gbot seed="crash" look={{ shape: "square", hue: "coral", eyes: "dot" }} mood="blocked" size={56} className="mx-auto" />
           <h1 className="text-[15px] font-semibold mt-4">Something broke on this screen</h1>
           <p className="text-[13px] text-ink-2 mt-1">Your bots and chats are safe on the server. Reloading usually fixes it.</p>
           <Button className="mt-4" onClick={() => location.reload()}>Reload</Button>

@@ -28,7 +28,7 @@ export default function Gallery() {
       <section className="flex flex-wrap gap-5 items-end">
         {moods.map((mood) => (
           <div key={mood} className="text-center text-xs text-ink-2">
-            <Gbot look={{ shape: "circle", hue: "blue", eyes: "up" }} seed="m" size={96} mood={mood} live={mood === "working"} />
+            <Gbot look={{ shape: "circle", hue: "cobalt", eyes: "pill" }} seed="m" size={96} mood={mood} live={mood === "working"} />
             {mood}
           </div>
         ))}
@@ -51,7 +51,7 @@ function Lifecycle() {
   return (
     <section className="rounded-2xl bg-surface p-6 max-w-[560px]">
       <div className="grid place-items-center h-44">
-        <Gbot look={{ shape: "circle", hue: "blue", eyes: "up" }} seed="life" size={128} mood={mood} />
+        <Gbot look={{ shape: "circle", hue: "cobalt", eyes: "pill" }} seed="life" size={128} mood={mood} />
       </div>
       <div className="flex gap-1 mt-4" role="tablist">
         {states.map((m) => (

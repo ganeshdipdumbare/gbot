@@ -49,7 +49,7 @@ function Main() {
   if (booting) {
     return (
       <div className="h-full grid place-items-center fade-in">
-        <Gbot seed="boot" look={{ shape: "circle", hue: "blue", eyes: "up" }} mood="thinking" size={40} />
+        <Gbot seed="boot" look={{ shape: "circle", hue: "grape", eyes: "pill" }} mood="thinking" size={40} />
       </div>
     );
   }
@@ -57,7 +57,7 @@ function Main() {
     return (
       <div className="h-full grid place-items-center p-6 text-center">
         <div>
-          <Gbot seed="offline" look={{ shape: "squircle", hue: "teal", eyes: "side" }} mood="blocked" size={56} className="mx-auto" />
+          <Gbot seed="offline" look={{ shape: "square", hue: "sky", eyes: "dot" }} mood="blocked" size={56} className="mx-auto" />
           <h1 className="text-[15px] font-semibold mt-4">Can't reach the gbot server</h1>
           <p className="text-[13px] text-ink-2 mt-1">Start it with <code className="bg-surface-2 px-1.5 py-0.5 rounded-md font-mono text-[12px]">gbot serve</code>, then try again.</p>
           <button onClick={() => location.reload()} className="mt-4 h-8 px-3.5 rounded-full bg-emphasis text-on-emphasis text-[13px] font-medium cursor-pointer">Try again</button>

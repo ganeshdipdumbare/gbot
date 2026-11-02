@@ -38,9 +38,9 @@ export default function Login() {
     <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, justifyContent: "center", padding: 24, gap: 12 }}>
         <View style={{ flexDirection: "row", justifyContent: "center", alignItems: "flex-end", gap: 10, marginBottom: 12 }}>
-          <Gbot seed="a" look={{ shape: "triangle", hue: "pink", eyes: "up" }} size={56} />
-          <Gbot seed="b" look={{ shape: "circle", hue: "blue", eyes: "up" }} size={84} mood={busy ? "thinking" : "idle"} />
-          <Gbot seed="c" look={{ shape: "hexagon", hue: "purple", eyes: "side" }} size={56} />
+          <Gbot seed="a" look={{ shape: "triangle", hue: "coral", eyes: "dot" }} size={56} />
+          <Gbot seed="b" look={{ shape: "circle", hue: "grape", eyes: "pill" }} size={84} mood={busy ? "thinking" : "idle"} />
+          <Gbot seed="c" look={{ shape: "hexagon", hue: "cobalt", eyes: "pill" }} size={56} />
         </View>
         <Text style={{ color: t.ink, fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.4 }}>Welcome back</Text>
         <Text style={{ color: t.ink2, fontSize: 15, textAlign: "center", marginBottom: 8 }}>Sign in to the gbot server you run.</Text>

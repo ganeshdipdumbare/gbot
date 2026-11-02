@@ -17,10 +17,9 @@ describe("traits", () => {
     expect(seen.eyes.size).toBe(eyeStyles.length);
   });
   it("lets explicit traits win and ignores junk and old looks", () => {
-    const t = resolveLook({ seed: "x", shape: "hexagon", hue: "teal", eyes: "sparkle" as never }, "y");
+    const t = resolveLook({ seed: "x", shape: "hexagon", hue: "mint", eyes: "sparkle" as never }, "y");
     expect(t.shape).toBe("hexagon");
-    expect(t.hue).toBe("teal");
-    expect(resolveLook({ shape: "square" as never, hue: "cobalt" as never }, "q")).toMatchObject({ shape: "squircle", hue: "blue" });
+    expect(t.hue).toBe("mint");
     expect(eyeStyles).toContain(t.eyes);
     expect(shapes).toContain(resolveLook({ shape: "mochi" as never }, "z").shape);
   });

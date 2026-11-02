@@ -4,7 +4,7 @@ import { hues } from "@gbot/ui-tokens";
 import { bouncy, Icon } from "./ui";
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-const eyeLabels: Record<string, string> = { up: "Up", side: "Side", center: "Center" };
+const eyeLabels: Record<string, string> = { dot: "Dots", pill: "Tall", wide: "Wide" };
 
 export function LookPicker({ look, seed, onChange }: { look: Look; seed: string; onChange: (l: Look) => void }) {
   const t = resolveLook(look, seed);

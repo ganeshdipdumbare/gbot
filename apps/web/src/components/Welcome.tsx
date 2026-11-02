@@ -6,9 +6,9 @@ import { useGaze } from "../lib/hooks";
 import { Button, Input, Label } from "./ui";
 
 const crew: { look: Look; seed: string }[] = [
-  { look: { shape: "triangle", hue: "pink", eyes: "up" }, seed: "a" },
-  { look: { shape: "circle", hue: "blue", eyes: "up" }, seed: "b" },
-  { look: { shape: "hexagon", hue: "purple", eyes: "side" }, seed: "c" },
+  { look: { shape: "triangle", hue: "coral", eyes: "dot" }, seed: "a" },
+  { look: { shape: "circle", hue: "grape", eyes: "pill" }, seed: "b" },
+  { look: { shape: "hexagon", hue: "cobalt", eyes: "pill" }, seed: "c" },
 ];
 
 export function Welcome() {

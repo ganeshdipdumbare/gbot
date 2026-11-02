@@ -1,6 +1,51 @@
-/* gbot motion runs in the rig (motion.ts), frame by frame; CSS only
-   handles the live dot. */
+/* gbot motion. The avatar carries the whole lifecycle: calm at rest,
+   a nod when work arrives, a steady rhythm while working, a lean when
+   it needs you, a shake when stuck, a hop when done. Transform and
+   opacity only. */
 .gbot { display: block; overflow: visible; }
-.gbot-live { transform-box: fill-box; transform-origin: center; animation: gbot-pulse 1.8s ease-in-out infinite; }
+.gbot * { transform-box: fill-box; }
+.gbot-body { transform-origin: 50% 100%; transform: rotate(var(--tilt, 0deg)); transition: transform .5s cubic-bezier(.3,1.3,.5,1); }
+.gbot-eyes { transform-origin: center; transition: transform .08s ease-in; }
+.gbot-eyes.is-blink { transform: scaleY(.1); }
+.gbot-eye { transform-origin: center; transition: transform .32s cubic-bezier(.3,1.35,.5,1), opacity .18s ease; }
+.gbot-face { transition: transform .45s cubic-bezier(.3,1.3,.5,1); }
+
+.gbot[data-mood="idle"] .gbot-body { animation: gbot-breathe 4.2s ease-in-out infinite; }
+.gbot[data-mood="thinking"] .gbot-body { animation: gbot-ponder 3s ease-in-out infinite; }
+.gbot[data-mood="thinking"] .gbot-eyes { animation: gbot-scan 3s ease-in-out infinite; }
+.gbot[data-mood="working"] .gbot-body { animation: gbot-work .7s cubic-bezier(.45,0,.55,1) infinite; }
+.gbot[data-mood="waiting"] .gbot-body { animation: gbot-lean 2.4s ease-in-out infinite; }
+.gbot[data-mood="blocked"] .gbot-body { animation: gbot-shake 2.6s ease-in-out infinite; }
+.gbot[data-mood="done"] .gbot-body, .gbot[data-mood="happy"] .gbot-body { animation: gbot-hop .7s cubic-bezier(.3,1.4,.5,1) 1; }
+.gbot[data-mood="sleepy"] .gbot-body { animation: gbot-breathe 6s ease-in-out infinite; }
+.gbot-live { transform-origin: center; animation: gbot-pulse 1.8s ease-in-out infinite; }
+
+/* Roster-size bots hold still at rest; only moods move. */
+.gbot[data-small][data-mood="idle"] .gbot-body,
+.gbot[data-small][data-mood="sleepy"] .gbot-body { animation: none; }
+
+@keyframes gbot-breathe { 0%,100% { transform: rotate(var(--tilt,0deg)) scale(1,1) } 50% { transform: rotate(var(--tilt,0deg)) scale(1.012,.985) } }
+@keyframes gbot-ponder { 0%,100% { transform: rotate(-4deg) } 50% { transform: rotate(4deg) } }
+@keyframes gbot-scan { 0%,100% { transform: translateX(-2px) } 50% { transform: translateX(2px) } }
+@keyframes gbot-work {
+  0%,100% { transform: translateY(0) scale(1.03,.97) }
+  45% { transform: translateY(-5%) scale(.98,1.02) }
+}
+@keyframes gbot-lean { 0%,100% { transform: rotate(-7deg) } 50% { transform: rotate(-4deg) } }
+@keyframes gbot-shake {
+  0%,70%,100% { transform: rotate(0) }
+  74% { transform: rotate(-5deg) } 78% { transform: rotate(5deg) }
+  82% { transform: rotate(-4deg) } 86% { transform: rotate(3deg) } 90% { transform: rotate(0) }
+}
+@keyframes gbot-hop {
+  0% { transform: translateY(0) scale(1,1) }
+  20% { transform: translateY(0) scale(1.08,.9) }
+  50% { transform: translateY(-14%) scale(.95,1.06) }
+  80% { transform: translateY(0) scale(1.04,.96) }
+  100% { transform: translateY(0) scale(1,1) }
+}
 @keyframes gbot-pulse { 0%,100% { transform: scale(1) } 50% { transform: scale(.82) } }
-@media (prefers-reduced-motion: reduce) { .gbot-live { animation: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .gbot *, .gbot-body { animation: none !important; transition: none !important; }
+}

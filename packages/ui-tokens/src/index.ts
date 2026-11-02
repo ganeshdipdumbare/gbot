@@ -31,17 +31,17 @@ export const dark = {
   bubbleBot: "rgba(255,255,255,0.06)",
 };
 
-// Character colors: one saturated fill per bot. Eyes are cut out of the
-// head, so they take whatever the bot sits on.
+// Character colors: one bold fill and an eye colour that reads on it.
 export const hues = {
-  blue: { body: "#1084FE" },
-  orange: { body: "#FF6700" },
-  teal: { body: "#00BCA6" },
-  red: { body: "#FF263C" },
-  pink: { body: "#FF309B" },
-  purple: { body: "#9159FE" },
-  amber: { body: "#FF9800" },
-  brown: { body: "#97683D" },
+  cobalt: { body: "#3B6CF6", eye: "#16131C" },
+  coral: { body: "#FF6A4D", eye: "#16131C" },
+  sun: { body: "#FFC233", eye: "#16131C" },
+  mint: { body: "#2EC78E", eye: "#16131C" },
+  grape: { body: "#8B5CF6", eye: "#16131C" },
+  bubblegum: { body: "#FF66B3", eye: "#16131C" },
+  sky: { body: "#3DBEF5", eye: "#16131C" },
+  cream: { body: "#F1E7D6", eye: "#16131C" },
+  ink: { body: "#26222E", eye: "#FFFFFF" },
 } as const;
 
 export type Hue = keyof typeof hues;
