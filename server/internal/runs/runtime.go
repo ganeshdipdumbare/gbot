@@ -193,6 +193,42 @@ func (r *Runtime) setPresence(c convo, b *store.Bot, p Presence) {
 	}
 	r.mu.Unlock()
 	r.hub.Publish(c.SpaceID, Event{Type: "presence", BotID: b.ID, Data: p})
+	if p.Live {
+		r.recheckLive(c.SpaceID, b.ID)
+	}
+}
+
+// RefreshLive brings a bot's Live flag up to date with its computer. It is
+// called when the computer starts, stops or changes hands, and again once
+// the "used in the last minute" window may have passed.
+func (r *Runtime) RefreshLive(spaceID, botID string) {
+	r.mu.Lock()
+	cur, ok := r.presence[botID]
+	live := r.computer != nil && r.computer.Active(botID)
+	if cur.Live == live {
+		r.mu.Unlock()
+		return
+	}
+	if !ok {
+		cur.State = "idle"
+	}
+	cur.Live = live
+	if cur.State == "idle" && !live {
+		delete(r.presence, botID)
+	} else {
+		r.presence[botID] = cur
+	}
+	r.mu.Unlock()
+	r.hub.Publish(spaceID, Event{Type: "presence", BotID: botID, Data: cur})
+	if live {
+		r.recheckLive(spaceID, botID)
+	}
+}
+
+// recheckLive looks again just after the computer's activity window ends,
+// since nothing else would clear the flag.
+func (r *Runtime) recheckLive(spaceID, botID string) {
+	time.AfterFunc(time.Minute+time.Second, func() { r.RefreshLive(spaceID, botID) })
 }
 
 func (r *Runtime) setPresenceOnce(c convo, b *store.Bot, p Presence) {

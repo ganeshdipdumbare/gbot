@@ -93,6 +93,7 @@ func run(cmd string, log *slog.Logger) error {
 		comp.OnChange = func(botID string, cs computer.Status) {
 			if b, err := st.GetBotAnySpace(context.Background(), botID); err == nil {
 				hub.Publish(b.SpaceID, runs.Event{Type: "computer", BotID: botID, Data: cs})
+				rt.RefreshLive(b.SpaceID, botID)
 			}
 		}
 	}
