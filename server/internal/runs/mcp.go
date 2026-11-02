@@ -19,6 +19,7 @@ import (
 type mcpState struct {
 	owner  string
 	prefix string
+	name   string
 	status string // connected | error message
 }
 
@@ -77,7 +78,7 @@ func (r *Runtime) SyncMCP(ctx context.Context, sealer *crypto.Sealer) {
 			_ = eng.Unload("mcp_" + p)
 		}
 		r.mu.Lock()
-		r.mcp[id] = mcpState{owner: s.UserID, prefix: p, status: status}
+		r.mcp[id] = mcpState{owner: s.UserID, prefix: p, name: s.Name, status: status}
 		r.mu.Unlock()
 	}
 }
@@ -124,4 +125,16 @@ func (r *Runtime) mcpPrefixes(owner string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// mcpName is the name the owner gave the server behind a tool prefix.
+func (r *Runtime) mcpName(prefix string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, st := range r.mcp {
+		if st.prefix == prefix {
+			return st.name
+		}
+	}
+	return ""
 }

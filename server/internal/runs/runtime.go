@@ -427,7 +427,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 				r.setPresence(c, b, Presence{State: "working", Detail: toolLabel(e.ToolCall.Name)})
 			}
 		case "tool_result":
-			if st, ok := describeStep(e.ToolCall, e.Result); ok {
+			if st, ok := describeStep(e.ToolCall, e.Result, r.mcpName); ok {
 				steps = append(steps, st)
 			}
 		}
