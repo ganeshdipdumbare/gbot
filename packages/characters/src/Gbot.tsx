@@ -46,8 +46,8 @@ const clamp = (v: number) => Math.max(-1, Math.min(1, v));
 // Geometric bots with soft, quiet volume: a gentle light from above, the
 // form easing into shade below, soft inner edges and a diffuse highlight,
 // resting on a faint contact shadow. The eyes stay flat, like Grok Bot's:
-// upright pills cut clean through the head. When a bot looks somewhere
-// its face slides that way while the light stays put.
+// simple upright pills in a light colour. When a bot looks somewhere its
+// face slides that way while the light stays put.
 export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, live, className, style, title }: GbotProps) {
   const t = resolveLook(look, seed);
   const color = hues[t.hue];
@@ -83,11 +83,10 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
   const w = ew * s;
   const h = eh * s;
   const gap = 12 * s;
-  const dark = t.hue === "ink";
   const id = (k: string) => `${k}${uid}`;
   const url = (k: string) => `url(#${id(k)})`;
-  const lit = mix(color.body, "#ffffff", dark ? 0.1 : 0.2);
-  const shade = mix(color.body, "#000000", dark ? 0.2 : 0.1);
+  const lit = mix(color.body, "#ffffff", 0.2);
+  const shade = mix(color.body, "#000000", 0.1);
 
   return (
     <svg
@@ -109,7 +108,7 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
           <stop offset="1" stopColor={shade} />
         </radialGradient>
         <radialGradient id={id("sheen")} cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0" stopColor="#fff" stopOpacity={dark ? 0.12 : 0.28} />
+          <stop offset="0" stopColor="#fff" stopOpacity={0.28} />
           <stop offset="1" stopColor="#fff" stopOpacity="0" />
         </radialGradient>
         {/* Soft inner edges: a lit rim on top, a shaded one below. */}
@@ -117,11 +116,11 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
           <feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="blur" />
           <feOffset in="blur" dy="-3.5" result="up" />
           <feComposite in="SourceAlpha" in2="up" operator="out" result="bottomEdge" />
-          <feFlood floodColor="#000" floodOpacity={dark ? 0.35 : 0.16} />
+          <feFlood floodColor="#000" floodOpacity={0.16} />
           <feComposite in2="bottomEdge" operator="in" result="shade" />
           <feOffset in="blur" dy="2.5" result="down" />
           <feComposite in="SourceAlpha" in2="down" operator="out" result="topEdge" />
-          <feFlood floodColor="#fff" floodOpacity={dark ? 0.14 : 0.3} />
+          <feFlood floodColor="#fff" floodOpacity={0.3} />
           <feComposite in2="topEdge" operator="in" result="light" />
           <feMerge>
             <feMergeNode in="SourceGraphic" />
@@ -135,54 +134,49 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
           <stop offset="1" stopColor="#000" stopOpacity="0" />
         </radialGradient>
         <clipPath id={id("clip")}><path d={body.d} /></clipPath>
-        <mask id={id("eyes")} maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140">
-          <rect x="-20" y="-20" width="140" height="140" fill="#fff" />
-          <g className="gbot-face" style={{ transform: `translate(${px}px, ${py}px)` }}>
-            <g className={`gbot-eyes${blink ? " is-blink" : ""}`}>
-              {([-1, 1] as const).map((side) => {
-                const cx = fx + side * gap;
-                const p = pose(mood, side, gx, gy);
-                return (
-                  <g key={side}>
-                    <rect
-                        className="gbot-eye"
-                        x={cx - w / 2}
-                        y={fy - h / 2}
-                        width={w}
-                        height={h}
-                        rx={Math.min(w, h) / 2}
-                        fill="#000"
-                        style={{
-                          transform: `translate(${p.tx}px, ${p.ty}px) rotate(${p.rot}deg) scale(${p.sx}, ${p.sy})`,
-                          opacity: happy ? 0 : 1,
-                        }}
-                      />
-                    <path
-                      className="gbot-eye"
-                      d={`M${cx - 7 * s} ${fy + 3}Q${cx} ${fy - 7 * s} ${cx + 7 * s} ${fy + 3}`}
-                      fill="none"
-                      stroke="#000"
-                      strokeWidth={6 * s}
-                      strokeLinecap="round"
-                      style={{ opacity: happy ? 1 : 0 }}
-                    />
-                  </g>
-                );
-              })}
-            </g>
-          </g>
-        </mask>
       </defs>
 
       <ellipse className="gbot-shadow" cx="50" cy="95.5" rx="27" ry="3.4" fill={url("ground")} />
 
       <g className="gbot-body" style={{ "--tilt": `${gaze.x * 3}deg` } as CSSProperties}>
-       <g mask={url("eyes")}>
         <path d={body.d} fill={url("body")} filter={url("form")} />
         <g clipPath={url("clip")}>
           <ellipse cx={42 - px * 0.3} cy={24 - py * 0.3} rx="28" ry="16" fill={url("sheen")} />
         </g>
-       </g>
+        <g className="gbot-face" style={{ transform: `translate(${px}px, ${py}px)` }}>
+          <g className={`gbot-eyes${blink ? " is-blink" : ""}`}>
+            {([-1, 1] as const).map((side) => {
+              const cx = fx + side * gap;
+              const p = pose(mood, side, gx, gy);
+              return (
+                <g key={side}>
+                  <rect
+                    className="gbot-eye"
+                    x={cx - w / 2}
+                    y={fy - h / 2}
+                    width={w}
+                    height={h}
+                    rx={Math.min(w, h) / 2}
+                    fill={color.eye}
+                    style={{
+                      transform: `translate(${p.tx}px, ${p.ty}px) rotate(${p.rot}deg) scale(${p.sx}, ${p.sy})`,
+                      opacity: happy ? 0 : 1,
+                    }}
+                  />
+                  <path
+                    className="gbot-eye"
+                    d={`M${cx - 7 * s} ${fy + 3}Q${cx} ${fy - 7 * s} ${cx + 7 * s} ${fy + 3}`}
+                    fill="none"
+                    stroke={color.eye}
+                    strokeWidth={6 * s}
+                    strokeLinecap="round"
+                    style={{ opacity: happy ? 1 : 0 }}
+                  />
+                </g>
+              );
+            })}
+          </g>
+        </g>
       </g>
       {live && <circle className="gbot-live" cx="84" cy="84" r="7.5" fill="#8B5CF6" stroke="var(--bg, #fff)" strokeWidth="3" />}
     </svg>

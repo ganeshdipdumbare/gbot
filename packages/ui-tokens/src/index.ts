@@ -31,7 +31,7 @@ export const dark = {
   bubbleBot: "rgba(255,255,255,0.06)",
 };
 
-// Character colors: one bold fill and an eye colour that reads on it.
+// Character colors: one bold fill; eyes are always near-black.
 export const hues = {
   cobalt: { body: "#3B6CF6", eye: "#16131C" },
   coral: { body: "#FF6A4D", eye: "#16131C" },
@@ -41,7 +41,6 @@ export const hues = {
   bubblegum: { body: "#FF66B3", eye: "#16131C" },
   sky: { body: "#3DBEF5", eye: "#16131C" },
   cream: { body: "#F1E7D6", eye: "#16131C" },
-  ink: { body: "#26222E", eye: "#FFFFFF" },
 } as const;
 
 export type Hue = keyof typeof hues;

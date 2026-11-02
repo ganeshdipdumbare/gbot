@@ -57,6 +57,7 @@ const otherShapes: Record<string, Shape> = {
 const otherHues: Record<string, Hue> = {
   blue: "cobalt", orange: "coral", teal: "mint", red: "coral", pink: "bubblegum", purple: "grape", amber: "sun", brown: "cream",
   peach: "coral", lilac: "grape", butter: "sun", rose: "bubblegum",
+  ink: "grape",
 };
 const otherEyes: Record<string, EyeStyle> = { round: "dot", tall: "pill", sparkle: "dot" };
 
