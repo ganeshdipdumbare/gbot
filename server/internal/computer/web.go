@@ -127,6 +127,10 @@ func (m *Manager) WebReload(ctx context.Context, o Owner) (string, error) {
 	return m.WebAction(ctx, o, "Reloading the page", webCmd("reload")...)
 }
 
+func (m *Manager) WebCookies(ctx context.Context, o Owner) (string, error) {
+	return m.WebAction(ctx, o, "Handling cookies", webCmd("cookies")...)
+}
+
 func (m *Manager) WebHover(ctx context.Context, o Owner, ref int) (string, error) {
 	return m.WebAction(ctx, o, "Hovering ["+strconv.Itoa(ref)+"]", webCmd("hover", strconv.Itoa(ref))...)
 }

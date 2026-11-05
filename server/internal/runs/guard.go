@@ -110,6 +110,8 @@ func describeCall(name string, t *sdk.Tool, args map[string]any) string {
 		return "Go forward a page in its browser"
 	case "browser_reload":
 		return "Reload the page in its browser"
+	case "browser_cookies":
+		return "Dismiss a cookie prompt on a web page"
 	case "browser_click":
 		return fmt.Sprintf("Click [%v] on a web page", args["ref"])
 	case "browser_type":
