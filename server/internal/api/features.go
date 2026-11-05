@@ -34,6 +34,13 @@ func (s *Server) routesV2(mux *http.ServeMux) {
 	mux.Handle("POST /api/bots/{id}/routines/{rid}/run", s.authed(s.runRoutine))
 	mux.HandleFunc("POST /hooks/{rid}", s.webhook)
 
+	mux.Handle("GET /api/providers", s.authed(s.listProviders))
+	mux.Handle("POST /api/providers", s.authed(s.createProvider))
+	mux.Handle("POST /api/providers/discover", s.authed(s.discoverProvider))
+	mux.Handle("PATCH /api/providers/{id}", s.authed(s.updateProvider))
+	mux.Handle("DELETE /api/providers/{id}", s.authed(s.deleteProvider))
+	mux.Handle("POST /api/providers/{id}/refresh", s.authed(s.refreshProvider))
+
 	mux.Handle("GET /api/mcp", s.authed(s.listMCP))
 	mux.Handle("POST /api/mcp", s.authed(s.createMCP))
 	mux.Handle("PATCH /api/mcp/{id}", s.authed(s.toggleMCP))

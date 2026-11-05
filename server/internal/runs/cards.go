@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ganeshdipdumbare/eipagent"
-	"github.com/ganeshdipdumbare/eipagent/sdk"
+	"github.com/ganeshdipdumbare/kiln"
+	"github.com/ganeshdipdumbare/kiln/sdk"
 
 	"gbot/internal/computer"
 	"gbot/internal/store"
@@ -68,7 +68,7 @@ func (r *Runtime) Answer(ctx context.Context, caller *store.User, card *store.Me
 	status := ""
 	switch {
 	case kind == "approval" && decision == "approve":
-		d, status = eipagent.Approve(id), "approved"
+		d, status = kiln.Approve(id), "approved"
 		if tool, _ := card.Data["tool"].(string); always && tool != "" {
 			_ = r.store.SetToolRule(ctx, caller.ID, tool, "allow")
 		}
@@ -77,14 +77,14 @@ func (r *Runtime) Answer(ctx context.Context, caller *store.User, card *store.Me
 		if text != "" {
 			msg += " They said: " + text
 		}
-		d, status = eipagent.Reject(id, msg), "denied"
+		d, status = kiln.Reject(id, msg), "denied"
 	case kind == "question" && decision == "answer" && text != "":
-		d, status = eipagent.Respond(id, text), "answered"
+		d, status = kiln.Respond(id, text), "answered"
 	case kind == "takeover" && decision == "answer":
 		if text == "" {
 			text = "I'm done. The computer is yours again."
 		}
-		d, status = eipagent.Respond(id, text), "done"
+		d, status = kiln.Respond(id, text), "done"
 		if r.computer != nil {
 			_ = r.computer.TakeControl(computer.Owner{Bot: bot.ID, User: caller.ID}, false)
 		}
@@ -152,9 +152,9 @@ func (r *Runtime) skipPending(ctx context.Context, c convo, pending []sdk.Interr
 	out := make([]sdk.Decision, 0, len(pending))
 	for _, in := range pending {
 		if in.Kind == "approval" {
-			out = append(out, eipagent.Reject(in.ID, "Not approved. The person wrote instead: "+prompt))
+			out = append(out, kiln.Reject(in.ID, "Not approved. The person wrote instead: "+prompt))
 		} else {
-			out = append(out, eipagent.Respond(in.ID, "The person didn't answer that and wrote instead: "+prompt))
+			out = append(out, kiln.Respond(in.ID, "The person didn't answer that and wrote instead: "+prompt))
 		}
 	}
 	return out

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ganeshdipdumbare/eipagent/engine"
-	"github.com/ganeshdipdumbare/eipagent/sdk"
+	"github.com/ganeshdipdumbare/kiln/engine"
+	"github.com/ganeshdipdumbare/kiln/sdk"
 )
 
 // runCtx is what the guard knows about the run in progress. It travels
@@ -102,6 +102,14 @@ func describeCall(name string, t *sdk.Tool, args map[string]any) string {
 		return fmt.Sprintf("Write %v on its computer", args["path"])
 	case "browser_open":
 		return fmt.Sprintf("Open %v in its browser", args["url"])
+	case "browser_navigate":
+		return fmt.Sprintf("Open %v in its browser", args["url"])
+	case "browser_click":
+		return fmt.Sprintf("Click [%v] on a web page", args["ref"])
+	case "browser_type":
+		return fmt.Sprintf("Type into [%v] on a web page", args["ref"])
+	case "browser_press":
+		return fmt.Sprintf("Press %v on a web page", args["key"])
 	case "browser_read":
 		return fmt.Sprintf("Read %v", args["url"])
 	case "routine_create":
@@ -115,67 +123,65 @@ func describeCall(name string, t *sdk.Tool, args map[string]any) string {
 	return "Use " + strings.ReplaceAll(name, "_", " ")
 }
 
-// guardPlugin enforces approvals and scoping on every tool call. It is
+// guardModule enforces approvals and scoping on every tool call. It is
 // compiled into gbot and loaded into the shared agent.
-func guardPlugin() engine.Plugin {
-	return engine.Plugin{Name: "gbot_guard", Apply: func(ctx *sdk.Context) error {
-		ctx.SetPriority(5) // inside policy/audit, outside retries and logging
+var guardModule = engine.Module{Name: "gbot_guard", Apply: func(ctx *sdk.Module) error {
+	ctx.SetPriority(5) // inside policy/audit, outside retries and logging
 
-		// Hide other accounts' MCP tools from the model.
-		ctx.BeforeStep(func(c context.Context, sc *sdk.StepContext) error {
-			rc := runFrom(c)
-			if rc == nil || sc.Request == nil {
-				return nil
-			}
-			kept := sc.Request.Tools[:0]
-			for _, t := range sc.Request.Tools {
-				if srv := metaString(&t, "mcp_server"); srv != "" && !rc.mcpPrefix[srv] {
-					continue
-				}
-				if rc.block[t.Name] {
-					continue
-				}
-				kept = append(kept, t)
-			}
-			sc.Request.Tools = kept
+	// Hide other accounts' MCP tools from the model.
+	ctx.BeforeStep(func(c context.Context, sc *sdk.StepContext) error {
+		rc := runFrom(c)
+		if rc == nil || sc.Request == nil {
 			return nil
-		})
-
-		ctx.WrapTool(func(c context.Context, req *sdk.ToolRequest, next sdk.ToolHandler) (*sdk.ToolResult, error) {
-			rc := runFrom(c)
-			if rc == nil {
-				return next(c, req)
+		}
+		kept := sc.Request.Tools[:0]
+		for _, t := range sc.Request.Tools {
+			if srv := metaString(&t, "mcp_server"); srv != "" && !rc.mcpPrefix[srv] {
+				continue
 			}
-			name := req.Call.Name
-			if srv := metaString(req.Tool, "mcp_server"); srv != "" && !rc.mcpPrefix[srv] {
-				return &sdk.ToolResult{Content: "That tool isn't available here.", IsError: true}, nil
+			if rc.block[t.Name] {
+				continue
 			}
-			if rc.block[name] {
-				return &sdk.ToolResult{Content: "The person blocked this tool. Don't try it again; find another way or explain.", IsError: true}, nil
-			}
-			approved := req.Decision != nil && (req.Decision.Type == "approve" || req.Decision.Type == "edit")
-			if req.Decision == nil {
-				switch name {
-				case "ask_user":
-					q, _ := req.Call.Args["question"].(string)
-					return &sdk.ToolResult{Interrupt: &sdk.Interrupt{ID: newID(), Kind: "question", ToolCall: &req.Call,
-						Message: q, Allowed: []string{"respond"}, Payload: map[string]any{"options": req.Call.Args["options"]}}}, nil
-				case "request_takeover":
-					why, _ := req.Call.Args["reason"].(string)
-					return &sdk.ToolResult{Interrupt: &sdk.Interrupt{ID: newID(), Kind: "takeover", ToolCall: &req.Call,
-						Message: why, Allowed: []string{"respond"}}}, nil
-				}
-			}
-			if !approved && needsApproval(rc, name, req.Tool) {
-				return &sdk.ToolResult{Interrupt: &sdk.Interrupt{ID: newID(), Kind: "approval", ToolCall: &req.Call,
-					Message: describeCall(name, req.Tool, req.Call.Args), Allowed: []string{"approve", "reject"}}}, nil
-			}
-			res, err := next(c, req)
-			if metaBool(req.Tool, "untrusted") || metaString(req.Tool, "mcp_server") != "" {
-				rc.taint()
-			}
-			return res, err
-		})
+			kept = append(kept, t)
+		}
+		sc.Request.Tools = kept
 		return nil
-	}}
-}
+	})
+
+	ctx.WrapTool(func(c context.Context, req *sdk.ToolRequest, next sdk.ToolHandler) (*sdk.ToolResult, error) {
+		rc := runFrom(c)
+		if rc == nil {
+			return next(c, req)
+		}
+		name := req.Call.Name
+		if srv := metaString(req.Tool, "mcp_server"); srv != "" && !rc.mcpPrefix[srv] {
+			return &sdk.ToolResult{Content: "That tool isn't available here.", IsError: true}, nil
+		}
+		if rc.block[name] {
+			return &sdk.ToolResult{Content: "The person blocked this tool. Don't try it again; find another way or explain.", IsError: true}, nil
+		}
+		approved := req.Decision != nil && (req.Decision.Type == "approve" || req.Decision.Type == "edit")
+		if req.Decision == nil {
+			switch name {
+			case "ask_user":
+				q, _ := req.Call.Args["question"].(string)
+				return &sdk.ToolResult{Interrupt: &sdk.Interrupt{ID: newID(), Kind: "question", ToolCall: &req.Call,
+					Message: q, Allowed: []string{"respond"}, Payload: map[string]any{"options": req.Call.Args["options"]}}}, nil
+			case "request_takeover":
+				why, _ := req.Call.Args["reason"].(string)
+				return &sdk.ToolResult{Interrupt: &sdk.Interrupt{ID: newID(), Kind: "takeover", ToolCall: &req.Call,
+					Message: why, Allowed: []string{"respond"}}}, nil
+			}
+		}
+		if !approved && needsApproval(rc, name, req.Tool) {
+			return &sdk.ToolResult{Interrupt: &sdk.Interrupt{ID: newID(), Kind: "approval", ToolCall: &req.Call,
+				Message: describeCall(name, req.Tool, req.Call.Args), Allowed: []string{"approve", "reject"}}}, nil
+		}
+		res, err := next(c, req)
+		if metaBool(req.Tool, "untrusted") || metaString(req.Tool, "mcp_server") != "" {
+			rc.taint()
+		}
+		return res, err
+	})
+	return nil
+}}

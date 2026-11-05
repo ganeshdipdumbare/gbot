@@ -23,11 +23,9 @@ services:
 
   gbot:
     profiles: ["app"]
-    # eipagent is a private module: GH_TOKEN=$(gh auth token) docker compose ... build
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
-      secrets: [gh_token]
     restart: unless-stopped
     depends_on:
       postgres:
@@ -55,10 +53,6 @@ services:
       - "127.0.0.1:11434:11434"
     volumes:
       - ollama:/root/.ollama
-
-secrets:
-  gh_token:
-    environment: GH_TOKEN
 
 volumes:
   pgdata:

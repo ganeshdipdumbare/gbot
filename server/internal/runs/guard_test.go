@@ -3,7 +3,7 @@ package runs
 import (
 	"testing"
 
-	"github.com/ganeshdipdumbare/eipagent/sdk"
+	"github.com/ganeshdipdumbare/kiln/sdk"
 )
 
 func TestNeedsApproval(t *testing.T) {
@@ -30,6 +30,12 @@ func TestNeedsApproval(t *testing.T) {
 		{"auto: reads pass after outside text", rc("auto", true), "x", ro, false},
 		{"auto: routine changes ask after outside text", rc("auto", true), "routine_create", nil, true},
 		{"never: nothing asks", rc("never", true), "x", danger, false},
+		{"browser: snapshots never ask", rc("ask", false), "browser_snapshot", ro, false},
+		{"browser: clicks ask in ask mode", rc("ask", false), "browser_click", write, true},
+		{"browser: clicks ask after page text was read", rc("auto", true), "browser_click", write, true},
+		{"browser: typing asks after page text was read", rc("auto", true), "browser_type", write, true},
+		{"browser: snapshots pass after page text", rc("auto", true), "browser_snapshot", ro, false},
+		{"browser: nothing asks in never mode", rc("never", true), "browser_type", write, false},
 	}
 	for _, c := range cases {
 		if got := needsApproval(c.rc, c.tool, c.t); got != c.want {

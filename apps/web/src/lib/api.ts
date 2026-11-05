@@ -19,6 +19,15 @@ export interface Space { id: string; name: string; role: "owner" | "member" }
 export interface Group { id: string; spaceId: string; userId: string; name: string; botIds: string[]; createdAt: string; lastMessage?: Message }
 export interface Presence { state: "idle" | "thinking" | "working" | "waiting" | "blocked" | "done"; detail?: string; queued?: number; live?: boolean }
 export interface Model { id: string; label: string; provider: string; local: boolean; tools: boolean; caps?: string[] }
+export type ProviderKind = "openai" | "anthropic" | "gemini";
+export interface Provider {
+  id: string; name: string; kind: ProviderKind; baseUrl: string; hasKey: boolean;
+  local: boolean; models: string[]; enabled: boolean; status: string; createdAt: string;
+}
+export interface ProviderInput {
+  name: string; kind: ProviderKind; baseUrl: string; apiKey?: string; local?: boolean;
+  models?: string[]; enabled?: boolean; removeKey?: boolean;
+}
 export interface ComputerStatus { state: "off" | "starting" | "on"; controller: "bot" | "user"; network: boolean; available: boolean; backend: "microsandbox" | "docker" }
 export interface Routine {
   id: string; botId: string; name: string; prompt: string; kind: "schedule" | "webhook"; schedule?: string; when: string;
@@ -59,6 +68,13 @@ export const api = {
   me: () => req<User>("GET", "/api/me"),
   updateMe: (b: { defaultModel?: string; approvalMode?: ApprovalMode }) => req<User>("PATCH", "/api/me", b),
   models: () => req<{ models: Model[]; ollamaHost: string }>("GET", "/api/models"),
+  providers: () => req<{ providers: Provider[] }>("GET", "/api/providers"),
+  createProvider: (b: ProviderInput) => req<Provider>("POST", "/api/providers", b),
+  updateProvider: (id: string, b: Partial<ProviderInput>) => req<Provider>("PATCH", `/api/providers/${id}`, b),
+  deleteProvider: (id: string) => req("DELETE", `/api/providers/${id}`, {}),
+  refreshProvider: (id: string) => req<Provider>("POST", `/api/providers/${id}/refresh`, {}),
+  discoverProvider: (b: { id?: string; kind: ProviderKind; baseUrl?: string; apiKey?: string }) =>
+    req<{ models: string[] }>("POST", "/api/providers/discover", b),
   rules: () => req<{ rules: ToolRule[] }>("GET", "/api/settings/rules"),
   setRule: (tool: string, rule: "allow" | "block" | "") => req<{ rules: ToolRule[] }>("PUT", "/api/settings/rules", { tool, rule }),
 

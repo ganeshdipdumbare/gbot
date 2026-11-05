@@ -96,7 +96,7 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
         autoFocusKey={chatKey!}
         placeholder={bot ? `Message ${bot.name}…` : `Message ${group!.name}…`}
         busy={busy}
-        members={group ? members : undefined}
+        mentionable={group ? members : bots.filter((b) => b.id !== bot?.id)}
         onSend={(t) => { stopSpeaking(); sendMessage(chatKey!, t); }}
         onStop={() => (bot ? api.stop(bot.id) : api.stopGroup(group!.id))}
       />
@@ -395,41 +395,81 @@ function Activity({ m, enter }: { m: Message; enter: string }) {
   );
 }
 
-const exchangeStatus: Record<string, string> = { sent: "Sent", replied: "Replied", delivered: "Delivered", needs_you: "Waiting on you", failed: "No reply" };
-// What the other side of an exchange shows before (or instead of) a reply.
-const noReplyText: Record<string, string> = { sent: "No reply yet", delivered: "No reply needed" };
+type ExchangeData = { from: string; to: string; message: string; reply?: string; status: string };
 
-// One bot messaging another ("Messaged Grok Bot", "Message from Pip"),
-// like Rakazo: a card in both chats that opens the exchange, view-only.
+// What the other side shows when there is no reply text.
+const noReplyText: Record<string, string> = { delivered: "No reply needed", needs_you: "Needs the person before it can reply", failed: "No reply" };
+
+// The reply as one plain line for the divider's second line.
+const oneLine = (s: string) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+
+// One bot messaging another, as in Grok Bot: a centered divider in each
+// chat ("Messaged Maya" / "Message from Trader") with a line under it
+// that updates in place when the reply arrives. Nothing here waits: the
+// sender has already moved on, and the reply simply appears when it lands.
+// Click to open the exchange.
 function Exchange({ m, enter }: { m: Message; enter: string }) {
   const [open, setOpen] = useState(false);
   const bots = useStore((s) => s.bots);
-  const d = m.data as { from: string; to: string; message: string; reply?: string; status: string };
+  const d = m.data as ExchangeData;
   const from = bots.find((b) => b.id === d.from);
   const to = bots.find((b) => b.id === d.to);
-  const peer = m.botId === d.from ? to : from;
+  const outbound = m.botId === d.from;
+  const peer = outbound ? to : from;
+  const label = outbound ? `Messaged ${to?.name ?? "a bot"}` : `Message from ${from?.name ?? "a bot"}`;
+  const line = exchangeLine(d, outbound, to?.name);
   return (
     <>
-      <button onClick={() => setOpen(true)}
-        className={`${enter} mt-3 flex items-center gap-2.5 max-w-[min(85%,560px)] rounded-2xl bg-surface hover:bg-hover px-3.5 py-2.5 text-left cursor-pointer transition-colors duration-[120ms]`}>
-        {peer && <Gbot look={peer.look} seed={peer.id} size={24} mood={d.status === "sent" ? "working" : "idle"} />}
-        <span className="min-w-0">
-          <span className="block text-[14px] font-medium truncate">{m.content}</span>
-          <span className={`block text-[12.5px] truncate ${d.status === "failed" ? "text-danger" : "text-ink-2"}`}>{exchangeStatus[d.status] ?? d.status}</span>
-        </span>
-      </button>
-      <Modal open={open} onClose={() => setOpen(false)} width={520} title={`${from?.name ?? "A bot"} and ${to?.name ?? "a bot"}`}>
-        <div className="px-5 pb-5 overflow-y-auto space-y-4">
-          <ExchangeTurn bot={from}><div className="whitespace-pre-wrap break-words">{d.message}</div></ExchangeTurn>
+      <div className={`${enter} my-3 flex flex-col items-center gap-0.5 text-center`}>
+        <button onClick={() => setOpen(true)} aria-label={`${label}. Open the exchange`}
+          className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[13px] text-ink-2 hover:bg-hover hover:text-ink cursor-pointer transition-colors duration-[120ms]">
+          {peer && <Gbot look={peer.look} seed={peer.id} size={16} mood="idle" />}
+          <span>{label}</span>
+        </button>
+        <span className={`max-w-[min(85%,560px)] truncate text-[12.5px] ${d.status === "failed" ? "text-danger" : "text-ink-3"}`}>{line}</span>
+      </div>
+      <ExchangeView open={open} onClose={() => setOpen(false)} from={from} to={to} d={d} />
+    </>
+  );
+}
+
+// The divider’s second line. Before a reply there is nothing to wait on:
+// the sender just shows that it was sent.
+function exchangeLine(d: ExchangeData, outbound: boolean, toName?: string): string {
+  if (d.reply) return `${outbound ? `${toName ?? "Bot"}: ` : "Replied: "}${oneLine(d.reply)}`;
+  if (d.status === "failed") return noReplyText.failed;
+  if (d.status === "delivered") return noReplyText.delivered;
+  if (d.status === "needs_you") return noReplyText.needs_you;
+  return outbound ? "Sent" : "";
+}
+
+// The exchange itself: both bots, the message, and the reply once it
+// arrives. View only.
+function ExchangeView({ open, onClose, from, to, d }: { open: boolean; onClose: () => void; from?: Bot; to?: Bot; d: ExchangeData }) {
+  const pending = d.status === "sent"; // no reply yet; the view just leaves that turn out
+  return (
+    <Modal open={open} onClose={onClose} width={560}>
+      <div className="px-5 pb-5 pt-6 space-y-5">
+        <div className="mx-auto flex w-fit items-center gap-2 rounded-full bg-surface px-3.5 py-1.5 text-[14px]">
+          {from && <Gbot look={from.look} seed={from.id} size={18} mood="idle" />}
+          <span className="font-medium">{from?.name ?? "A bot"}</span>
+          <span className="text-ink-3">⇄</span>
+          {to && <Gbot look={to.look} seed={to.id} size={18} mood="idle" />}
+          <span className="font-medium">{to?.name ?? "A bot"}</span>
+        </div>
+        <ExchangeTurn bot={from}><div className="whitespace-pre-wrap break-words">{d.message}</div></ExchangeTurn>
+        {(d.reply || !pending) && (
           <ExchangeTurn bot={to}>
             {d.reply
               ? <div className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.reply) }} />
-              : <div className="text-ink-2">{noReplyText[d.status] ?? exchangeStatus[d.status] ?? d.status}</div>}
+              : <div className="text-ink-3">{noReplyText[d.status] ?? d.status}</div>}
           </ExchangeTurn>
-          <p className="text-[12px] text-ink-3 text-center">View only. Bots write these to each other.</p>
+        )}
+        <div className="flex justify-center pt-1">
+          <button onClick={onClose} className="rounded-full bg-surface hover:bg-hover px-4 py-2 text-[14px] cursor-pointer transition-colors duration-[120ms]">Close Chat</button>
         </div>
-      </Modal>
-    </>
+      </div>
+    </Modal>
   );
 }
 

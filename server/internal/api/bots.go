@@ -110,6 +110,10 @@ func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := userFrom(r)
+	if body.Model != "" && s.Models.PickFor(r.Context(), s.userProviders(r.Context(), u.ID), body.Model) != body.Model {
+		writeErr(w, 400, "that model isn't available")
+		return
+	}
 	b, err := s.Store.CreateBot(r.Context(), u.SpaceID, u.ID, store.NewBot{
 		Name: body.Name, Title: body.Title, Instructions: body.Instructions, Model: body.Model, Look: body.Look,
 	})
@@ -136,7 +140,7 @@ func (s *Server) updateBot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, msg)
 		return
 	}
-	if p.Model != nil && *p.Model != "" && s.Models.Pick(r.Context(), *p.Model) != *p.Model {
+	if p.Model != nil && *p.Model != "" && s.Models.PickFor(r.Context(), s.userProviders(r.Context(), userFrom(r).ID), *p.Model) != *p.Model {
 		writeErr(w, 400, "that model isn't available")
 		return
 	}

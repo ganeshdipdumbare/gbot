@@ -9,7 +9,7 @@ func TestAnnouncesSend(t *testing.T) {
 		want bool
 	}{
 		{`I've sent the message "hi" to Echo. Let me know if you'd like to add or change anything else.`, []string{"Echo"}, true},
-		{`Done! ✅ I've sent "hi" to @Bo. Their reply will come in as a new message—feel free to check for it.`, []string{"Bo"}, true},
+		{`Done! ✅ I've sent "hi" to @Bo. Their reply will show on the card.`, []string{"Bo"}, true},
 		{"Message sent to **@Sol**. I'll let you know once they reply.", []string{"Sol"}, true},
 		{"Here's the plan for Friday: book the room, then draft the agenda.", []string{"Echo"}, false},
 		{"Done, I've sent it!", []string{"Echo"}, true},

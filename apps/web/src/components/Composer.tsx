@@ -12,8 +12,10 @@ let skillsCache: Promise<Skill[]> | null = null;
 const loadSkills = () => (skillsCache ??= api.skills().then((r) => r.skills).catch(() => []));
 export const invalidateSkills = () => { skillsCache = null; };
 
-export function Composer({ placeholder, busy, members, onSend, onStop, autoFocusKey }: {
-  placeholder: string; busy: boolean; members?: Bot[]; onSend: (t: string) => void; onStop: () => void; autoFocusKey: string;
+// mentionable are the bots "@" can name: the group's members, or every
+// other bot in a one-to-one chat.
+export function Composer({ placeholder, busy, mentionable, onSend, onStop, autoFocusKey }: {
+  placeholder: string; busy: boolean; mentionable?: Bot[]; onSend: (t: string) => void; onStop: () => void; autoFocusKey: string;
 }) {
   const [text, setText] = useState("");
   const [hop, setHop] = useState(0);
@@ -31,12 +33,13 @@ export function Composer({ placeholder, busy, members, onSend, onStop, autoFocus
     el.style.height = Math.min(el.scrollHeight, 220) + "px";
   }, [text]);
 
-  // "@" suggests teammates in a group; "/" at the start suggests skills.
+  // "@" suggests bots by name, spaces included ("@Grok Bot"); "/" at the
+  // start suggests skills.
   const suggestions = useMemo<Suggestion[]>(() => {
-    const at = /(^|\s)@([\p{L}\p{N}_-]*)$/u.exec(text);
-    if (at && members?.length) {
+    const at = /(^|\s)@([^@\n]*)$/.exec(text);
+    if (at && mentionable?.length) {
       const q = at[2].toLowerCase();
-      return members.filter((b) => b.name.toLowerCase().startsWith(q)).map((b) => ({
+      return mentionable.filter((b) => b.name.toLowerCase().startsWith(q)).map((b) => ({
         key: b.id, label: b.name, hint: b.title, bot: b, insert: text.slice(0, text.length - at[2].length - 1) + "@" + b.name + " ",
       }));
     }
@@ -46,7 +49,7 @@ export function Composer({ placeholder, busy, members, onSend, onStop, autoFocus
       return skills.filter((s) => s.name.startsWith(q)).map((s) => ({ key: s.id, label: "/" + s.name, hint: s.description, insert: `Use the ${s.name} skill: ` }));
     }
     return [];
-  }, [text, members, skills]);
+  }, [text, mentionable, skills]);
   useEffect(() => setPick(0), [suggestions.length]);
 
   const send = () => {
@@ -117,7 +120,7 @@ export function Composer({ placeholder, busy, members, onSend, onStop, autoFocus
                 <motion.div initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, transition: { duration: 0.1 } }} transition={{ duration: 0.16 }}
                   className="absolute bottom-full mb-2 left-0 w-56 rounded-xl bg-bg shadow-pop p-1 z-20" role="menu">
                   <MenuItem icon={<Icon.spark />} label="Use a skill" hint="/" onClick={() => { setMenu(false); setText("/"); ta.current?.focus(); }} />
-                  {members && <MenuItem icon={<Icon.users />} label="Mention a teammate" hint="@" onClick={() => { setMenu(false); setText((t) => (t ? t.trimEnd() + " @" : "@")); ta.current?.focus(); }} />}
+                  {mentionable && mentionable.length > 0 && <MenuItem icon={<Icon.users />} label="Mention a bot" hint="@" onClick={() => { setMenu(false); setText((t) => (t ? t.trimEnd() + " @" : "@")); ta.current?.focus(); }} />}
                   {dictation.mode !== "none" && <MenuItem icon={<Icon.mic />} label="Dictate" onClick={() => { setMenu(false); dictation.toggle(); }} />}
                 </motion.div>
               )}

@@ -114,6 +114,28 @@ func TestMCPIntegrations(t *testing.T) {
 		t.Fatalf("another account deleted it: %d", code)
 	}
 
+	// A server that won't connect is reported as such and doesn't stop
+	// the working one from serving its tools.
+	broken := map[string]any{}
+	if code := a.do("POST", "/api/mcp", map[string]string{"name": "Broken", "url": mcp.URL, "token": "wrong-token"}, &broken); code != 201 {
+		t.Fatalf("add broken: %d %v", code, broken)
+	}
+	if s, _ := broken["status"].(string); s == "connected" || s == "" || s == "off" {
+		t.Fatalf("broken server reported as %q", s)
+	}
+	var all struct {
+		Servers []struct {
+			ID, Status string
+			Tools      []string
+		}
+	}
+	a.do("GET", "/api/mcp", nil, &all)
+	for _, s := range all.Servers {
+		if s.ID == m.ID && (s.Status != "connected" || len(s.Tools) != 2) {
+			t.Fatalf("working server lost when another failed: %s %v", s.Status, s.Tools)
+		}
+	}
+
 	a.do("PATCH", "/api/mcp/"+m.ID, map[string]bool{"enabled": false}, &raw)
 	if raw["status"] != "off" {
 		t.Fatalf("disabled server still loaded: %v", raw["status"])

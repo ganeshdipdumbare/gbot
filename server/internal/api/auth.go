@@ -133,7 +133,7 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	u := userFrom(r)
 	if m := body.DefaultModel; m != nil {
-		if *m != "" && s.Models.Pick(r.Context(), *m) != *m {
+		if *m != "" && s.Models.PickFor(r.Context(), s.userProviders(r.Context(), u.ID), *m) != *m {
 			writeErr(w, 400, "that model isn't available")
 			return
 		}
@@ -159,7 +159,7 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	s.Models.Invalidate()
-	list := s.Models.List(r.Context())
+	list := s.Models.ListFor(r.Context(), s.userProviders(r.Context(), userFrom(r).ID))
 	if list == nil {
 		list = []models.Model{}
 	}

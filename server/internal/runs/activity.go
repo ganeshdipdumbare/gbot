@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ganeshdipdumbare/eipagent/sdk"
+	"github.com/ganeshdipdumbare/kiln/sdk"
 )
 
 // A step is one thing a bot did with a tool, said plainly, for the
@@ -67,6 +67,20 @@ func describeStep(call *sdk.ToolCall, result string, connector func(prefix strin
 		st.Label, st.Detail = "Opened", hostPath(str("url"))
 	case "browser_read":
 		st.Label, st.Detail = "Read", hostPath(str("url"))
+	case "browser_navigate":
+		st.Label, st.Detail = "Opened", hostPath(str("url"))
+	case "browser_snapshot":
+		st.Label = "Read the page"
+	case "browser_click":
+		st.Label, st.Detail = "Clicked", fmt.Sprintf("[%v]", a["ref"])
+	case "browser_type":
+		// The text is never shown: it may be a password.
+		st.Label, st.Detail = "Typed", fmt.Sprintf("into [%v]", a["ref"])
+		if sub, _ := a["submit"].(bool); sub {
+			st.Detail += " and submitted"
+		}
+	case "browser_press":
+		st.Label, st.Detail = "Pressed", str("key")
 	case "remember":
 		st.Label, st.Detail = "Remembered", short(str("text"), 60)
 	case "recall":

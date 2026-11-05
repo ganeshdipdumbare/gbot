@@ -85,6 +85,7 @@ func run(cmd string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	rt.SyncProviders(ctx, sealer)
 
 	var comp *computer.Manager
 	if env("GBOT_COMPUTER", "on") != "off" {

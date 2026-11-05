@@ -26,10 +26,11 @@ needs you, stuck, done), and keep working while you keep chatting.
 
 - **Local first.** Defaults to models on your machine through
   [Ollama](https://ollama.com) or any OpenAI-compatible local server. No
-  API keys, no accounts elsewhere, no telemetry. Cloud providers are optional.
-- **Built on [eipagent](https://github.com/ganeshdipdumbare/eipagent).** One
-  shared agent in the secure preset: Postgres-backed threads and memory,
-  retries, limits, summarization, and per-plugin secret grants.
+  API keys, no accounts elsewhere, no telemetry. Cloud providers are optional,
+  and each account can connect its own from Settings → Providers.
+- **Built on [kiln](https://github.com/ganeshdipdumbare/kiln).** One
+  shared agent with the secure default policy: Postgres-backed threads and memory,
+  retries, limits, summarization, and per-module secret grants.
 - **Fast.** One Go binary serves the API, live updates (SSE) and the
   precompressed web app (about 130 KB of JS, brotli).
 - **Secure by default.** argon2id passwords, hashed session tokens,
@@ -45,16 +46,7 @@ a tool-calling model:
 ollama pull qwen3.5:4b
 ```
 
-gbot uses [eipagent](https://github.com/ganeshdipdumbare/eipagent) v0.3.0, a
-private Go module. Let Go fetch it with your GitHub login:
-
-```bash
-gh auth setup-git
-```
-
-```bash
-go env -w GOPRIVATE='github.com/ganeshdipdumbare/*'
-```
+gbot uses [kiln](https://github.com/ganeshdipdumbare/kiln) v0.5.0, a Go module that `go mod download` fetches.
 
 Build the bots' computer image once (optional, about 1 GB, shared by every
 bot). For lightweight microVM computers (boot in under a second, about 75 MB
@@ -79,6 +71,21 @@ Open http://127.0.0.1:8080 and hatch your first bot.
 
 For development with hot reload, run `make dev` and open http://127.0.0.1:5173.
 
+### Model providers
+
+Settings → Providers connects a model source to your account:
+
+- **OpenAI-compatible** — vLLM, LM Studio, llama.cpp, LiteLLM, OpenRouter,
+  or any server exposing `/v1/chat/completions`.
+- **Anthropic** — Claude models.
+- **Gemini** — Google AI Studio models.
+
+Models are discovered from the provider's model list endpoint; if that is
+unavailable, type model names manually (one per line). API keys are encrypted
+at rest, never returned by the API, and scoped to your account: other accounts
+cannot see or select your provider's models. `OLLAMA_HOST` and the API-key
+environment variables below remain server-wide defaults.
+
 ### Configuration
 
 | Variable | Default | |
@@ -98,7 +105,7 @@ For development with hot reload, run `make dev` and open http://127.0.0.1:5173.
 ## Layout
 
 ```
-server/               Go: API, auth, store, agent runtime (eipagent), computers, routines
+server/               Go: API, auth, store, agent runtime (kiln), computers, routines
 apps/web/             React 19 + Vite + Tailwind + Motion
 apps/desktop/         Tauri 2 shell with native notifications
 apps/mobile/          Expo (React Native) app
@@ -115,7 +122,7 @@ make test
 ```
 
 The Go tests run the whole API against a throwaway database with
-eipagent's offline mock model, so they need no network or keys.
+kiln's offline mock model, so they need no network or keys.
 
 ## Desktop and mobile
 

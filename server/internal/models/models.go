@@ -15,7 +15,7 @@ import (
 )
 
 type Model struct {
-	ID       string   `json:"id"` // eipagent model string, e.g. "ollama:qwen3.5:4b"
+	ID       string   `json:"id"` // kiln model string, e.g. "ollama:qwen3.5:4b"
 	Label    string   `json:"label"`
 	Provider string   `json:"provider"`
 	Local    bool     `json:"local"`
@@ -120,10 +120,33 @@ func (c *Catalog) ollama(ctx context.Context) []Model {
 	return out
 }
 
+// ListFor is List plus the models of the account's own providers. Provider
+// models are namespaced by their generated prefix, so they can never collide
+// with the server-wide providers above.
+func (c *Catalog) ListFor(ctx context.Context, providers []Provider) []Model {
+	base := c.List(ctx)
+	out := make([]Model, 0, len(base)+8)
+	out = append(out, base...)
+	for _, p := range providers {
+		for _, m := range p.Models {
+			out = append(out, Model{ID: p.Prefix + ":" + m, Label: m, Provider: p.Name, Local: p.Local, Tools: true})
+		}
+	}
+	return out
+}
+
 // Pick returns want when it is available, else the best default: the
 // first local tool-capable model, then any model at all.
 func (c *Catalog) Pick(ctx context.Context, want ...string) string {
-	list := c.List(ctx)
+	return pick(c.List(ctx), want)
+}
+
+// PickFor is Pick over the account's own catalog.
+func (c *Catalog) PickFor(ctx context.Context, providers []Provider, want ...string) string {
+	return pick(c.ListFor(ctx, providers), want)
+}
+
+func pick(list []Model, want []string) string {
 	for _, w := range want {
 		for _, m := range list {
 			if w != "" && m.ID == w {

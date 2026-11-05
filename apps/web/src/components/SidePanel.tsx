@@ -70,12 +70,6 @@ function useScreen(botId: string, on: boolean, fps = 1.2) {
   return src;
 }
 
-/** The computer's own wallpaper for the viewer's time of day, shown while it sleeps. */
-function wallpaper() {
-  const h = new Date().getHours();
-  return `/wallpaper-${h >= 6 && h < 11 ? "day" : h >= 11 && h < 18 ? "noon" : "night"}.jpg`;
-}
-
 // Wake, sleep and take control, kept small in the panel's header.
 function ComputerActions({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) {
   const [status, update] = useComputer(bot);
@@ -114,11 +108,10 @@ function ComputerTab({ bot }: { bot: Bot }) {
           {src ? (
             <motion.img key="screen" src={src} alt={`${bot.name}'s screen`} className="absolute inset-0 size-full object-cover" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
           ) : (
-            <motion.div key="off" className="absolute inset-0 grid place-items-center text-center p-6 bg-cover bg-center"
-              style={{ backgroundImage: `url(${wallpaper()})` }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <div className="rounded-2xl bg-black/35 backdrop-blur-md px-4 py-3 text-white">
+            <motion.div key="off" className="absolute inset-0 grid place-items-center text-center p-6 bg-surface" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <div className="px-4 py-3 text-ink">
                 <Gbot look={bot.look} seed={bot.id} size={36} mood={status?.state === "starting" ? "working" : "sleepy"} className="mx-auto" />
-                <p className="text-[13px] mt-1.5 text-white/80">
+                <p className="text-[13px] mt-1.5 text-ink-2">
                   {status?.available === false ? "The computer image isn't built yet. Run make computer." :
                     status?.state === "starting" ? "Waking up…" : "Wakes up when it needs it"}
                 </p>

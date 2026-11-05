@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/ganeshdipdumbare/eipagent"
-	_ "github.com/ganeshdipdumbare/eipagent/drivers/postgres"
-	"github.com/ganeshdipdumbare/eipagent/engine"
-	"github.com/ganeshdipdumbare/eipagent/sdk"
+	"github.com/ganeshdipdumbare/kiln"
+	_ "github.com/ganeshdipdumbare/kiln/drivers/postgres"
+	"github.com/ganeshdipdumbare/kiln/engine"
+	"github.com/ganeshdipdumbare/kiln/sdk"
 
 	"gbot/internal/computer"
 	"gbot/internal/models"
@@ -62,7 +62,7 @@ type Job struct {
 	For       string       // the person a bot-chat run is for; their approvals, tools and memory apply
 	Prompt    string
 	Model     string
-	Trigger   string // chat | routine | webhook | resume | handoff | bot | bot_reply
+	Trigger   string // chat | routine | webhook | resume | handoff | bot
 	Untrusted bool   // outside text started this run
 	Decisions []sdk.Decision
 	ResumeRun string // the run whose cards were answered
@@ -71,9 +71,8 @@ type Job struct {
 	skills []*store.Skill
 	peers  []*store.Bot // bots this run can message
 	// Set when another bot messaged this one: the reply goes to the
-	// exchange cards and wakes the sender, not into this bot's chat.
+	// exchange cards, not into this bot's chat. Nothing wakes the sender.
 	exchange []*store.Message
-	replyIn  string // the group the sender was talking in, if any
 }
 
 // maxBotHops caps a chain of bots messaging each other, so two bots
@@ -108,17 +107,18 @@ type Config struct {
 	DatabaseURL string
 	OllamaHost  string
 	MaxSteps    int
-	// Mock loads eipagent's offline mock model ("mock:*"), for tests.
+	// Mock loads kiln's offline mock model ("mock:*"), for tests.
 	Mock bool
 	// MockScript, when set, adds a scripted mock ("mockscript:*").
 	MockScript []any
 }
 
-// Runtime owns one shared eipagent agent. Bots differ per run (system
+// Runtime owns one shared kiln agent. Bots differ per run (system
 // prompt, model, tools, memory namespace, thread), which keeps every bot
-// cheap: no per-bot plugin loading, one pool, one audit trail.
+// cheap: one pool, one audit trail. The agent is rebuilt only when the
+// set of MCP servers changes (kiln v0.5 loads modules at build time).
 type Runtime struct {
-	agent    *eipagent.Agent
+	cfg      Config
 	store    *store.Store
 	hub      *Hub
 	catalog  *models.Catalog
@@ -126,12 +126,24 @@ type Runtime struct {
 	computer *computer.Manager
 	routines *routines.Service
 
+	// cur is the live agent. Runs hold it (see hold) so that a swap
+	// doesn't close an agent that is still working.
+	cur *agentSlot
+
 	mu       sync.Mutex
 	workers  map[string]*worker
 	presence map[string]Presence
 	// Group runs have no thread checkpoint; a paused one waits here.
-	groupPending map[string]*eipagent.Result
-	mcp          map[string]mcpState // by server id
+	groupPending map[string]*kiln.Result
+	mcp          map[string]mcpState      // by server id
+	providers    map[string]providerState // by provider id
+	syncMu       sync.Mutex               // serializes agent rebuilds
+}
+
+// agentSlot is one built agent and the runs still using it.
+type agentSlot struct {
+	a    *kiln.Agent
+	runs sync.WaitGroup
 }
 
 type worker struct {
@@ -140,49 +152,90 @@ type worker struct {
 }
 
 func New(cfg Config, st *store.Store, hub *Hub, cat *models.Catalog, log *slog.Logger) (*Runtime, error) {
-	// eipagent's db_sql reads its DSN as a secret, granted to it alone.
-	os.Setenv("EIP_DATABASE_URL", cfg.DatabaseURL)
+	// kiln's db_sql reads its DSN as a secret, granted to it alone.
+	os.Setenv("KILN_DATABASE_URL", cfg.DatabaseURL)
 	sdk.AddRedaction(cfg.DatabaseURL)
-	grants := map[string]any{"db_sql": []any{"EIP_DATABASE_URL"}}
-	opts := []eipagent.Option{
-		eipagent.WithPreset("secure"),
-		eipagent.WithMaxSteps(max(cfg.MaxSteps, 1)),
-		eipagent.WithLogger(func(scope, msg string) { log.Debug(msg, "plugin", scope) }),
+	r := &Runtime{cfg: cfg, store: st, hub: hub, catalog: cat, log: log,
+		workers: map[string]*worker{}, presence: map[string]Presence{},
+		groupPending: map[string]*kiln.Result{}, mcp: map[string]mcpState{}, providers: map[string]providerState{}}
+	a, err := r.build(nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	r.cur = &agentSlot{a: a}
+	return r, nil
+}
+
+// build creates an agent with the core modules plus the given MCP
+// servers and model providers. Each is its own module instance.
+func (r *Runtime) build(mcp []mcpServer, provs []providerServer) (*kiln.Agent, error) {
+	cfg := r.cfg
+	grants := map[string]any{"db_sql": []any{"KILN_DATABASE_URL"}}
+	opts := []kiln.Option{
+		kiln.WithMaxSteps(max(cfg.MaxSteps, 1)),
+		kiln.WithLogger(func(scope, msg string) { r.log.Debug(msg, "module", scope) }),
 		// Local models are the default and need no key.
-		eipagent.WithPluginSpec(engine.PluginSpec{Use: "model_openai", As: "llm_ollama", Config: map[string]any{
+		kiln.WithModuleSpec(engine.ModuleSpec{Use: "model_openai", As: "llm_ollama", Config: map[string]any{
 			"name": "ollama", "base_url": strings.TrimRight(cfg.OllamaHost, "/") + "/v1", "api_key": "",
 		}}),
 	}
 	if cfg.Mock {
-		opts = append(opts, eipagent.WithPlugin("model_mock", map[string]any{"name": "mock"}))
+		opts = append(opts, kiln.WithModuleConfig("model_mock", map[string]any{"name": "mock"}))
 	}
 	if cfg.MockScript != nil {
-		opts = append(opts, eipagent.WithPluginSpec(engine.PluginSpec{Use: "model_mock", As: "llm_mockscript",
+		opts = append(opts, kiln.WithModuleSpec(engine.ModuleSpec{Use: "model_mock", As: "llm_mockscript",
 			Config: map[string]any{"name": "mockscript", "script": cfg.MockScript}}))
 	}
 	for _, p := range models.PaidProviders() {
 		spec, key := paidSpec(p)
 		grants[spec.As] = []any{key}
-		opts = append(opts, eipagent.WithPluginSpec(spec))
+		opts = append(opts, kiln.WithModuleSpec(spec))
+	}
+	// Account providers carry their keys decrypted in memory; every key is
+	// registered for redaction so it can never appear in an error or log.
+	for _, p := range provs {
+		if p.key != "" {
+			sdk.AddRedaction(p.key)
+		}
+		opts = append(opts, kiln.WithModuleSpec(p.spec()))
 	}
 	opts = append(opts,
-		eipagent.WithPlugin("secrets_env", map[string]any{"allow": []any{"EIP_DATABASE_URL", "*_API_KEY"}, "grants": grants}),
-		eipagent.WithPlugins("db_sql", "threads_sql", "memory_sql", "tool_memory", "tool_time"),
-		eipagent.WithPlugin("hook_retry", map[string]any{"max_retries": 2}),
-		eipagent.WithPlugin("hook_limits", map[string]any{"model_calls_run": 24, "tool_calls_run": 48}),
-		eipagent.WithPlugin("hook_summarize", map[string]any{"trigger_messages": 60, "keep_messages": 20}),
-		eipagent.WithCompiledPlugin(guardPlugin()),
+		kiln.WithModuleConfig("secrets_env", map[string]any{"allow": []any{"KILN_DATABASE_URL", "*_API_KEY"}, "grants": grants}),
+		kiln.WithModules("db_sql", "threads_sql", "memory_sql", "tool_memory", "tool_time"),
+		kiln.WithModuleConfig("hook_retry", map[string]any{"max_retries": 2}),
+		kiln.WithModuleConfig("hook_limits", map[string]any{"model_calls_run": 24, "tool_calls_run": 48}),
+		kiln.WithModuleConfig("hook_summarize", map[string]any{"trigger_messages": 60, "keep_messages": 20}),
+		kiln.WithModule(guardModule),
 		// Default model only matters for the agent's own bookkeeping;
 		// every run passes the bot's model.
-		eipagent.WithModel("ollama:default"),
+		kiln.WithModel("ollama:default"),
 	)
-	a, err := eipagent.New(opts...)
-	if err != nil {
-		return nil, err
+	for _, s := range mcp {
+		opts = append(opts, kiln.WithModuleSpec(s.spec()))
 	}
-	return &Runtime{agent: a, store: st, hub: hub, catalog: cat, log: log,
-		workers: map[string]*worker{}, presence: map[string]Presence{},
-		groupPending: map[string]*eipagent.Result{}, mcp: map[string]mcpState{}}, nil
+	return kiln.New(opts...)
+}
+
+// hold returns the live agent and a release func. A run holds the
+// agent from start to finish, so a swap never closes it under the run.
+func (r *Runtime) hold() (*kiln.Agent, func()) {
+	r.mu.Lock()
+	s := r.cur
+	s.runs.Add(1)
+	r.mu.Unlock()
+	return s.a, s.runs.Done
+}
+
+// swap makes next the live agent. The old one closes once its runs end.
+func (r *Runtime) swap(next *agentSlot) {
+	r.mu.Lock()
+	old := r.cur
+	r.cur = next
+	r.mu.Unlock()
+	go func() {
+		old.runs.Wait()
+		_ = old.a.Close()
+	}()
 }
 
 // Use attaches the optional services after construction.
@@ -190,23 +243,28 @@ func (r *Runtime) Use(c *computer.Manager, rs *routines.Service) {
 	r.computer, r.routines = c, rs
 }
 
-func paidSpec(p string) (engine.PluginSpec, string) {
+func paidSpec(p string) (engine.ModuleSpec, string) {
 	switch p {
 	case "anthropic":
-		return engine.PluginSpec{Use: "model_anthropic", As: "llm_anthropic", Config: map[string]any{"name": "anthropic"}}, "ANTHROPIC_API_KEY"
+		return engine.ModuleSpec{Use: "model_anthropic", As: "llm_anthropic", Config: map[string]any{"name": "anthropic"}}, "ANTHROPIC_API_KEY"
 	case "gemini":
-		return engine.PluginSpec{Use: "model_gemini", As: "llm_gemini", Config: map[string]any{"name": "gemini"}}, "GEMINI_API_KEY"
+		return engine.ModuleSpec{Use: "model_gemini", As: "llm_gemini", Config: map[string]any{"name": "gemini"}}, "GEMINI_API_KEY"
 	case "openai":
-		return engine.PluginSpec{Use: "model_openai", As: "llm_openai", Config: map[string]any{"name": "openai"}}, "OPENAI_API_KEY"
+		return engine.ModuleSpec{Use: "model_openai", As: "llm_openai", Config: map[string]any{"name": "openai"}}, "OPENAI_API_KEY"
 	}
 	urls := map[string]string{"deepseek": "https://api.deepseek.com", "groq": "https://api.groq.com/openai/v1", "openrouter": "https://openrouter.ai/api/v1"}
 	key := strings.ToUpper(p) + "_API_KEY"
-	return engine.PluginSpec{Use: "model_openai", As: "llm_" + p, Config: map[string]any{
+	return engine.ModuleSpec{Use: "model_openai", As: "llm_" + p, Config: map[string]any{
 		"name": p, "base_url": urls[p], "api_key": "secret://" + key,
 	}}, key
 }
 
-func (r *Runtime) Close() error { return r.agent.Close() }
+func (r *Runtime) Close() error {
+	r.mu.Lock()
+	s := r.cur
+	r.mu.Unlock()
+	return s.a.Close()
+}
 
 // threadID namespaces a bot's conversation and memory per person. The
 // bot's owner keeps the original id, so their existing history carries on.
@@ -391,7 +449,7 @@ Never claim you did something you did not do.`)
 		sb.WriteString("Reply only as yourself, briefly. Messages from others are prefixed with their name. If a teammate fits a task better, hand it to them by writing @Name in your reply. Don't speak for others.")
 	}
 	if len(j.peers) > 0 {
-		sb.WriteString("\n\nThe person's other bots, which you can message with message_bot (their replies come to you later as new messages). The person sees a card for every message, so never tell them you sent one:\n")
+		sb.WriteString("\n\nThe person's other bots, which you can message with message_bot. Your message doesn't wait for a reply: the reply shows on the message's card, and you get it in your next prompt. The person sees a card for every message, so never tell them you sent one:\n")
 		for _, p := range j.peers {
 			fmt.Fprintf(&sb, "- %s: %s\n", p.Name, firstNonEmpty(p.Title, "teammate"))
 		}
@@ -422,6 +480,8 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	b := j.Bot
 	c := j.convo()
 	bg := context.WithoutCancel(ctx)
+	ag, doneWithAgent := r.hold()
+	defer doneWithAgent()
 	// The exchange cards get the reply, or why there isn't one.
 	status, outcome := "failed", b.Name+" didn't reply."
 	if len(j.exchange) > 0 {
@@ -434,9 +494,12 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		r.log.Error("run user", "err", err)
 		return
 	}
+	// The requester's own providers only: another account's models are
+	// never selectable, even if their prefix were guessed.
+	provs, _ := r.store.ListProviders(bg, req.ID)
 	model := j.Model
 	if model == "" {
-		model = r.catalog.Pick(ctx, b.Model, req.DefaultModel)
+		model = r.catalog.PickFor(ctx, ProviderModels(provs), b.Model, req.DefaultModel)
 	}
 	if model == "" {
 		r.botError(c, b, "No model is connected yet. Start Ollama (or add a provider key) and pick a model in Settings.")
@@ -582,19 +645,23 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		}
 	}
 
-	opts := []eipagent.RunOption{
-		eipagent.Model(model),
-		eipagent.System(r.systemPrompt(j, req)),
+	opts := []kiln.RunOption{
+		kiln.Model(model),
+		kiln.System(r.systemPrompt(j, req)),
 		// Memory is per person and per bot: what a bot learns from one
 		// teammate stays between that teammate and the bot.
-		eipagent.AsUser(threadID(b, c.User)),
-		eipagent.RunTools(r.runTools(j)...),
-		eipagent.OnEvent(onEvent),
+		kiln.AsUser(threadID(b, c.User)),
+		kiln.RunTools(r.runTools(j)...),
+		kiln.OnEvent(onEvent),
 	}
 
-	var res *eipagent.Result
+	// Replies to this bot's messages to its teammates that came back
+	// since its last turn. They ride along in the next prompt.
+	notes, noteIDs := r.pendingReplies(bg, b, c.User)
+	delivered := false
+	var res *kiln.Result
 	if j.Group == nil {
-		th := r.agent.Thread(threadID(b, c.User))
+		th := ag.Thread(threadID(b, c.User))
 		decisions := j.Decisions
 		if decisions == nil {
 			if pending, _ := th.Pending(bg); len(pending) > 0 {
@@ -605,7 +672,8 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		if decisions != nil {
 			res, err = th.ResumeWith(ctx, decisions, opts...)
 		} else {
-			res, err = th.Generate(ctx, j.Prompt, opts...)
+			res, err = th.Generate(ctx, notes+j.Prompt, opts...)
+			delivered = true
 		}
 	} else {
 		r.mu.Lock()
@@ -613,11 +681,12 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		delete(r.groupPending, j.ResumeRun)
 		r.mu.Unlock()
 		if j.Decisions != nil && prev != nil {
-			res, err = r.agent.Resume(ctx, prev, j.Decisions, opts...)
+			res, err = ag.Resume(ctx, prev, j.Decisions, opts...)
 		} else {
 			r.expireCards(bg, c)
 			history, prompt := r.groupHistory(bg, j, req)
-			res, err = r.agent.Generate(ctx, prompt, append(opts, eipagent.WithHistory(history...))...)
+			res, err = ag.Generate(ctx, notes+prompt, append(opts, kiln.WithHistory(history...))...)
+			delivered = true
 		}
 	}
 	mu.Lock()
@@ -638,8 +707,8 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		r.setPresence(c, b, Presence{State: "idle"})
 	case err != nil:
 		_ = r.store.FinishRun(bg, runID, "error", sdk.Redact(err.Error()), tokens)
-		outcome = b.Name + " couldn't reply: " + friendlyError(model, err)
-		r.botError(c, b, friendlyError(model, err))
+		outcome = b.Name + " couldn't reply: " + r.friendlyError(model, err)
+		r.botError(c, b, r.friendlyError(model, err))
 	case res != nil && res.Interrupted():
 		_ = r.store.FinishRun(bg, runID, "waiting", "", tokens)
 		status, outcome = "needs_you", b.Name+" needs the person before it can reply; it asked in its own chat."
@@ -654,6 +723,9 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		r.setPresence(c, b, Presence{State: "waiting", Detail: "Needs you"})
 	default:
 		_ = r.store.FinishRun(bg, runID, "done", "", tokens)
+		if delivered {
+			r.markSeen(bg, noteIDs)
+		}
 		if s := strings.TrimSpace(final.String()); s != "" {
 			status, outcome = "replied", s
 		}
@@ -668,9 +740,10 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 const noReply = "NO_REPLY"
 
 // messageBot sends another bot a message without waiting, like Grok
-// Bot: the other bot wakes, and its reply comes back to the sender as a
-// new message. Both chats get a card for the exchange ("Messaged Grok
-// Bot", "Message from Pip"); the other bot's chat stays the person's.
+// Bot. The sender is not woken by the reply: the recipient answers on
+// the exchange cards, and the sender sees the reply in its next prompt.
+// Both chats get a card for the exchange ("Messaged Grok Bot", "Message
+// from Pip"); the other bot's chat stays the person's.
 func (r *Runtime) messageBot(ctx context.Context, j *Job, to *store.Bot, text string) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -689,10 +762,10 @@ func (r *Runtime) messageBot(ctx context.Context, j *Job, to *store.Bot, text st
 		r.chat(c, Event{Type: "message", BotID: m.BotID, GroupID: m.GroupID, Data: m})
 	}
 	rc := runFrom(ctx)
-	prompt := fmt.Sprintf("Message from %s, another of the person's bots. Write your answer to %s as your reply here; it goes back to them on its own. If nothing needs to go back, reply with just %s.\n\n%s", from.Name, from.Name, noReply, text)
+	prompt := fmt.Sprintf("Message from %s, another of the person's bots. Write your answer to %s as your reply here; it appears on the message's card, and %s doesn't wait for it. If nothing needs to go back, reply with just %s.\n\n%s", from.Name, from.Name, from.Name, noReply, text)
 	r.Enqueue(Job{Bot: to, For: c.User, Prompt: prompt, Trigger: "bot", Untrusted: rc != nil && rc.isTainted(), Depth: j.Depth + 1,
-		exchange: []*store.Message{out, in}, replyIn: c.GroupID})
-	return fmt.Sprintf("Sent to %s. The person sees a card for it; never tell them you sent it. If %s answers, it comes to you as a new message.", to.Name, to.Name), nil
+		exchange: []*store.Message{out, in}})
+	return fmt.Sprintf("Sent to %s. The person sees a card for it; never tell them you sent it. %s's reply shows on that card and you'll see it in your next prompt.", to.Name, to.Name), nil
 }
 
 // sendWords mark a line that reports sending a message or what will
@@ -721,8 +794,9 @@ func announcesSend(text string, to []string) bool {
 	return false
 }
 
-// settleExchange records how a bot-to-bot exchange ended on both cards
-// and wakes the sender with the reply.
+// settleExchange writes how a bot-to-bot exchange ended onto both of its
+// cards. The sender isn't run again: its next prompt carries the reply
+// (see pendingReplies).
 func (r *Runtime) settleExchange(j *Job, status, reply string) {
 	if status == "replied" && strings.Trim(reply, " .`*") == noReply {
 		status, reply = "delivered", ""
@@ -732,25 +806,47 @@ func (r *Runtime) settleExchange(j *Job, status, reply string) {
 			r.chat(j.convo(), Event{Type: "message_update", BotID: upd.BotID, GroupID: upd.GroupID, Data: upd})
 		}
 	}
-	if status != "replied" {
-		return
-	}
-	ctx := context.Background()
-	d := j.exchange[0].Data
-	fromID, _ := d["from"].(string)
-	msg, _ := d["message"].(string)
-	from, err := r.store.GetBot(ctx, j.Bot.SpaceID, fromID)
+}
+
+// pendingReplies gathers replies that came back to this bot's messages to
+// its teammates and haven't been shown to it yet. It returns the text to
+// put before the next prompt, and the card ids it used.
+func (r *Runtime) pendingReplies(ctx context.Context, b *store.Bot, user string) (string, []string) {
+	msgs, err := r.store.ListMessages(ctx, b.ID, user, nil, 60)
 	if err != nil {
-		return // the sender was removed
+		return "", nil
 	}
-	var group *store.Group
-	if j.replyIn != "" {
-		if group, err = r.store.GetGroup(ctx, j.Bot.SpaceID, j.replyIn); err != nil {
-			return
+	var sb strings.Builder
+	var ids []string
+	for _, m := range msgs {
+		d := m.Data
+		if d["kind"] != "botmsg" || d["from"] != b.ID || d["status"] != "replied" || d["seen"] == true {
+			continue
 		}
+		reply, _ := d["reply"].(string)
+		to, _ := d["to"].(string)
+		name := "a teammate"
+		if t, err := r.store.GetBotAnySpace(ctx, to); err == nil {
+			name = t.Name
+		}
+		if sb.Len() == 0 {
+			sb.WriteString("Replies to messages you sent your teammates (the person can see these cards):\n")
+		}
+		fmt.Fprintf(&sb, "- %s replied to %q: %s\n", name, short(fmt.Sprint(d["message"]), 200), reply)
+		ids = append(ids, m.ID)
 	}
-	r.Enqueue(Job{Bot: from, Group: group, For: j.user(), Trigger: "bot_reply", Untrusted: j.Untrusted, Depth: j.Depth + 1,
-		Prompt: fmt.Sprintf("Reply from %s to your message %q:\n\n%s", j.Bot.Name, short(msg, 200), reply)})
+	if sb.Len() == 0 {
+		return "", nil
+	}
+	sb.WriteString("\n")
+	return sb.String(), ids
+}
+
+// markSeen stops replies from being shown in later prompts.
+func (r *Runtime) markSeen(ctx context.Context, ids []string) {
+	for _, id := range ids {
+		_, _ = r.store.MergeMessageData(ctx, id, map[string]any{"seen": true})
+	}
 }
 
 // settle shows "done" briefly, then idle.
@@ -860,14 +956,19 @@ func (r *Runtime) botError(c convo, b *store.Bot, msg string) {
 	r.setPresence(c, b, Presence{State: "blocked", Detail: "Something went wrong"})
 }
 
-func friendlyError(model string, err error) string {
+func (r *Runtime) friendlyError(model string, err error) string {
 	s := sdk.Redact(err.Error())
+	provider, _ := sdk.SplitModel(model)
 	switch {
-	case strings.Contains(s, "connection refused") && strings.HasPrefix(model, "ollama:"):
+	case strings.Contains(s, "connection refused") && provider == "ollama":
 		return "I can't reach Ollama. Is it running? (`ollama serve`)"
-	case strings.Contains(s, "not found") && strings.HasPrefix(model, "ollama:"):
+	case strings.Contains(s, "not found") && provider == "ollama":
 		return fmt.Sprintf("The model %s isn't installed. Run `ollama pull %s`.", strings.TrimPrefix(model, "ollama:"), strings.TrimPrefix(model, "ollama:"))
-	case errors.Is(err, eipagent.ErrThreadBusy):
+	case strings.Contains(s, "connection refused"):
+		if name := r.providerName(provider); name != "" {
+			return fmt.Sprintf("I can't reach %s. Is it running and reachable?", name)
+		}
+	case errors.Is(err, kiln.ErrThreadBusy):
 		return "I was busy with another task. Send that again?"
 	}
 	if len(s) > 300 {

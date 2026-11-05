@@ -4,7 +4,8 @@
 # forward, or starts it on the start page.
 flags=(--class=GbotBrowser --no-sandbox --test-type --no-first-run --no-default-browser-check
   --disable-dev-shm-usage --disable-features=Translate --password-store=basic
-  --user-data-dir="$HOME/.browser" --start-maximized --hide-crash-restore-bubble --disable-session-crashed-bubble)
+  --user-data-dir="$HOME/.browser" --start-maximized --hide-crash-restore-bubble --disable-session-crashed-bubble
+  --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222)  # gbot-web drives this window; loopback only, and Chromium refuses websocket connections from web pages
 # Computers are stopped, not shut down, so tell Chromium the last exit was clean.
 prefs="$HOME/.browser/Default/Preferences"
 [ -f "$prefs" ] && sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/; s/"exited_cleanly":false/"exited_cleanly":true/' "$prefs"

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
-import { api, type ApprovalMode, type MCPServer, type Skill, type ToolRule, type VoiceInfo } from "../lib/api";
+import { api, type ApprovalMode, type MCPServer, type Provider, type ProviderKind, type Skill, type ToolRule, type VoiceInfo } from "../lib/api";
 import { set, useStore } from "../lib/store";
 import { voiceInfo } from "../lib/voice";
 import { attempt, toast } from "../lib/toast";
@@ -12,9 +12,10 @@ import { Toggle } from "./SidePanel";
 import { TeamSection } from "./Sharing";
 import { bouncy, Button, Icon, Input, Label, leave, spring, TextArea } from "./ui";
 
-type Tab = "general" | "team" | "integrations" | "skills" | "voice";
+type Tab = "general" | "providers" | "team" | "integrations" | "skills" | "voice";
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
+  { id: "providers", label: "Providers" },
   { id: "team", label: "Team" },
   { id: "integrations", label: "Integrations" },
   { id: "skills", label: "Skills" },
@@ -39,6 +40,7 @@ export function Settings({ open, onClose, initialTab = "general" }: { open: bool
       </div>
       <div className="px-5 py-5 min-h-[420px]">
         {tab === "general" && <General />}
+        {tab === "providers" && <Providers />}
         {tab === "team" && <TeamSection />}
         {tab === "integrations" && <Integrations />}
         {tab === "skills" && <Skills />}
@@ -75,8 +77,8 @@ function General() {
           <div className="mt-3 rounded-[10px] bg-surface-2 p-4 flex gap-3">
             <Gbot seed="plug" look={{ shape: "pill", hue: "sky", eyes: "dot" }} mood="waiting" size={52} />
             <div className="text-[14px]">
-              <div className="font-semibold">Run models on your own machine</div>
-              <p className="text-ink-2 mt-1">Install <a className="underline" href="https://ollama.com" target="_blank" rel="noreferrer">Ollama</a>, then pull a small model with tools:</p>
+              <div className="font-semibold">Connect a model provider</div>
+              <p className="text-ink-2 mt-1">Run <a className="underline" href="https://ollama.com" target="_blank" rel="noreferrer">Ollama</a>, LM Studio, vLLM or any OpenAI-compatible server, or add Anthropic or Gemini in the Providers tab. For Ollama, pull a small model with tools:</p>
               <code className="block mt-2 bg-surface rounded-xl px-3 py-2 text-[13px]">ollama pull qwen3.5:4b</code>
             </div>
           </div>
@@ -117,6 +119,161 @@ function General() {
           <Icon.logout /> Sign out
         </Button>
       </section>
+    </div>
+  );
+}
+
+type ProviderEdit = {
+  id?: string; name: string; kind: ProviderKind; baseUrl: string;
+  apiKey: string; removeKey: boolean; local: boolean; modelsText: string;
+};
+
+const providerKinds: { id: ProviderKind; label: string; hint: string; placeholder: string }[] = [
+  { id: "openai", label: "OpenAI-compatible", hint: "vLLM, LM Studio, llama.cpp, LiteLLM…", placeholder: "http://localhost:1234/v1" },
+  { id: "anthropic", label: "Anthropic", hint: "Claude models", placeholder: "https://api.anthropic.com" },
+  { id: "gemini", label: "Gemini", hint: "Google AI Studio", placeholder: "https://generativelanguage.googleapis.com/v1beta" },
+];
+
+const blankProvider = (): ProviderEdit => ({
+  name: "", kind: "openai", baseUrl: "", apiKey: "", removeKey: false, local: true, modelsText: "",
+});
+
+function Providers() {
+  const [list, setList] = useState<Provider[] | null>(null);
+  const [edit, setEdit] = useState<ProviderEdit | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = () => api.providers().then((r) => setList(r.providers)).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+  const refreshModels = () => api.models().then((r) => set(() => ({ models: r.models }))).catch(() => {});
+
+  function start(p?: Provider) {
+    setError(""); setNotice("");
+    if (!p) {
+      setEdit(blankProvider());
+      return;
+    }
+    setEdit({
+      id: p.id, name: p.name, kind: p.kind, baseUrl: p.baseUrl, apiKey: "",
+      removeKey: false, local: p.local, modelsText: p.models.join("\n"),
+    });
+  }
+
+  async function save() {
+    if (!edit) return;
+    setBusy(true); setError(""); setNotice("");
+    const models = edit.modelsText.split(/[\n,]/).map((m) => m.trim()).filter(Boolean);
+    const body = { name: edit.name.trim(), kind: edit.kind, baseUrl: edit.baseUrl.trim(), local: edit.local, models };
+    try {
+      if (edit.id) await api.updateProvider(edit.id, { ...body, apiKey: edit.apiKey || undefined, removeKey: edit.removeKey });
+      else await api.createProvider({ ...body, apiKey: edit.apiKey || undefined });
+      toast(edit.id ? "Provider updated" : "Provider connected");
+      setEdit(null);
+      load(); refreshModels();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+
+  async function discover() {
+    if (!edit) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const r = await api.discoverProvider({ id: edit.id, kind: edit.kind, baseUrl: edit.baseUrl.trim(), apiKey: edit.apiKey || undefined });
+      setEdit({ ...edit, modelsText: r.models.join("\n") });
+      setNotice(r.models.length ? `Found ${r.models.length} models.` : "No models returned.");
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+
+  if (edit) {
+    const kind = providerKinds.find((k) => k.id === edit.kind)!;
+    return (
+      <div className="space-y-3">
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div><Label>Name</Label><Input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} placeholder="My GPU box" /></div>
+          <div>
+            <Label>Protocol</Label>
+            <select value={edit.kind} onChange={(e) => setEdit({ ...edit, kind: e.target.value as ProviderKind, baseUrl: "" })}
+              className="w-full h-9 rounded-[10px] bg-surface hairline px-3 text-[14px] text-ink outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)] cursor-pointer">
+              {providerKinds.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
+            </select>
+          </div>
+        </div>
+        <div>
+          <Label hint={kind.hint}>Endpoint</Label>
+          <Input value={edit.baseUrl} onChange={(e) => setEdit({ ...edit, baseUrl: e.target.value })} placeholder={kind.placeholder} />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <Label hint={edit.id && !edit.removeKey ? "leave blank to keep" : "optional for local servers"}>API key</Label>
+            <Input type="password" value={edit.apiKey} onChange={(e) => setEdit({ ...edit, apiKey: e.target.value })}
+              placeholder={edit.id ? "••••••••" : "sk-…"} autoComplete="off" disabled={edit.removeKey} />
+          </div>
+          <div className="flex flex-col justify-end gap-2 pb-1">
+            <label className="flex items-center gap-2 text-[13px] text-ink-2 cursor-pointer">
+              <input type="checkbox" checked={edit.local} onChange={(e) => setEdit({ ...edit, local: e.target.checked })} />
+              Runs on this machine
+            </label>
+            {edit.id && (
+              <label className="flex items-center gap-2 text-[13px] text-ink-2 cursor-pointer">
+                <input type="checkbox" checked={edit.removeKey} onChange={(e) => setEdit({ ...edit, removeKey: e.target.checked, apiKey: "" })} />
+                Remove stored key
+              </label>
+            )}
+          </div>
+        </div>
+        <div>
+          <Label hint="one per line or comma separated; used when discovery can't reach the endpoint">Models</Label>
+          <TextArea rows={5} className="font-mono text-[13px]!" value={edit.modelsText}
+            onChange={(e) => setEdit({ ...edit, modelsText: e.target.value })} placeholder={"llama3.3:70b\nqwen3.5:4b"} />
+        </div>
+        {notice && <p className="text-live text-[13px]">{notice}</p>}
+        {error && <p className="text-danger text-[13px]">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button>
+          <Button variant="soft" onClick={discover} disabled={busy}>{busy ? "Checking…" : "Discover models"}</Button>
+          <Button onClick={save} disabled={busy || !edit.name.trim()}>{busy ? "Saving…" : edit.id ? "Save" : "Connect"}</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <div className="font-semibold text-[14px]">Model providers</div>
+          <p className="text-[13px] text-ink-2">Connect any OpenAI-compatible server, Anthropic or Gemini. Keys are encrypted and only your account can use the models.</p>
+        </div>
+        <Button variant="soft" onClick={() => start()}><Icon.plus /> Add</Button>
+      </div>
+      {list?.length === 0 && <Empty text="No providers yet." />}
+      <ul className="space-y-2">
+        {list?.map((p) => {
+          const status = p.status === "connected" ? "text-live" : p.status === "off" ? "text-ink-2" : "text-danger";
+          return (
+            <li key={p.id} className="rounded-2xl border border-line p-3">
+              <div className="flex items-center gap-3">
+                <span className={p.enabled ? "text-live" : "text-ink-2"}><Icon.plug /></span>
+                <button className="min-w-0 flex-1 text-left cursor-pointer" onClick={() => start(p)}>
+                  <div className="font-semibold text-[14px]">{p.name} <span className="text-[11px] font-bold uppercase tracking-wide text-ink-3">{p.kind}</span></div>
+                  <div className="text-[12.5px] text-ink-2 truncate">{p.baseUrl}</div>
+                </button>
+                <Toggle on={p.enabled} label={p.enabled ? "Turn off" : "Turn on"}
+                  onChange={async (v) => { await attempt(() => api.updateProvider(p.id, { enabled: v }), v ? `${p.name} on` : `${p.name} off`); load(); refreshModels(); }} />
+                <button className="text-ink-2 hover:text-ink cursor-pointer" aria-label={`Refresh ${p.name} models`}
+                  onClick={async () => { await attempt(() => api.refreshProvider(p.id), "Models refreshed"); load(); refreshModels(); }}><Icon.spark /></button>
+                <button className="text-ink-2 hover:text-danger cursor-pointer" aria-label={`Remove ${p.name}`}
+                  onClick={async () => { await attempt(() => api.deleteProvider(p.id), `${p.name} removed`); load(); refreshModels(); }}><Icon.trash /></button>
+              </div>
+              <div className="mt-2 text-[12.5px]">
+                <span className={status}>{p.status === "connected" ? `${p.models.length} models` : p.status}</span>
+                {p.models.length > 0 && <span className="text-ink-2">: {p.models.slice(0, 6).join(", ")}{p.models.length > 6 ? "…" : ""}</span>}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

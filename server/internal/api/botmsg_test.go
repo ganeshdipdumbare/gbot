@@ -14,8 +14,9 @@ import (
 	"gbot/internal/store"
 )
 
-// A bot asked to talk to another bot messages it in its chat and gets
-// the reply back.
+// A bot messages another bot without waiting. The reply lands on both
+// exchange cards; the sender is not run again, and sees the reply in its
+// next turn.
 func TestBotMessagesBot(t *testing.T) {
 	dsn := testDB(t)
 	ctx := context.Background()
@@ -37,7 +38,6 @@ func TestBotMessagesBot(t *testing.T) {
 		map[string]any{"tool": "message_bot", "args": map[string]any{"to": "@grok bot", "message": "What's 6 times 7?"}},
 		map[string]any{"text": "Ok, 42."},
 		map[string]any{"text": "Ok, 42."},
-		map[string]any{"text": "Grok Bot says 42."}, // Pip, woken by the reply
 		map[string]any{"tool": "message_bot", "args": map[string]any{"to": "Grok Bot", "message": "The report is ready."}},
 		map[string]any{"text": "NO_REPLY"},
 		map[string]any{"text": "NO_REPLY"},
@@ -88,15 +88,17 @@ func TestBotMessagesBot(t *testing.T) {
 		return out
 	}
 
-	// Pip sends without waiting; Grok Bot's reply wakes Pip.
+	// Pip sends without waiting. The reply lands on both cards.
 	c.do("POST", "/api/bots/"+pip.ID+"/messages", map[string]string{"text": "ask Grok Bot what 6 times 7 is"}, nil)
-	waitFor("Pip to hear back", func() bool { b := bubbles(pip.ID); return len(b) == 2 && b[1] == "Grok Bot says 42." })
+	waitFor("the reply on both cards", func() bool {
+		return card(pip.ID, "What's 6 times 7?").Data["status"] == "replied" && card(grok.ID, "What's 6 times 7?").Data["status"] == "replied"
+	})
 	out, in := card(pip.ID, "What's 6 times 7?"), card(grok.ID, "What's 6 times 7?")
 	if out.Content != "Messaged Grok Bot" || in.Content != "Message from Pip" {
 		t.Fatalf("cards say %q and %q", out.Content, in.Content)
 	}
 	for _, m := range []store.Message{out, in} {
-		if m.Data["reply"] != "Ok, 42." || m.Data["status"] != "replied" || m.Data["from"] != pip.ID {
+		if m.Data["reply"] != "Ok, 42." || m.Data["from"] != pip.ID {
 			t.Fatalf("exchange card: %+v", m.Data)
 		}
 	}
@@ -106,14 +108,29 @@ func TestBotMessagesBot(t *testing.T) {
 			t.Fatalf("the exchange leaked into Grok Bot's chat: %+v", m)
 		}
 	}
+	// Pip is not run again for the reply: its own chat has only the
+	// message it wrote after sending.
+	waitFor("Pip's own answer", func() bool { return len(bubbles(pip.ID)) == 1 })
+	time.Sleep(300 * time.Millisecond)
+	if b := bubbles(pip.ID); len(b) != 1 || b[0] != "Ok, 42." {
+		t.Fatalf("Pip was run again for the reply; bubbles %q", b)
+	}
+	// The reply isn't shown to Pip until its next turn.
+	if card(pip.ID, "What's 6 times 7?").Data["seen"] == true {
+		t.Fatal("reply marked seen before Pip's next turn")
+	}
 
-	// Nothing to send back: the card says delivered and Pip isn't woken.
+	// Nothing to send back: the card says delivered, and Pip's next turn
+	// (which carries the earlier reply) is the only run it gets.
 	c.do("POST", "/api/bots/"+pip.ID+"/messages", map[string]string{"text": "tell Grok Bot the report is ready"}, nil)
 	waitFor("delivery", func() bool { return card(grok.ID, "The report is ready.").Data["status"] == "delivered" })
+	waitFor("Pip's next turn to show the earlier reply", func() bool {
+		return card(pip.ID, "What's 6 times 7?").Data["seen"] == true
+	})
 	time.Sleep(300 * time.Millisecond)
-	// Pip's own "NO_REPLY" after sending reads as a send announcement and
-	// is dropped too, so Pip has nothing new.
-	if b := bubbles(pip.ID); len(b) != 2 {
-		t.Fatalf("Pip shouldn't be woken by NO_REPLY; bubbles %q", b)
+	// Pip's "NO_REPLY" after sending reads as a send announcement and is
+	// dropped, so Pip's chat gains nothing new.
+	if b := bubbles(pip.ID); len(b) != 1 {
+		t.Fatalf("Pip's chat changed after NO_REPLY; bubbles %q", b)
 	}
 }
