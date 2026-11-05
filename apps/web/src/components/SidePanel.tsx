@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type CompositionEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
@@ -149,13 +149,23 @@ function ComputerView({ bot, open, control, onClose }: {
   const [error, setError] = useState("");
   const [holding, setHolding] = useState(false);
   const area = useRef<HTMLDivElement>(null);
+  // Mobile keyboards only open for an editable element, so a transparent
+  // textarea sits over the screen and collects real keystrokes and IME.
+  const keyboard = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
   // One MJPEG connection renders every frame; no request per frame.
   const src = open && status?.state === "on" ? api.streamUrl(bot.id) : null;
 
   async function take() {
     setError("");
-    try { update(await api.computerAction(bot.id, "control", { user: true })); setHolding(true); setTimeout(() => area.current?.focus(), 50); }
-    catch (e) { setError(e instanceof Error ? e.message : "Couldn't take control"); }
+    // Focus inside the tap so iOS opens the keyboard, then again after the
+    // server confirms control (the first focus may happen while watching).
+    keyboard.current?.focus({ preventScroll: true });
+    try {
+      update(await api.computerAction(bot.id, "control", { user: true }));
+      setHolding(true);
+      setTimeout(() => keyboard.current?.focus({ preventScroll: true }), 60);
+    } catch (e) { setError(e instanceof Error ? e.message : "Couldn't take control"); }
   }
 
   useEffect(() => {
@@ -206,18 +216,39 @@ function ComputerView({ bot, open, control, onClose }: {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
   };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && e.shiftKey) return release();
-    if (!holding) return;
-    e.preventDefault();
+  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape" && e.shiftKey) { e.preventDefault(); return release(); }
+    if (!holding || e.nativeEvent.isComposing || e.key === "Process" || e.key === "Unidentified") return;
     const mods = [e.ctrlKey && "ctrl", e.altKey && "alt", e.metaKey && "super"].filter(Boolean) as string[];
-    const printable = e.key.length === 1 && mods.length === 0;
-    if (printable) { queueText(e.key); return; }
+    if (e.key.length === 1 && mods.length === 0) {
+      // Don't preventDefault: the input event carries the composed
+      // character, including mobile autocorrect and IME replacements.
+      return;
+    }
+    e.preventDefault();
     flush();
     if (keyMap[e.key] || e.key.length === 1) send({ type: "key", key: [...mods, keyMap[e.key] ?? e.key].join("+") });
   };
+  // The textarea is only a buffer: send what it received and clear it, so
+  // the next character starts fresh. This is what makes the phone keyboard
+  // type into the bot's computer.
+  const onInput = (e: FormEvent<HTMLTextAreaElement>) => {
+    if (composing.current) return;
+    const el = e.currentTarget;
+    const text = el.value;
+    el.value = "";
+    if (text && holding) queueText(text);
+  };
+  const onCompositionStart = () => { composing.current = true; };
+  const onCompositionEnd = (e: CompositionEvent<HTMLTextAreaElement>) => {
+    composing.current = false;
+    const text = e.currentTarget.value;
+    e.currentTarget.value = "";
+    if (text) queueText(text);
+  };
   const click = (type: string) => (e: MouseEvent) => {
     if (!holding) return;
+    keyboard.current?.focus({ preventScroll: true });
     flush();
     send({ type, ...pos(e) });
   };
@@ -226,41 +257,52 @@ function ComputerView({ bot, open, control, onClose }: {
     <AnimatePresence>
       {open && (
         <motion.div className="fixed inset-0 z-50 bg-[#0E0B12]/90 backdrop-blur-sm flex flex-col" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade}>
-          <div className="flex items-center gap-3 px-4 h-14 text-white">
-            <Gbot look={bot.look} seed={bot.id} size={30} mood={holding ? "waiting" : "idle"} live />
-            <div className="font-semibold min-w-0 truncate">
+          <div className="flex items-center gap-2 px-3 sm:px-4 h-14 text-white">
+            <Gbot look={bot.look} seed={bot.id} size={30} mood={holding ? "waiting" : "idle"} live className="shrink-0" />
+            <div className="font-semibold min-w-0 truncate text-[14px] sm:text-[15px]">
               {holding ? `You have control of ${bot.name}'s computer` : `Watching ${bot.name}'s computer`}
             </div>
-            <span className="text-white/50 text-[13px] hidden sm:inline">
+            <span className="text-white/50 text-[13px] hidden md:inline shrink-0">
               {holding ? "Shift+Esc to hand it back" : "The bot keeps working while you watch"}
             </span>
             <div className="flex-1" />
             {holding
-              ? <Button onClick={release} className="bg-white! text-[#16131C]!">Hand back</Button>
-              : <Button onClick={take} className="bg-white! text-[#16131C]!">Take control</Button>}
-            <Button onClick={release} className="bg-white/10! text-white!">Close</Button>
+              ? <Button onClick={release} className="bg-white! text-[#16131C]! whitespace-nowrap shrink-0">Hand back</Button>
+              : <Button onClick={take} className="bg-white! text-[#16131C]! whitespace-nowrap shrink-0">Take control</Button>}
+            <Button onClick={release} className="bg-white/10! text-white! whitespace-nowrap shrink-0">Close</Button>
           </div>
           <div className="flex-1 grid place-items-center p-4 min-h-0">
             <motion.div
               ref={area}
-              tabIndex={holding ? 0 : -1}
-              onKeyDown={onKey}
               onClick={click("click")}
               onDoubleClick={click("dblclick")}
               onContextMenu={(e) => { e.preventDefault(); if (holding) click("rightclick")(e); }}
               onWheel={(e) => { if (holding) { flush(); send({ type: "scroll", deltaY: e.deltaY, ...pos(e) }); } }}
               initial={{ scale: 0.98 }} animate={{ scale: 1 }} transition={spring}
-              className={`relative w-[min(100%,1280px,calc((100dvh-88px)*1.6))] aspect-[16/10] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-[0_24px_80px_-16px_rgba(0,0,0,0.7)] outline-none bg-black ${holding ? "cursor-default" : "cursor-pointer"}`}
+              className={`relative touch-none w-[min(100%,1280px,calc((100dvh-88px)*1.6))] aspect-[16/10] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-[0_24px_80px_-16px_rgba(0,0,0,0.7)] outline-none bg-black ${holding ? "cursor-default" : "cursor-pointer"}`}
               aria-label={holding ? `${bot.name}'s screen. Click and type to control it.` : `${bot.name}'s screen. Take control to click and type.`}
             >
+              <textarea
+                ref={keyboard}
+                onKeyDown={onKey}
+                onInput={onInput}
+                onCompositionStart={onCompositionStart}
+                onCompositionEnd={onCompositionEnd}
+                autoCapitalize="off"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
+                aria-label={`Type into ${bot.name}'s computer`}
+                className={`absolute inset-0 size-full resize-none border-0 bg-transparent p-0 text-transparent caret-transparent opacity-0 outline-none text-[16px] ${holding ? "" : "pointer-events-none"}`}
+              />
               {src
                 ? <img key={src} src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />
                 : <div className="absolute inset-0 grid place-items-center text-white/60 text-sm">
                   {status?.state === "starting" ? "Waking up…" : status?.state === "on" ? "Connecting to the screen…" : "Its computer is asleep"}
                 </div>}
               {!holding && status?.state === "on" && (
-                <button type="button" onClick={(e) => { e.stopPropagation(); take(); }}
-                  className="absolute bottom-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full bg-black/65 hover:bg-black/80 text-white text-[13px] px-3 py-1.5">
+                <button type="button" onClick={(e) => { e.stopPropagation(); keyboard.current?.focus({ preventScroll: true }); take(); }}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full bg-black/65 hover:bg-black/80 text-white text-[13px] px-3 py-1.5 whitespace-nowrap">
                   <Icon.control /> Take control
                 </button>
               )}
