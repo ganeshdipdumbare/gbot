@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gbot/internal/api"
 	"gbot/internal/crypto"
@@ -90,9 +91,12 @@ func TestMCPIntegrations(t *testing.T) {
 	if strings.Contains(string(b), "s3cret") {
 		t.Fatal("token echoed back")
 	}
-	if m.Status != "connected" || len(m.Tools) != 2 {
-		t.Fatalf("want connected with 2 tools, got %s %v", m.Status, m.Tools)
+	if m.Status == "connected" || len(m.Tools) != 0 {
+		t.Fatalf("adding a server should return before connecting, got %s %v", m.Status, m.Tools)
 	}
+	waitMCP(t, a, m.ID, func(status string, tools []string) bool {
+		return status == "connected" && len(tools) == 2
+	})
 	var row []byte
 	_ = st.DB.QueryRow(ctx, `SELECT headers FROM mcp_servers WHERE id=$1`, m.ID).Scan(&row)
 	if strings.Contains(string(row), "s3cret") {
@@ -123,6 +127,10 @@ func TestMCPIntegrations(t *testing.T) {
 	if s, _ := broken["status"].(string); s == "connected" || s == "" || s == "off" {
 		t.Fatalf("broken server reported as %q", s)
 	}
+	brokenID, _ := broken["id"].(string)
+	waitMCP(t, a, brokenID, func(status string, _ []string) bool {
+		return status != "connecting" && status != "off"
+	})
 	var all struct {
 		Servers []struct {
 			ID, Status string
@@ -139,5 +147,58 @@ func TestMCPIntegrations(t *testing.T) {
 	a.do("PATCH", "/api/mcp/"+m.ID, map[string]bool{"enabled": false}, &raw)
 	if raw["status"] != "off" {
 		t.Fatalf("disabled server still loaded: %v", raw["status"])
+	}
+	// Turning a server off rebuilds the agent without its tools; deleting
+	// it does the same, so a removed integration can't keep acting.
+	waitNoMCPTools(t, rt, m.ID)
+	a.do("PATCH", "/api/mcp/"+m.ID, map[string]bool{"enabled": true}, &raw)
+	waitMCP(t, a, m.ID, func(status string, tools []string) bool {
+		return status == "connected" && len(tools) == 2
+	})
+	if code := a.do("DELETE", "/api/mcp/"+m.ID, nil, nil); code != 200 {
+		t.Fatalf("delete: %d", code)
+	}
+	waitNoMCPTools(t, rt, m.ID)
+}
+
+// waitNoMCPTools polls until the live agent no longer serves a server's
+// tools, which is how disabling and deleting take effect.
+func waitNoMCPTools(t *testing.T, rt *runs.Runtime, id string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if len(rt.MCPTools(id)) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server %s is still loaded: %v", id, rt.MCPTools(id))
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// waitMCP polls the list until a server reaches the wanted state. Adding
+// a server returns before it connects, so tests must wait for the
+// background sync instead of assuming it happened inline.
+func waitMCP(t *testing.T, c *client, id string, ok func(status string, tools []string) bool) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var all struct {
+			Servers []struct {
+				ID, Status string
+				Tools      []string
+			}
+		}
+		c.do("GET", "/api/mcp", nil, &all)
+		for _, s := range all.Servers {
+			if s.ID == id && ok(s.Status, s.Tools) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server %s didn't reach the wanted state: %+v", id, all.Servers)
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }

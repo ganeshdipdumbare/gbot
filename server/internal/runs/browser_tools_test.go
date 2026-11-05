@@ -23,7 +23,9 @@ func TestBrowserTools(t *testing.T) {
 	for _, tl := range r.runTools(&Job{Bot: bot, For: bot.OwnerID}) {
 		byName[tl.Name] = tl
 	}
-	for _, name := range []string{"browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_press"} {
+	for _, name := range []string{"browser_navigate", "browser_back", "browser_forward", "browser_reload",
+		"browser_snapshot", "browser_scroll", "browser_wait", "browser_click", "browser_type", "browser_press",
+		"browser_hover", "browser_check"} {
 		if _, ok := byName[name]; !ok {
 			t.Fatalf("%s not registered", name)
 		}
@@ -34,9 +36,19 @@ func TestBrowserTools(t *testing.T) {
 	if byName["browser_navigate"].Meta["untrusted"] != true {
 		t.Errorf("navigate must mark the run as having read outside text: %v", byName["browser_navigate"].Meta)
 	}
-	for _, name := range []string{"browser_click", "browser_type", "browser_press"} {
+	for _, name := range []string{"browser_click", "browser_type", "browser_press", "browser_check"} {
 		if byName[name].Meta["readonly"] == true || byName[name].Meta["risk"] != "medium" {
 			t.Errorf("%s must be a medium-risk write: %v", name, byName[name].Meta)
+		}
+	}
+	for _, name := range []string{"browser_scroll", "browser_wait", "browser_hover"} {
+		if byName[name].Meta["readonly"] != true {
+			t.Errorf("%s only reads the page and should not need approval: %v", name, byName[name].Meta)
+		}
+	}
+	for _, name := range []string{"browser_back", "browser_forward", "browser_reload"} {
+		if byName[name].Meta["untrusted"] != true || byName[name].Meta["risk"] != "low" {
+			t.Errorf("%s must mark outside text and stay low risk: %v", name, byName[name].Meta)
 		}
 	}
 	schema := func(name string) string {

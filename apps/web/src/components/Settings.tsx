@@ -288,6 +288,13 @@ function Integrations() {
   const [error, setError] = useState("");
   const load = () => api.mcp().then((r) => setList(r.servers)).catch(() => setList([]));
   useEffect(() => { load(); }, []);
+  // Servers connect in the background; poll while any is still connecting
+  // instead of leaving the row stuck on the first response.
+  useEffect(() => {
+    if (!list?.some((m) => m.status === "connecting" || (m.status === "off" && m.enabled))) return;
+    const t = window.setInterval(load, 700);
+    return () => window.clearInterval(t);
+  }, [list]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function add() {
     setBusy(true);
@@ -333,6 +340,7 @@ function Integrations() {
           <li key={m.id} className="rounded-2xl border border-line p-3">
             <div className="flex items-center gap-3">
               <span className={m.status === "connected" ? "text-live" : "text-ink-2"}><Icon.plug /></span>
+
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-[14px]">{m.name}</div>
                 <div className="text-[12.5px] text-ink-2 truncate">{m.url}</div>
@@ -343,7 +351,11 @@ function Integrations() {
             <div className="mt-2 text-[12.5px]">
               {m.status === "connected" ? (
                 <span className="text-ink-2">{m.tools.length} tools: {m.tools.map((t) => t.replace(/^m[0-9a-f]{8}__/, "")).slice(0, 6).join(", ")}{m.tools.length > 6 ? "…" : ""}</span>
-              ) : m.enabled ? <span className="text-danger">{m.status === "off" ? "Connecting…" : m.status}</span> : <span className="text-ink-2">Off</span>}
+              ) : m.enabled ? (
+                <span className={m.status === "connecting" || m.status === "off" ? "text-ink-2" : "text-danger"}>
+                  {m.status === "connecting" || m.status === "off" ? "Connecting…" : m.status}
+                </span>
+              ) : <span className="text-ink-2">Off</span>}
             </div>
           </li>
         ))}

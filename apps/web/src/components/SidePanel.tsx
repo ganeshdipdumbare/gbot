@@ -14,20 +14,22 @@ export function SidePanel({ bot, onClose, takeover, setTakeover }: {
   takeover: boolean; setTakeover: (v: boolean) => void;
 }) {
   const status = useStore((s) => s.computers[bot.id]);
+  const [watch, setWatch] = useState(false);
   const label = status?.state === "on" ? (status.controller === "user" ? "You have control" : "Running")
     : status?.state === "starting" ? "Starting" : "Asleep";
+  const closeView = () => { setWatch(false); setTakeover(false); };
   return (
     <div className="h-full flex flex-col bg-bg">
       <div className="flex items-center gap-0.5 pl-4 pr-2 h-11 shrink-0">
         <span className="text-[14px] text-ink-2 truncate flex-1">{bot.name}'s computer <span className="text-ink-3">· {label}</span></span>
-        <ComputerActions bot={bot} onTakeover={() => setTakeover(true)} />
+        <ComputerActions bot={bot} onWatch={() => setWatch(true)} onTakeover={() => setTakeover(true)} />
         <IconButton label="Close panel" onClick={onClose}><Icon.close /></IconButton>
       </div>
       <div className="flex-1 overflow-y-auto scroll-soft">
-        <ComputerTab bot={bot} />
+        <ComputerTab bot={bot} onOpen={() => setWatch(true)} paused={watch || takeover} />
         <RoutinesTab bot={bot} />
       </div>
-      <Takeover bot={bot} open={takeover} onClose={() => setTakeover(false)} />
+      <ComputerView bot={bot} open={watch || takeover} control={takeover} onClose={closeView} />
     </div>
   );
 }
@@ -70,8 +72,8 @@ function useScreen(botId: string, on: boolean, fps = 1.2) {
   return src;
 }
 
-// Wake, sleep and take control, kept small in the panel's header.
-function ComputerActions({ bot, onTakeover }: { bot: Bot; onTakeover: () => void }) {
+// Wake, sleep, watch and take control, kept small in the panel's header.
+function ComputerActions({ bot, onWatch, onTakeover }: { bot: Bot; onWatch: () => void; onTakeover: () => void }) {
   const [status, update] = useComputer(bot);
   const [busy, setBusy] = useState(false);
   const on = status?.state === "on";
@@ -85,7 +87,8 @@ function ComputerActions({ bot, onTakeover }: { bot: Bot; onTakeover: () => void
 
   if (on) return (
     <>
-      <IconButton label="Take control" onClick={onTakeover}><Icon.expand /></IconButton>
+      <IconButton label="Watch full screen" onClick={onWatch}><Icon.expand /></IconButton>
+      <IconButton label="Take control" onClick={onTakeover}><Icon.control /></IconButton>
       <IconButton label="Sleep" disabled={busy} onClick={() => act("stop")}><Icon.moon /></IconButton>
     </>
   );
@@ -95,15 +98,17 @@ function ComputerActions({ bot, onTakeover }: { bot: Bot; onTakeover: () => void
   );
 }
 
-function ComputerTab({ bot }: { bot: Bot }) {
+function ComputerTab({ bot, onOpen, paused }: { bot: Bot; onOpen: () => void; paused: boolean }) {
   const [status] = useComputer(bot);
   const on = status?.state === "on";
-  const src = useScreen(bot.id, on);
+  // The full-screen stream replaces the thumbnail while it is open.
+  const src = useScreen(bot.id, on && !paused);
   const where = `${status?.backend === "microsandbox" ? "Its own microVM on this machine." : "A container on this machine."}${bot.computerNetwork ? " Online." : " Offline until you allow internet in its settings."}`;
 
   return (
     <div className="px-4 pb-2">
-      <div className="relative aspect-[16/10] rounded-2xl overflow-hidden bg-surface shadow-[var(--shadow)]">
+      <button type="button" onClick={onOpen} aria-label={`Watch ${bot.name}'s screen full screen`}
+        className="group relative block w-full aspect-[16/10] rounded-2xl overflow-hidden bg-surface shadow-[var(--shadow)] cursor-pointer">
         <AnimatePresence initial={false}>
           {src ? (
             <motion.img key="screen" src={src} alt={`${bot.name}'s screen`} className="absolute inset-0 size-full object-cover" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
@@ -119,7 +124,12 @@ function ComputerTab({ bot }: { bot: Bot }) {
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+        {src && (
+          <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 text-white text-[12px] px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Icon.expand /> Watch
+          </span>
+        )}
+      </button>
       <p className="text-center text-[12px] text-ink-3 mt-2" title={where}>{bot.name}'s screen</p>
     </div>
   );
@@ -130,34 +140,86 @@ const keyMap: Record<string, string> = {
   ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Home: "Home", End: "End", PageUp: "Prior", PageDown: "Next",
 };
 
-function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: () => void }) {
+// Watch the screen full screen, and only take over when asked. Watching
+// sends no input, so the bot keeps working while the person looks on.
+function ComputerView({ bot, open, control, onClose }: {
+  bot: Bot; open: boolean; control: boolean; onClose: () => void;
+}) {
   const [status, update] = useComputer(bot);
   const [error, setError] = useState("");
+  const [holding, setHolding] = useState(false);
   const area = useRef<HTMLDivElement>(null);
-  const src = useScreen(bot.id, open && status?.state === "on", 4);
+  // One MJPEG connection renders every frame; no request per frame.
+  const src = open && status?.state === "on" ? api.streamUrl(bot.id) : null;
+
+  async function take() {
+    setError("");
+    try { update(await api.computerAction(bot.id, "control", { user: true })); setHolding(true); setTimeout(() => area.current?.focus(), 50); }
+    catch (e) { setError(e instanceof Error ? e.message : "Couldn't take control"); }
+  }
 
   useEffect(() => {
-    if (!open) return;
-    api.computerAction(bot.id, "control", { user: true }).then(update).catch((e) => setError(e.message));
-    setTimeout(() => area.current?.focus(), 50);
-  }, [open, bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!open) { setHolding(false); return; }
+    // A takeover card opens straight into control; watching stays passive.
+    if (control) take();
+    else setHolding(false);
+  }, [open, control]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function release() {
-    try { update(await api.computerAction(bot.id, "control", { user: false })); } catch { /* closing anyway */ }
+    flush();
+    // Let the last typed batch land before handing control back, or the
+    // server may reject it as "take control first".
+    await inflight.current.catch(() => {});
+    if (holding) {
+      try { update(await api.computerAction(bot.id, "control", { user: false })); } catch { /* closing anyway */ }
+    }
+    setHolding(false);
     onClose();
   }
 
-  const send = (body: Record<string, unknown>) => api.computerAction(bot.id, "input", body).catch((e) => setError(e.message));
+  const inflight = useRef<Promise<unknown>>(Promise.resolve());
+  const send = (body: Record<string, unknown>) => {
+    const p = api.computerAction(bot.id, "input", body)
+      .catch((e) => setError(e instanceof Error ? e.message : "Input failed"));
+    inflight.current = p;
+    return p;
+  };
+
+  // Typed characters are batched into one request instead of one per
+  // key, which keeps typing responsive over the network.
+  const queued = useRef("");
+  const timer = useRef<number | null>(null);
+  const flush = () => {
+    if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; }
+    if (!queued.current) return;
+    const text = queued.current;
+    queued.current = "";
+    send({ type: "type", text });
+  };
+  const queueText = (text: string) => {
+    queued.current += text;
+    if (timer.current === null) timer.current = window.setTimeout(flush, 35);
+  };
+  useEffect(() => () => flush(), [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const pos = (e: MouseEvent | WheelEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
   };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape" && e.shiftKey) return release();
+    if (!holding) return;
     e.preventDefault();
     const mods = [e.ctrlKey && "ctrl", e.altKey && "alt", e.metaKey && "super"].filter(Boolean) as string[];
-    if (e.key.length === 1 && mods.length === 0) send({ type: "type", text: e.key });
-    else if (keyMap[e.key] || e.key.length === 1) send({ type: "key", key: [...mods, keyMap[e.key] ?? e.key].join("+") });
+    const printable = e.key.length === 1 && mods.length === 0;
+    if (printable) { queueText(e.key); return; }
+    flush();
+    if (keyMap[e.key] || e.key.length === 1) send({ type: "key", key: [...mods, keyMap[e.key] ?? e.key].join("+") });
+  };
+  const click = (type: string) => (e: MouseEvent) => {
+    if (!holding) return;
+    flush();
+    send({ type, ...pos(e) });
   };
 
   return (
@@ -165,26 +227,43 @@ function Takeover({ bot, open, onClose }: { bot: Bot; open: boolean; onClose: ()
       {open && (
         <motion.div className="fixed inset-0 z-50 bg-[#0E0B12]/90 backdrop-blur-sm flex flex-col" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade}>
           <div className="flex items-center gap-3 px-4 h-14 text-white">
-            <Gbot look={bot.look} seed={bot.id} size={30} mood="waiting" live />
-            <div className="font-semibold">You have control of {bot.name}'s computer</div>
-            <span className="text-white/50 text-[13px] hidden sm:inline">Shift+Esc to hand it back</span>
+            <Gbot look={bot.look} seed={bot.id} size={30} mood={holding ? "waiting" : "idle"} live />
+            <div className="font-semibold min-w-0 truncate">
+              {holding ? `You have control of ${bot.name}'s computer` : `Watching ${bot.name}'s computer`}
+            </div>
+            <span className="text-white/50 text-[13px] hidden sm:inline">
+              {holding ? "Shift+Esc to hand it back" : "The bot keeps working while you watch"}
+            </span>
             <div className="flex-1" />
-            <Button onClick={release} className="bg-white! text-[#16131C]!">Hand back</Button>
+            {holding
+              ? <Button onClick={release} className="bg-white! text-[#16131C]!">Hand back</Button>
+              : <Button onClick={take} className="bg-white! text-[#16131C]!">Take control</Button>}
+            <Button onClick={release} className="bg-white/10! text-white!">Close</Button>
           </div>
           <div className="flex-1 grid place-items-center p-4 min-h-0">
             <motion.div
               ref={area}
-              tabIndex={0}
+              tabIndex={holding ? 0 : -1}
               onKeyDown={onKey}
-              onClick={(e) => send({ type: "click", ...pos(e) })}
-              onDoubleClick={(e) => send({ type: "dblclick", ...pos(e) })}
-              onContextMenu={(e) => { e.preventDefault(); send({ type: "rightclick", ...pos(e) }); }}
-              onWheel={(e) => send({ type: "scroll", deltaY: e.deltaY, ...pos(e) })}
+              onClick={click("click")}
+              onDoubleClick={click("dblclick")}
+              onContextMenu={(e) => { e.preventDefault(); if (holding) click("rightclick")(e); }}
+              onWheel={(e) => { if (holding) { flush(); send({ type: "scroll", deltaY: e.deltaY, ...pos(e) }); } }}
               initial={{ scale: 0.98 }} animate={{ scale: 1 }} transition={spring}
-              className="relative w-[min(100%,1280px,calc((100dvh-88px)*1.6))] aspect-[16/10] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-[0_24px_80px_-16px_rgba(0,0,0,0.7)] outline-none cursor-default bg-black"
-              aria-label={`${bot.name}'s screen. Click and type to control it.`}
+              className={`relative w-[min(100%,1280px,calc((100dvh-88px)*1.6))] aspect-[16/10] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-[0_24px_80px_-16px_rgba(0,0,0,0.7)] outline-none bg-black ${holding ? "cursor-default" : "cursor-pointer"}`}
+              aria-label={holding ? `${bot.name}'s screen. Click and type to control it.` : `${bot.name}'s screen. Take control to click and type.`}
             >
-              {src && <img src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />}
+              {src
+                ? <img key={src} src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />
+                : <div className="absolute inset-0 grid place-items-center text-white/60 text-sm">
+                  {status?.state === "starting" ? "Waking up…" : status?.state === "on" ? "Connecting to the screen…" : "Its computer is asleep"}
+                </div>}
+              {!holding && status?.state === "on" && (
+                <button type="button" onClick={(e) => { e.stopPropagation(); take(); }}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full bg-black/65 hover:bg-black/80 text-white text-[13px] px-3 py-1.5">
+                  <Icon.control /> Take control
+                </button>
+              )}
             </motion.div>
           </div>
           {error && <p className="text-center text-red-300 text-sm pb-3">{error}</p>}

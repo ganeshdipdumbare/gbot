@@ -44,6 +44,10 @@ type mcpState struct {
 	srv    mcpServer
 	status string // connected | error message
 	loaded bool   // the live agent serves this server
+	// off marks a server that was just disabled or deleted. It stays in
+	// the map (still counted as live) until the next sync rebuilds the
+	// agent without it, so the comparison can see what must be removed.
+	off bool
 }
 
 func mcpPrefix(id string) string { return "m" + strings.ReplaceAll(id, "-", "")[:8] }
@@ -168,10 +172,27 @@ func (r *Runtime) probe(s mcpServer) error {
 	return a.Close()
 }
 
-// ForgetMCP drops a server's state so the next sync connects it fresh.
+// WarmMCP marks a just-added or re-enabled server as connecting, so the
+// panel can show it right away while the background sync probes it.
+func (r *Runtime) WarmMCP(s *store.MCPServer, sealer *crypto.Sealer) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if st, ok := r.mcp[s.ID]; ok && !st.off {
+		return // already known; don't undo a live connection
+	}
+	r.mcp[s.ID] = mcpState{srv: decodeMCP(s, sealer), status: "connecting"}
+}
+
+// ForgetMCP marks a server as going away, so the panel shows it off at
+// once. Its live entry is kept until the sync so the agent is rebuilt
+// without it; dropping it here would make the comparison miss it.
 func (r *Runtime) ForgetMCP(id string) {
 	r.mu.Lock()
-	delete(r.mcp, id)
+	if st, ok := r.mcp[id]; ok {
+		st.off = true
+		st.status = "off"
+		r.mcp[id] = st
+	}
 	r.mu.Unlock()
 }
 

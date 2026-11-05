@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"gbot/internal/auth"
@@ -42,12 +43,18 @@ type Server struct {
 	authLimit *auth.Limiter
 	msgLimit  *auth.Limiter
 	hookLimit *auth.Limiter
+
+	// mcpWake coalesces integration changes onto one background worker,
+	// so adding or removing a server never waits on a slow one.
+	mcpOnce sync.Once
+	mcpWake chan struct{}
 }
 
 const sessionCookie = "gbot_session"
 const sessionTTL = 30 * 24 * time.Hour
 
 func (s *Server) Handler() http.Handler {
+	s.startMCPSync()
 	s.authLimit = auth.NewLimiter(10, time.Minute)
 	s.msgLimit = auth.NewLimiter(60, time.Minute)
 	s.hookLimit = auth.NewLimiter(120, time.Minute)

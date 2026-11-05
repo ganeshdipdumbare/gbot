@@ -103,6 +103,7 @@ export const Icon = {
   terminal: () => <I><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9l3 3-3 3M12 15h5" /></I>,
   play: () => <I><path d="M8 5.5v13l10-6.5z" /></I>,
   expand: () => <I><path d="M14 4h6v6M10 20H4v-6M20 4l-6.5 6.5M4 20l6.5-6.5" /></I>,
+  control: () => <I><path d="M5 3.5l14 7-6.2 2.1L10.5 19z" /><path d="M13 13l5.5 5.5" /></I>,
   moon: () => <I><path d="M19.5 14.5A7.5 7.5 0 019.5 4.5a7.5 7.5 0 1010 10z" /></I>,
   power: () => <I><path d="M12 3.5V11M7.2 6.5a7.5 7.5 0 109.6 0" /></I>,
   trash: () => <I><path d="M5 7h14M10 11v6M14 11v6M7 7l1 12h8l1-12M9.5 7V4.5h5V7" /></I>,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -26,6 +27,7 @@ func (s *Server) routesV2(mux *http.ServeMux) {
 	mux.Handle("GET /api/bots/{id}/computer", s.authed(s.computerStatus))
 	mux.Handle("POST /api/bots/{id}/computer/{action}", s.authed(s.computerAction))
 	mux.Handle("GET /api/bots/{id}/computer/screen", s.authed(s.computerScreen))
+	mux.Handle("GET /api/bots/{id}/computer/stream", s.authed(s.computerStream))
 
 	mux.Handle("GET /api/bots/{id}/routines", s.authed(s.listRoutines))
 	mux.Handle("POST /api/bots/{id}/routines", s.authed(s.createRoutine))
@@ -237,6 +239,52 @@ func (s *Server) computerScreen(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(img)
 }
 
+// computerStream sends the screen as a multipart MJPEG stream. One
+// connection replaces the browser's frame-by-frame polling, so watching
+// or taking control doesn't pay a request per frame.
+func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
+	_, o, ok := s.computerOf(w, r)
+	if !ok {
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, 500, "streaming is not supported")
+		return
+	}
+	if _, err := s.Computer.Screenshot(r.Context(), o); err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=gbotframe")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	// About 6 frames a second: smooth enough to watch and click on,
+	// and each frame is one capture inside the computer.
+	const interval = 160 * time.Millisecond
+	fails := 0
+	for {
+		img, err := s.Computer.Screenshot(r.Context(), o)
+		if err == nil {
+			fails = 0
+			if _, err = fmt.Fprintf(w, "--gbotframe\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(img)); err == nil {
+				_, err = w.Write(append(img, '\r', '\n'))
+			}
+			if err != nil {
+				return
+			}
+			flusher.Flush()
+		} else if fails++; fails > 30 {
+			return // the computer went away; let the browser stop asking
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(interval):
+		}
+	}
+}
+
 // ---- Routines ----
 
 type routineView struct {
@@ -443,7 +491,10 @@ func (s *Server) createMCP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "could not save")
 		return
 	}
-	s.syncMCP(r.Context())
+	// Connect in the background: a slow or unreachable server must not
+	// hold up the request, and the panel polls its status.
+	s.Runtime.WarmMCP(m, s.Sealer)
+	s.queueMCP()
 	writeJSON(w, 201, s.mcpView(m))
 }
 
@@ -451,10 +502,34 @@ func isLocalHost(h string) bool {
 	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "host.docker.internal"
 }
 
-func (s *Server) syncMCP(ctx context.Context) {
-	c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 40*time.Second)
-	defer cancel()
-	s.Runtime.SyncMCP(c, s.Sealer)
+// startMCPSync runs one background worker for the lifetime of the
+// server. Changes are coalesced: while a sync is running, a burst of
+// edits results in one more pass over the final state.
+func (s *Server) startMCPSync() {
+	if s.Runtime == nil {
+		return
+	}
+	s.mcpOnce.Do(func() {
+		s.mcpWake = make(chan struct{}, 1)
+		go func() {
+			for range s.mcpWake {
+				c, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				s.Runtime.SyncMCP(c, s.Sealer)
+				cancel()
+			}
+		}()
+	})
+}
+
+func (s *Server) queueMCP() {
+	if s.Runtime == nil {
+		return
+	}
+	s.startMCPSync()
+	select {
+	case s.mcpWake <- struct{}{}:
+	default: // a sync is already queued and will see this change too
+	}
 }
 
 func (s *Server) toggleMCP(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +545,10 @@ func (s *Server) toggleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Runtime.ForgetMCP(m.ID)
-	s.syncMCP(r.Context())
+	if body.Enabled {
+		s.Runtime.WarmMCP(m, s.Sealer)
+	}
+	s.queueMCP()
 	writeJSON(w, 200, s.mcpView(m))
 }
 
@@ -480,6 +558,8 @@ func (s *Server) deleteMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Runtime.ForgetMCP(r.PathValue("id"))
+	// Rebuild the agent without the server, off the request path.
+	s.queueMCP()
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 

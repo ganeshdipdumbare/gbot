@@ -104,12 +104,20 @@ func describeCall(name string, t *sdk.Tool, args map[string]any) string {
 		return fmt.Sprintf("Open %v in its browser", args["url"])
 	case "browser_navigate":
 		return fmt.Sprintf("Open %v in its browser", args["url"])
+	case "browser_back":
+		return "Go back a page in its browser"
+	case "browser_forward":
+		return "Go forward a page in its browser"
+	case "browser_reload":
+		return "Reload the page in its browser"
 	case "browser_click":
 		return fmt.Sprintf("Click [%v] on a web page", args["ref"])
 	case "browser_type":
 		return fmt.Sprintf("Type into [%v] on a web page", args["ref"])
 	case "browser_press":
 		return fmt.Sprintf("Press %v on a web page", args["key"])
+	case "browser_check":
+		return fmt.Sprintf("Change checkbox [%v] on a web page", args["ref"])
 	case "browser_read":
 		return fmt.Sprintf("Read %v", args["url"])
 	case "routine_create":

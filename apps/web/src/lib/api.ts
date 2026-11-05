@@ -92,6 +92,7 @@ export const api = {
   computerAction: (id: string, action: "start" | "stop" | "control" | "input" | "show", body: unknown = {}) =>
     req<ComputerStatus>("POST", `${bot(id)}/computer/${action}`, body),
   screenUrl: (id: string) => `${bot(id)}/computer/screen?t=${Date.now()}`,
+  streamUrl: (id: string) => `${bot(id)}/computer/stream?t=${Date.now()}`,
 
   sharing: (id: string) => req<Sharing>("GET", `${bot(id)}/sharing`),
   setVisibility: (id: string, visibility: Visibility) => req<Sharing>("PUT", `${bot(id)}/sharing`, { visibility }),

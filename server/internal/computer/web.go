@@ -23,15 +23,40 @@ func webCmd(step ...string) []string {
 	return append([]string{"/usr/local/bin/gbot-web"}, step...)
 }
 
-func typeArgs(ref int, text string, submit bool) []string {
+func clickArgs(ref int, accept bool) []string {
+	a := []string{"click", strconv.Itoa(ref)}
+	if accept {
+		a = append(a, "--accept")
+	}
+	return a
+}
+
+func typeArgs(ref int, text string, submit, accept bool) []string {
 	a := []string{"type", strconv.Itoa(ref)}
 	if submit {
 		a = append(a, "--submit")
 	}
+	if accept {
+		a = append(a, "--accept")
+	}
 	return append(a, "--", text)
 }
 
-func pressArgs(key string) []string { return []string{"press", "--", key} }
+func pressArgs(key string, accept bool) []string {
+	a := []string{"press"}
+	if accept {
+		a = append(a, "--accept")
+	}
+	return append(a, "--", key)
+}
+
+func scrollArgs(direction string, amount int) []string {
+	a := []string{"scroll", direction}
+	if amount > 0 {
+		a = append(a, "--amount", strconv.Itoa(amount))
+	}
+	return a
+}
 
 // webResult turns gbot-web's output into a tool result or an error. Exit
 // status 127 means the computer doesn't have gbot-web at all: an image
@@ -78,14 +103,65 @@ func (m *Manager) WebSnapshot(ctx context.Context, o Owner) (string, error) {
 	return m.WebAction(ctx, o, "Reading the page", webCmd("snapshot")...)
 }
 
-func (m *Manager) WebClick(ctx context.Context, o Owner, ref int) (string, error) {
-	return m.WebAction(ctx, o, "Clicking ["+strconv.Itoa(ref)+"]", webCmd("click", strconv.Itoa(ref))...)
+func (m *Manager) WebClick(ctx context.Context, o Owner, ref int, accept bool) (string, error) {
+	return m.WebAction(ctx, o, "Clicking ["+strconv.Itoa(ref)+"]", webCmd(clickArgs(ref, accept)...)...)
 }
 
-func (m *Manager) WebType(ctx context.Context, o Owner, ref int, text string, submit bool) (string, error) {
-	return m.WebAction(ctx, o, "Typing into ["+strconv.Itoa(ref)+"]", webCmd(typeArgs(ref, text, submit)...)...)
+func (m *Manager) WebType(ctx context.Context, o Owner, ref int, text string, submit, accept bool) (string, error) {
+	return m.WebAction(ctx, o, "Typing into ["+strconv.Itoa(ref)+"]", webCmd(typeArgs(ref, text, submit, accept)...)...)
 }
 
-func (m *Manager) WebPress(ctx context.Context, o Owner, key string) (string, error) {
-	return m.WebAction(ctx, o, "Pressing "+key, webCmd(pressArgs(key)...)...)
+func (m *Manager) WebPress(ctx context.Context, o Owner, key string, accept bool) (string, error) {
+	return m.WebAction(ctx, o, "Pressing "+key, webCmd(pressArgs(key, accept)...)...)
+}
+
+func (m *Manager) WebBack(ctx context.Context, o Owner) (string, error) {
+	return m.WebAction(ctx, o, "Going back", webCmd("back")...)
+}
+
+func (m *Manager) WebForward(ctx context.Context, o Owner) (string, error) {
+	return m.WebAction(ctx, o, "Going forward", webCmd("forward")...)
+}
+
+func (m *Manager) WebReload(ctx context.Context, o Owner) (string, error) {
+	return m.WebAction(ctx, o, "Reloading the page", webCmd("reload")...)
+}
+
+func (m *Manager) WebHover(ctx context.Context, o Owner, ref int) (string, error) {
+	return m.WebAction(ctx, o, "Hovering ["+strconv.Itoa(ref)+"]", webCmd("hover", strconv.Itoa(ref))...)
+}
+
+func (m *Manager) WebCheck(ctx context.Context, o Owner, ref int, off bool) (string, error) {
+	what := "Checking"
+	a := []string{"check", strconv.Itoa(ref)}
+	if off {
+		what, a = "Unchecking", append(a, "--off")
+	}
+	return m.WebAction(ctx, o, what+" ["+strconv.Itoa(ref)+"]", webCmd(a...)...)
+}
+
+func (m *Manager) WebScroll(ctx context.Context, o Owner, direction string, amount int) (string, error) {
+	switch direction {
+	case "up", "down", "top", "bottom":
+	default:
+		return "", errors.New("scroll up, down, top or bottom")
+	}
+	return m.WebAction(ctx, o, "Scrolling "+direction, webCmd(scrollArgs(direction, amount)...)...)
+}
+
+func (m *Manager) WebWait(ctx context.Context, o Owner, text, selector string, ms, seconds int) (string, error) {
+	a := []string{"wait"}
+	if text != "" {
+		a = append(a, "--text", text)
+	}
+	if selector != "" {
+		a = append(a, "--selector", selector)
+	}
+	if ms > 0 {
+		a = append(a, "--ms", strconv.Itoa(ms))
+	}
+	if seconds > 0 {
+		a = append(a, "--timeout", strconv.Itoa(seconds))
+	}
+	return m.WebAction(ctx, o, "Waiting for the page", webCmd(a...)...)
 }
