@@ -47,6 +47,9 @@ import java.time.LocalDate
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
+/** Tools that drive the bot's browser or computer, not just the web. */
+internal fun usesComputer(name: String) = name.startsWith("browser_") || name == "open_in_chrome" || name == "vault_type"
+
 /**
  * The bot's mind, on the phone. One run: think, use tools, answer. The
  * conversation is rebuilt from the last few turns each time, so a run can
@@ -622,8 +625,8 @@ class LocalBrain(
         stage: (String) -> Unit,
     ): String {
         val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch"
-        val onComputer = name.startsWith("browser_") || name == "open_in_chrome" || name == "vault_type"
-        if (onComputer || looking) {
+        val onComputer = usesComputer(name)
+        if (onComputer) {
             browsing.add(bot.id)
             emitComputer(bot.id, true)
         }
