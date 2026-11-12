@@ -195,7 +195,7 @@ class LocalTools(
                 "submit", "boolean", "true to press Enter after typing", required = listOf("name", "id"),
             ),
         ),
-    ) + if (peers.isEmpty()) emptyList() else listOf(
+    ) + (if (peers.isEmpty()) emptyList() else listOf(
         ToolSchema(
             "message_bot",
             "Ask or tell another of the person's bots something: " + peers.joinToString(", ") { it.name } +
@@ -208,7 +208,7 @@ class LocalTools(
                 required = listOf("to", "message"),
             ),
         ),
-    ) + if (!main) emptyList() else listOf(
+    )) + (if (!main) emptyList() else listOf(
         ToolSchema("bot_list", "List the person's bots with their titles and models. Look before you change one.", params()),
         ToolSchema(
             "bot_create", "Hatch a new bot for the person.",
@@ -233,7 +233,7 @@ class LocalTools(
             "bot_archive", "Archive one of the person's bots. The main bot can't be archived.",
             params("bot", "string", "The bot's name", required = listOf("bot")),
         ),
-    )
+    ))
 
     /** A path inside the bot's folder, or null if it would leave it. */
     private fun fileIn(path: String): java.io.File? {
