@@ -215,6 +215,14 @@ class LocalTest {
         assertFalse(dev.gbot.app.local.carriesAnswer("   "))
     }
 
+    @Test
+    fun `the sentinel is recognised, so it is never shown as a reply`() {
+        assertTrue(dev.gbot.app.local.isNoReply("NO_REPLY"))
+        assertTrue(dev.gbot.app.local.isNoReply(" `NO_REPLY`. "))
+        assertTrue(dev.gbot.app.local.isNoReply("no_reply"))
+        assertFalse(dev.gbot.app.local.isNoReply("Here is the joke."))
+    }
+
     // ---- The exchange card is what the chat UI opens on tap ----
 
     @Test

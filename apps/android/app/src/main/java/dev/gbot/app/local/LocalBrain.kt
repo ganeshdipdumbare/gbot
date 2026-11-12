@@ -301,7 +301,9 @@ class LocalBrain(
                 else -> text
             }
             log("reply ${content.length} chars")
-            reply(bot, group, content)
+            // Never show the sentinel itself: it means "nothing to send
+            // back", so say that in words.
+            reply(bot, group, if (isNoReply(content)) "Nothing to add — no reply needed." else content)
             if (group == null && from != null) passAnswer(bot, from, content, depth)
             if (group != null && depth < 3) handoff(group, bot, content, depth)
         } finally {
@@ -680,6 +682,10 @@ class LocalBrain(
 /** What a bot replies when it has nothing to send back. */
 const val NO_REPLY = "NO_REPLY"
 
+/** Whether a bot's answer is the "nothing to say" sentinel rather than a reply. */
+fun isNoReply(reply: String): Boolean =
+    reply.trim().trim(' ', '.', '`', '*').equals(NO_REPLY, ignoreCase = true)
+
 /**
  * The data for one bot-to-bot message. The chat UI reads exactly these keys
  * to draw the "Messaged X" / "Message from Y" line and the tap-through
@@ -697,7 +703,7 @@ fun exchangeData(from: String, to: String, message: String): JsonObject = buildJ
 /** Whether a bot's reply is worth carrying back to the bot that wrote first. */
 fun carriesAnswer(reply: String): Boolean {
     val body = reply.trim()
-    return body.isNotEmpty() && body != "(no answer)" && !body.trim(' ', '.', '`', '*').equals(NO_REPLY, ignoreCase = true)
+    return body.isNotEmpty() && body != "(no answer)" && !isNoReply(body)
 }
 
 sealed class BrainModel {
