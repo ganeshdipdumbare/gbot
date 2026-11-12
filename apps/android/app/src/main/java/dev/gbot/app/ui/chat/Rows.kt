@@ -114,6 +114,10 @@ fun Exchange(m: Message, bots: List<Bot>) {
     val from = bots.find { it.id == fromId }; val to = bots.find { it.id == toId }
     val outbound = m.botId == fromId
     val peer = if (outbound) to else from
+    // The bot whose chat this is always sits on the left; the arrow carries
+    // the direction, so a received message reads "Me ← Them".
+    val left = if (outbound) from else to
+    val right = if (outbound) to else from
     val label = if (outbound) "Messaged ${to?.name ?: "a bot"}" else "Message from ${from?.name ?: "a bot"}"
     val line = when {
         !reply.isNullOrEmpty() -> (if (outbound) "${to?.name ?: "Bot"}: " else "Replied: ") + oneLine(reply)
@@ -130,10 +134,10 @@ fun Exchange(m: Message, bots: List<Bot>) {
     if (open) Dialog(onDismissRequest = { open = false }) {
         Column(Modifier.clip(RoundedCornerShape(22.dp)).background(if (g.dark) androidx.compose.ui.graphics.Color(0xFF262626) else androidx.compose.ui.graphics.Color.White).padding(18.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(Modifier.align(Alignment.CenterHorizontally).clip(RoundedCornerShape(50)).background(g.surface).padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (from != null) Gbot(from.look, from.id, 18)
-                Text(" ${from?.name ?: "A bot"}  →  ", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
-                if (to != null) Gbot(to.look, to.id, 18)
-                Text(" ${to?.name ?: "A bot"}", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
+                if (left != null) Gbot(left.look, left.id, 18)
+                Text(" ${left?.name ?: "A bot"}  ${if (outbound) "→" else "←"}  ", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
+                if (right != null) Gbot(right.look, right.id, 18)
+                Text(" ${right?.name ?: "A bot"}", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
             }
             Turn(from) { Text(m.str("message").orEmpty(), style = T.body, color = g.ink) }
             if (!reply.isNullOrEmpty() || status != "sent") Turn(to) {
