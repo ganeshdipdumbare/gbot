@@ -614,7 +614,11 @@ class LocalApi(
 
     private fun <T> unsupported(): T = throw UnsupportedOperationException("That needs your gbot server")
 
-    fun start() = routines.start()
+    fun start() {
+        routines.start()
+        // Pick up runs and messages between bots the app was closed on.
+        scope.launch(Dispatchers.IO) { runCatching { brain.recover() } }
+    }
 
     fun stopLocal() {
         routines.stop()

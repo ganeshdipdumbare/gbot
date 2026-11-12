@@ -110,6 +110,7 @@ type vaultIn struct {
 type messageBotIn struct {
 	To      string `json:"to" desc:"the other bot's name"`
 	Message string `json:"message" desc:"what to tell or ask them, written to them"`
+	Expect  string `json:"expect,omitempty" desc:"ask (default): you need their answer, which comes back to you with any other answers once they're all in; tell: you're only passing something on, and nothing comes back"`
 }
 
 type skillIn struct {
@@ -468,13 +469,13 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 
 	if len(j.peers) > 0 {
 		peers := j.peers
-		tools = append(tools, kritrim.NewTool("message_bot", "Send a message to another of the person's bots. It doesn't wait for an answer: their reply shows on the message's card and reaches you in your next prompt. The person sees a card for each message, so don't announce that you sent it. Use it when the person asks you to ask, tell or work with another bot.",
+		tools = append(tools, kritrim.NewTool("message_bot", "Ask or tell another of the person's bots something. It doesn't wait: send every ask you need, then finish your turn, and the answers come back to you together once they're all in. The person sees a card for each message, so don't announce that you sent it. Use it when the person asks you to ask, tell or work with another bot, or when the task clearly needs one.",
 			func(ctx context.Context, in messageBotIn) (string, error) {
 				name := strings.TrimPrefix(strings.TrimSpace(in.To), "@")
 				var names []string
 				for _, p := range peers {
 					if strings.EqualFold(p.Name, name) {
-						return r.messageBot(ctx, j, p, in.Message)
+						return r.messageBot(ctx, j, p, in.Message, in.Expect)
 					}
 					names = append(names, p.Name)
 				}

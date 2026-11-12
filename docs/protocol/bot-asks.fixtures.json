@@ -1,0 +1,38 @@
+{
+  "limits": { "maxDepth": 2, "maxPerRoot": 6 },
+  "canMessage": [
+    { "depth": 0, "sent": 0, "ok": true },
+    { "depth": 1, "sent": 5, "ok": true },
+    { "depth": 1, "sent": 6, "ok": false },
+    { "depth": 2, "sent": 0, "ok": false },
+    { "depth": 3, "sent": 0, "ok": false }
+  ],
+  "roundDone": [
+    { "statuses": [], "done": true },
+    { "statuses": ["replied", "delivered", "failed", "needs_you", "expired", "cancelled"], "done": true },
+    { "statuses": ["replied", "sent"], "done": false },
+    { "statuses": ["working"], "done": false }
+  ],
+  "joinPrompt": [
+    {
+      "name": "one answer",
+      "answers": [
+        { "name": "Pip", "message": "What's 6 times 7?", "status": "replied", "reply": "42" }
+      ],
+      "prompt": "Answers to what you asked your teammates:\n- Pip, asked \"What's 6 times 7?\":\n  42\n\nUse these to finish what the person asked. Answer the person now, and don't ask these bots the same thing again."
+    },
+    {
+      "name": "every way an ask can end",
+      "answers": [
+        { "name": "Pip", "message": "Line one\nline two", "status": "replied", "reply": "First\n\nSecond" },
+        { "name": "Taro", "message": "Anything?", "status": "delivered", "reply": "" },
+        { "name": "Mo", "message": "Check the site", "status": "failed", "reply": "" },
+        { "name": "Kai", "message": "Book it", "status": "needs_you", "reply": "" },
+        { "name": "Lu", "message": "Slow one", "status": "expired", "reply": "" },
+        { "name": "Bo", "message": "Stop me", "status": "cancelled", "reply": "" },
+        { "name": "Ra", "message": "Why?", "status": "failed", "reply": "Ra couldn't reply: the model is offline." }
+      ],
+      "prompt": "Answers to what you asked your teammates:\n- Pip, asked \"Line one line two\":\n  First\n\n  Second\n- Taro, asked \"Anything?\":\n  had nothing to add.\n- Mo, asked \"Check the site\":\n  couldn't answer.\n- Kai, asked \"Book it\":\n  needs the person first; it asked them in its own chat.\n- Lu, asked \"Slow one\":\n  didn't answer in time.\n- Bo, asked \"Stop me\":\n  was stopped before answering.\n- Ra, asked \"Why?\":\n  Ra couldn't reply: the model is offline.\n\nUse these to finish what the person asked. Answer the person now, and don't ask these bots the same thing again."
+    }
+  ]
+}

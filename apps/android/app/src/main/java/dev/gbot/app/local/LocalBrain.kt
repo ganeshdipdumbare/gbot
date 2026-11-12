@@ -66,9 +66,11 @@ class LocalBrain(
     private var engine: Engine? = null
     private var engineKey: String? = null
 
-    // One model runs at a time on a phone; other messages wait their turn in
-    // the same queue the chat already draws.
-    private val runLock = Mutex()
+    // One model runs at a time on a phone; other runs wait their turn in
+    // the same queue the chat already draws, the person's messages first.
+    private val turns = Turns()
+    private val book = AskBook()
+    private val recovered = java.util.concurrent.atomic.AtomicBoolean(false)
     private var idleJob: Job? = null
     private val jobs = ConcurrentHashMap<String, Job>()
     private val byQid = ConcurrentHashMap<String, Job>()
@@ -78,11 +80,12 @@ class LocalBrain(
     private val browsing = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var warnedCpu = false
 
-    fun launch(bot: Bot, prompt: String) = start(bot, prompt, null, 0)
+    fun launch(bot: Bot, prompt: String) = start(Work(bot.id, prompt))
 
-    fun launchRoutine(bot: Bot, prompt: String) = start(bot, prompt, null, 0)
+    fun launchRoutine(bot: Bot, prompt: String) = start(Work(bot.id, prompt, kind = "routine"))
 
-    fun launchGroup(group: Group, bot: Bot, prompt: String, depth: Int) = start(bot, prompt, group, depth)
+    fun launchGroup(group: Group, bot: Bot, prompt: String, depth: Int) =
+        start(Work(bot.id, prompt, groupId = group.id, depth = depth, kind = "group"))
 
     fun queueFor(chat: String): List<QueueItem> = queues[chat].orEmpty().toList()
 
@@ -125,20 +128,27 @@ class LocalBrain(
         emitQueue(chat)
     }
 
-    private fun start(bot: Bot, prompt: String, group: Group?, depth: Int, from: String? = null) {
+    private fun start(work: Work, qid: String = "q_" + UUID.randomUUID().toString().take(8)) {
         // A new message keeps the model warm.
         idleJob?.cancel()
         idleJob = null
-        val chat = group?.let { "g:${it.id}" } ?: bot.id
+        val w = if (work.root.isEmpty()) work.copy(root = newId("rt_")) else work
+        val chat = w.groupId?.let { "g:$it" } ?: w.botId
         stopped.remove(chat)
-        val qid = "q_" + UUID.randomUUID().toString().take(8)
-        queues.getOrPut(chat) { java.util.concurrent.CopyOnWriteArrayList() }.add(QueueItem(qid, prompt.take(120), "queued"))
+        // The person's own runs are saved until they finish, so closing the
+        // app doesn't lose them. Bots' messages come back from their cards.
+        if (w.durable) db.putQueued(qid, now(), json.encodeToString(Work.serializer(), w))
+        queues.getOrPut(chat) { java.util.concurrent.CopyOnWriteArrayList() }.add(QueueItem(qid, queueLabel(w), "queued"))
         emitQueue(chat)
         val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
-            runLock.withLock {
-                while (qid in paused && isActive) delay(300)
+            // A paused message waits outside the line, so others go ahead.
+            while (qid in paused && isActive) delay(300)
+            turns.take(w.priority) {
                 doneQueued(chat, qid)
-                runCatching { run(bot, prompt, group, depth, from) }
+                val bot = db.bot(w.botId) ?: return@take
+                val group = w.groupId?.let { db.group(it) ?: return@take }
+                if (w.durable) db.putQueued(qid, now(), json.encodeToString(Work.serializer(), w.copy(tries = w.tries + 1)))
+                runCatching { run(bot, group, w) }
                     .onFailure {
                         if (it is CancellationException) {
                             // Stop is silent; any other cancellation is a fault.
@@ -155,10 +165,55 @@ class LocalBrain(
         job.invokeOnCompletion {
             if (jobs[qid] === job) jobs.remove(qid)
             if (byQid[qid] === job) byQid.remove(qid)
+            if (w.durable) runCatching { db.removeQueued(qid) }
             doneQueued(chat, qid)
             scheduleIdleUnload()
         }
         job.start()
+    }
+
+    private fun queueLabel(w: Work): String = when (w.kind) {
+        "ask", "tell" -> "Message from ${w.from?.let { db.bot(it)?.name } ?: "a bot"}"
+        "join" -> "Answers from your teammates"
+        else -> w.prompt.take(120)
+    }
+
+    /**
+     * Pick up what the app was doing when it closed: the person's queued
+     * messages, messages between bots nobody answered, and rounds whose
+     * answers never went back. Runs once per process.
+     */
+    fun recover() {
+        if (!recovered.compareAndSet(false, true)) return
+        for ((id, body) in db.queued()) {
+            val w = runCatching { json.decodeFromString(Work.serializer(), body) }.getOrNull()
+            // Two tries is enough: a run that keeps killing the app stops here.
+            if (w == null || w.tries >= 2) { db.removeQueued(id); continue }
+            start(w, id)
+        }
+        val cards = db.recentExchangeCards(java.time.Instant.now().minusSeconds(2 * 24 * 3600).toString())
+        var asks = 0
+        for (inn in cards) {
+            if (inn.botId != inn.str("to") || inn.str("status") !in setOf("sent", "working")) continue
+            val out = cards.find { it.id != inn.id && it.str("ask") == inn.str("ask") } ?: continue
+            val sender = inn.str("from")?.let { db.bot(it) }
+            if (sender == null || (inn.str("tries")?.toIntOrNull() ?: 0) >= 2) {
+                listOf(out, inn).forEach { patchCard(it, mapOf("status" to "failed", "reply" to "This message was interrupted.")) }
+                continue
+            }
+            val expect = inn.str("expect") ?: "ask"
+            start(
+                Work(
+                    inn.botId.orEmpty(), askPrompt(sender.name, inn.str("message").orEmpty(), expect),
+                    depth = inn.str("depth")?.toIntOrNull() ?: 1, kind = expect, root = inn.str("root").orEmpty(),
+                    exchange = listOf(out.id, inn.id), from = sender.id,
+                ),
+            )
+            asks++
+        }
+        val rounds = cards.filter { it.botId == it.str("from") && it.str("joined") != "true" }.mapNotNull { it.str("round") }.distinct()
+        rounds.forEach(::closeRound)
+        if (asks + rounds.size > 0) log("resumed $asks asks, ${rounds.size} rounds")
     }
 
     private fun doneQueued(chat: String, qid: String) {
@@ -193,12 +248,12 @@ class LocalBrain(
 
     /** Close the native model only when no reply is running. */
     suspend fun unloadIfIdle(): Boolean {
-        if (!runLock.tryLock()) return false
+        if (!turns.tryTake()) return false
         return try {
             engineLock.withLock { closeEngine() }
             true // already unloaded counts as done
         } finally {
-            runLock.unlock()
+            turns.release()
         }
     }
 
@@ -216,7 +271,7 @@ class LocalBrain(
         byQid.values.forEach { it.cancel() }
         byQid.clear()
         queues.keys.toList().forEach { clearQueue(it) }
-        runLock.withLock { engineLock.withLock { closeEngine() } }
+        turns.take(Priority.PERSON) { engineLock.withLock { closeEngine() } }
     }
 
     private fun closeEngine(): Boolean {
@@ -245,25 +300,39 @@ class LocalBrain(
 
     fun cancelGroup(groupId: String) = cancel("g:$groupId")
 
-    private suspend fun run(bot: Bot, prompt: String, group: Group?, depth: Int, from: String? = null) {
+    private suspend fun run(bot: Bot, group: Group?, w: Work) {
+        val prompt = w.prompt
         val model = api.resolveModel(bot.model)
-        log("run bot=${bot.name} model=${bot.model.ifBlank { "default" }} group=${group?.id ?: "-"}")
+        log("run bot=${bot.name} kind=${w.kind} model=${bot.model.ifBlank { "default" }} group=${group?.id ?: "-"}")
+        book.startRun(w.root, w.depth)
+        // The message this run answers, if another bot sent it: the answer
+        // goes on its two cards, not into this chat.
+        val exchange = w.exchange.mapNotNull { db.message(it) }
+        var status = "failed"
+        var outcome = "${bot.name} didn't reply."
+        if (exchange.isNotEmpty()) {
+            val tries = (exchange.last().str("tries")?.toIntOrNull() ?: 0) + 1
+            exchange.forEach { patchCard(it, mapOf("status" to "working", "tries" to tries)) }
+        }
+        w.joinRound?.let(::markJoined)
+        // The asks this run sends go back together once it ends.
+        val round = RunRound()
         emitPresence(bot.id, group, "thinking")
         try {
             fun stage(detail: String) = emitPresence(bot.id, group, "working", detail)
 
             // In a group the teammates are @mentioned instead, and a bot
-            // answering a message can't message the sender back: that would
-            // start a second exchange rather than answer the first.
-            val peers = if (group != null || depth >= MAX_HOPS) emptyList()
-            else db.bots().filter { it.id != bot.id && it.id != from }
+            // answering a message can't message the sender back: its
+            // answer is the reply.
+            val peers = if (group != null || !canMessage(w.depth, book.sent(w.root))) emptyList()
+            else db.bots().filter { it.id != bot.id && it.id != w.from }
             val tools = LocalTools(
                 ctx, db, browser, bot.id,
                 skills = api.localSkills(),
                 secret = { name -> api.secret(name) },
                 schedule = { name, p, cron -> api.scheduleFromChat(bot.id, name, p, cron) },
                 peers = peers,
-                messageBot = { target, text -> messageBot(bot, target, text, depth) },
+                messageBot = { target, text, expect -> messageBot(bot, target, text, expect, w, round) },
                 roster = { db.bots() },
                 createBot = { name, title -> api.createBot(name, title, dev.gbot.app.net.Look()) },
                 changeBot = { id, patch -> api.updateBot(id, patch) },
@@ -272,22 +341,28 @@ class LocalBrain(
             val mcpTools = withTimeoutOrNull(MCP_TIMEOUT_MS) { api.mcpSchemas() }.orEmpty()
             val history = historyFor(bot, group, prompt)
 
-            // Every message, from the person or from another bot, starts
-            // with an internal reading of it: what is being asked and how
-            // to go about it. Time-boxed, and skipped quietly if the model
-            // will not produce one.
-            stage("Planning")
-            val plan = withTimeoutOrNull(PLAN_TIMEOUT_MS) {
-                when (model) {
-                    is BrainModel.Local -> planLocal(model.file, bot, group, prompt, history)
-                    is BrainModel.Remote -> planRemote(model, bot, group, prompt, history)
-                    null -> null
-                }
-            }.let { cleanPlan(it.orEmpty()) }
+            // A message from the person starts with an internal reading of
+            // it: what is being asked and how to go about it. Time-boxed,
+            // and skipped quietly if the model will not produce one. A
+            // bot's ask is already scoped by the bot that sent it, and a
+            // round's answers only need finishing, so those skip it: on a
+            // phone every model call waits in the same line.
+            val plan = if (!w.plans) "" else {
+                stage("Planning")
+                book.call(w.root)
+                withTimeoutOrNull(PLAN_TIMEOUT_MS) {
+                    when (model) {
+                        is BrainModel.Local -> planLocal(model.file, bot, group, prompt, history)
+                        is BrainModel.Remote -> planRemote(model, bot, group, prompt, history)
+                        null -> null
+                    }
+                }.let { cleanPlan(it.orEmpty()) }
+            }
             if (plan.isNotEmpty()) log("plan ${plan.length} chars")
 
             val system = systemPrompt(bot, group, peers) + planBlock(plan)
 
+            book.call(w.root)
             val text = withTimeoutOrNull(RUN_TIMEOUT_MS) {
                 when (model) {
                     is BrainModel.Local -> {
@@ -323,10 +398,28 @@ class LocalBrain(
             // The sentinel is for the machinery, not the chat: a bot with
             // nothing to say says nothing at all.
             val said = cleanReply(content)
-            if (said.isNotEmpty()) reply(bot, group, said)
-            if (group == null && from != null) passAnswer(bot, from, said, depth)
-            if (group != null && depth < 3) handoff(group, bot, said, depth)
+            if (exchange.isNotEmpty()) {
+                status = when {
+                    text == null -> "failed"
+                    w.kind == "tell" || said.isEmpty() -> "delivered"
+                    else -> "replied"
+                }
+                outcome = said
+            } else {
+                if (said.isNotEmpty()) reply(bot, group, said)
+                if (group != null && w.depth < 3) handoff(group, bot, said, w)
+            }
+        } catch (e: Throwable) {
+            if (e is CancellationException) {
+                status = "cancelled"
+                outcome = "${bot.name} was stopped before replying."
+            } else {
+                outcome = "${bot.name} couldn't reply: ${e.message ?: e::class.simpleName}"
+            }
+            throw e
         } finally {
+            if (exchange.isNotEmpty()) settle(exchange, status, outcome)
+            round.id?.let(::closeRound)
             browsing.remove(bot.id)
             emitComputer(bot.id, false)
             emitPresence(bot.id, group, "idle")
@@ -334,13 +427,18 @@ class LocalBrain(
     }
 
     /** Wake teammates this reply @mentions, like the server's group handoff. */
-    private fun handoff(group: Group, from: Bot, reply: String, depth: Int) {
+    private fun handoff(group: Group, from: Bot, reply: String, w: Work) {
         if (!reply.contains("@")) return
         for (id in group.botIds) {
             if (id == from.id) continue
             val mate = db.bot(id) ?: continue
             if (Mentions.matches(reply, mate.name)) {
-                launchGroup(group, mate, "Continue the group task. ${from.name} mentioned you: $reply", depth + 1)
+                start(
+                    Work(
+                        mate.id, "Continue the group task. ${from.name} mentioned you: $reply",
+                        groupId = group.id, depth = w.depth + 1, kind = "group", root = w.root,
+                    ),
+                )
             }
         }
     }
@@ -609,7 +707,7 @@ class LocalBrain(
             if (peers.isNotEmpty()) {
                 appendLine()
                 appendLine("The person's other bots, which you can reach with message_bot: " + peers.joinToString(", ") { it.name } + ".")
-                appendLine("It doesn't wait for an answer: the message lands in their own chat and their answer comes back here when they finish. Send it yourself when the task needs another bot — don't ask the person to relay it. The person sees that you sent it, so don't announce it. @Name does nothing outside a group chat — use message_bot.")
+                appendLine("Ask (the default) when you need their answer: send every ask you need now, then finish your turn; all the answers come back to you together in one message once they're in. Tell when you're only passing something on: nothing comes back. Send it yourself when the task needs another bot — don't ask the person to relay it. The person sees that you sent it, so don't announce it. @Name does nothing outside a group chat — use message_bot.")
             }
             appendLine()
             appendLine("Your tools:")
@@ -618,14 +716,14 @@ class LocalBrain(
             appendLine("- vault_type: type a saved secret into a field on a site it was saved for; you never see the value.")
             appendLine("- use_skill: load the full instructions of a skill.")
             appendLine("- notify, remember, recall, web_fetch, profile.")
-            if (peers.isNotEmpty()) appendLine("- message_bot: send another of the person's bots a message; their answer comes back to this chat.")
+            if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots something; asks' answers come back to you together.")
             if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot itself can't be archived.")
             if (api.localMcp().any { it.enabled && it.status == "ok" }) appendLine("- Tools starting with mc… come from connected integrations; they work like the others.")
             appendLine()
             appendLine("Rules:")
             appendLine("- Do not invent facts about the person. Use profile for forms and personal details.")
             appendLine("- Say what you did in one or two lines. If a step needs their approval, it appears as a card; wait for the answer.")
-            appendLine("- Every message arrives with an internal plan. Follow it. If none came, or the task turns out different, call plan first with one step per line. The person never sees a plan, so don't tell them about it.")
+            appendLine("- A message from the person may arrive with an internal plan. Follow it. If none came, or the task turns out different, call plan first with one step per line. The person never sees a plan, so don't tell them about it.")
             appendLine("- Use remember for durable facts about the person: preferences, names, decisions, how they like things. Use forget when they correct you or ask you to.")
             appendLine("- You cannot run shell commands, open other apps, text, email, or post through chat apps. To reach another of the person's bots, use message_bot — or @Name inside a group chat.")
             appendLine()
@@ -644,39 +742,106 @@ class LocalBrain(
     /**
      * One bot messaging another, without waiting and without the person in
      * the middle. The same message shows as "Messaged X" in the sender's
-     * chat and "Message from Y" in the receiver's, like a chat, and starts
-     * the receiver's run behind this one. A reply is just the next message
-     * the other way (see passAnswer).
+     * chat and "Message from Y" in the receiver's, and starts the
+     * receiver's run behind this one. An ask's answer lands on both cards
+     * and goes back to the sender with the rest of its round; a tell's goes
+     * nowhere (docs/protocol/bot-asks.md).
      */
-    private fun messageBot(from: Bot, to: Bot, text: String, depth: Int): String {
+    private fun messageBot(from: Bot, to: Bot, text: String, expect: String, w: Work, round: RunRound): String {
         val body = text.trim()
         if (body.isEmpty()) return "Write something to send."
-        deliver(from, to, body, depth)
-        return "Sent to ${to.name}. Their answer comes back here, so don't wait for it in this reply."
+        val kind = if (expect == "tell") "tell" else "ask"
+        if (!book.take(w.root, w.depth)) {
+            return "You can't message more bots for this request (at most $MAX_ASKS_PER_ROOT messages, $MAX_ASK_DEPTH bots deep). " +
+                "Finish with what you have and tell the person what's missing."
+        }
+        val roundId = if (kind == "ask") round.id ?: newId("rd_").also { round.id = it; book.open(it) } else null
+        val data = exchangeData(
+            from.id, to.id, body,
+            ask = newId("ak_"), expect = kind, round = roundId, root = w.root, depth = w.depth + 1,
+        )
+        val out = event(from, null, "Messaged ${to.name}", data)
+        val inn = event(to, null, "Message from ${from.name}", data)
+        start(
+            Work(
+                to.id, askPrompt(from.name, body, kind), depth = w.depth + 1, kind = kind, root = w.root,
+                exchange = listOf(out.id, inn.id), from = from.id,
+            ),
+        )
+        return if (kind == "tell") {
+            "Sent to ${to.name}. Nothing comes back from a tell. The person sees that you sent it, so don't announce it."
+        } else {
+            "Sent to ${to.name}. Don't wait for the answer: once this turn ends and every bot you asked has answered, " +
+                "all the answers come back to you together. The person sees that you sent it, so don't announce it."
+        }
     }
 
-    /** Show one bot-to-bot message in both chats, then wake the receiver. */
-    private fun deliver(from: Bot, to: Bot, body: String, depth: Int) {
-        val data = exchangeData(from.id, to.id, body)
-        event(from, null, "Messaged ${to.name}", data)
-        event(to, null, "Message from ${from.name}", data)
-        start(
-            to,
-            "Message from ${from.name}, another of the person's bots. Answer ${from.name} directly: " +
-                "your reply is sent back to them. If nothing needs to go back, reply with exactly $NO_REPLY.\n\n$body",
-            null, depth + 1, from = from.id,
-        )
+    /** Write how a message ended onto its two cards; an ask may finish its round. */
+    private fun settle(exchange: List<GMessage>, status: String, reply: String) {
+        exchange.forEach { m -> db.message(m.id)?.let { patchCard(it, mapOf("status" to status, "reply" to reply)) } }
+        exchange.firstOrNull()?.str("round")?.let(::maybeJoin)
     }
 
     /**
-     * A bot answered a message from another bot: that answer is a new
-     * message the other way, shown in both chats. The chain stops after
-     * MAX_HOPS.
+     * The run that sent a round's asks has ended. The answers go back now
+     * if they're all in; otherwise when the last one lands, or when the
+     * round runs out of time.
      */
-    private fun passAnswer(bot: Bot, fromId: String, answer: String, depth: Int) {
-        if (answer.isEmpty() || depth >= MAX_HOPS) return
-        val sender = db.bot(fromId) ?: return
-        deliver(bot, sender, answer, depth)
+    private fun closeRound(round: String) {
+        book.close(round)
+        if (!maybeJoin(round)) scope.launch(Dispatchers.IO) {
+            delay(ROUND_TIMEOUT_MS)
+            expireRound(round)
+        }
+    }
+
+    /** The sender's card of each message in a round. */
+    private fun outbound(round: String): List<GMessage> = db.exchangeCards("round", round).filter { it.botId == it.str("from") }
+
+    /** Hand a round's answers back to the bot that asked, once. True when the round is settled. */
+    private fun maybeJoin(round: String): Boolean {
+        if (book.isOpen(round)) return false
+        if (book.wasJoined(round)) return true
+        val outs = outbound(round)
+        if (outs.isEmpty() || outs.any { it.str("joined") == "true" }) return true
+        if (!roundDone(outs.map { it.str("status") })) return false
+        if (!book.claimJoin(round)) return true
+        val first = outs.first()
+        val sender = first.str("from")?.let { db.bot(it) } ?: return true
+        val answers = outs.map {
+            Answer(
+                it.str("to")?.let { id -> db.bot(id)?.name } ?: "A teammate",
+                it.str("message").orEmpty(), it.str("status").orEmpty(), it.str("reply").orEmpty(),
+            )
+        }
+        start(
+            Work(
+                sender.id, joinPrompt(answers), depth = maxOf((first.str("depth")?.toIntOrNull() ?: 1) - 1, 0),
+                kind = "join", root = first.str("root").orEmpty(), joinRound = round,
+            ),
+        )
+        return true
+    }
+
+    /** The answers are going back: say so on the sender's cards, with how long it took. */
+    private fun markJoined(round: String) {
+        val outs = outbound(round)
+        val took = outs.firstOrNull()?.createdAt?.let { runCatching { java.time.Duration.between(java.time.Instant.parse(it), java.time.Instant.now()).toMillis() }.getOrNull() }
+        outs.forEach { patchCard(it, buildMap { put("joined", true); if (took != null) put("tookMs", took) }) }
+        outs.firstOrNull()?.str("root")?.let { book.traceLine(it) }?.takeIf { it.isNotEmpty() }?.let { log("trace $it") }
+    }
+
+    /** Give up on the asks still out after the round timeout, and hand back what came in. */
+    private fun expireRound(round: String) {
+        db.exchangeCards("round", round).filter { !askEnded(it.str("status")) }.forEach { patchCard(it, mapOf("status" to "expired")) }
+        maybeJoin(round)
+    }
+
+    /** Merge fields into an exchange card and show the change. */
+    private fun patchCard(m: GMessage, fields: Map<String, Any?>) {
+        val next = m.copy(data = JsonObject((m.data ?: JsonObject(emptyMap())) + fields.toJson()))
+        runCatching { db.patchMessage(next) }.onFailure { log("could not update the card", it) }
+        runCatching { emit("message_update", next.botId.orEmpty(), json.encodeToJsonElement(next), next.groupId) }
     }
 
     /** A quiet line in the transcript: something happened, no reply needed. */
@@ -768,8 +933,8 @@ class LocalBrain(
         const val MAX_STEPS = 8
         const val RUN_TIMEOUT_MS = 5 * 60 * 1000L
 
-        /** How far a chain of bots messaging each other may go. */
-        const val MAX_HOPS = 3
+        /** How long a round waits for its slowest answer; runs wait in line here. */
+        const val ROUND_TIMEOUT_MS = 15 * 60 * 1000L
         const val PROVIDER_TIMEOUT_MS = 120_000L
         const val MCP_TIMEOUT_MS = 8_000L
 
@@ -813,17 +978,66 @@ fun cleanReply(reply: String): String {
 }
 
 /**
- * The data for one bot-to-bot message. The chat UI reads exactly these keys
- * to draw the "Messaged X" / "Message from Y" line and the tap-through
- * popup, so a message without them is invisible: no preview, nothing to
- * open.
+ * The data for one bot-to-bot message (docs/protocol/bot-asks.md). The chat
+ * UI reads exactly these keys to draw the "Messaged X" / "Message from Y"
+ * line and the tap-through popup, so a message without them is invisible:
+ * no preview, nothing to open.
  */
-fun exchangeData(from: String, to: String, message: String): JsonObject = buildJsonObject {
+fun exchangeData(
+    from: String,
+    to: String,
+    message: String,
+    ask: String = newId("ak_"),
+    expect: String = "ask",
+    round: String? = null,
+    root: String = "",
+    depth: Int = 1,
+): JsonObject = buildJsonObject {
     put("kind", "botmsg")
+    put("ask", ask)
     put("from", from)
     put("to", to)
     put("message", message)
+    put("expect", expect)
+    if (round != null) put("round", round)
+    if (root.isNotEmpty()) put("root", root)
+    put("depth", depth)
     put("status", "sent")
+}
+
+/** The round a run's asks go into, made when it sends the first one. */
+class RunRound(var id: String? = null)
+
+/** One run waiting for, or taking, its turn. */
+@kotlinx.serialization.Serializable
+data class Work(
+    val botId: String,
+    val prompt: String,
+    val groupId: String? = null,
+    val depth: Int = 0,
+    /** person | routine | group | ask | tell | join */
+    val kind: String = "person",
+    /** The person's request this run is part of. */
+    val root: String = "",
+    /** The two cards (sender's, receiver's) of the message this run answers. */
+    val exchange: List<String> = emptyList(),
+    /** The bot that sent that message. */
+    val from: String? = null,
+    /** Set on the run that gets a round's answers back. */
+    val joinRound: String? = null,
+    val tries: Int = 0,
+) {
+    val priority: Int get() = when (kind) {
+        "join" -> Priority.ANSWERS
+        "ask", "tell" -> Priority.BOTS
+        else -> Priority.PERSON
+    }
+
+    /** Saved until it finishes; bots' messages and joins come back from their cards instead. */
+    val durable: Boolean get() = kind == "person" || kind == "routine" || kind == "group"
+
+    /** Only a message from the person gets a planning pass. */
+    val plans: Boolean get() = kind == "person" || kind == "routine" || kind == "group"
 }
 
 sealed class BrainModel {

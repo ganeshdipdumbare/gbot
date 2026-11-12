@@ -38,7 +38,8 @@ class LocalTools(
     private val schedule: suspend (String, String, String) -> String = { _, _, _ -> "Scheduling isn't available." },
     /** The person's other bots, which this one may message. */
     private val peers: List<Bot> = emptyList(),
-    private val messageBot: suspend (Bot, String) -> String = { _, _ -> "Messaging isn't available." },
+    /** Sends a message to another bot: (to, message, "ask" or "tell"). */
+    private val messageBot: suspend (Bot, String, String) -> String = { _, _, _ -> "Messaging isn't available." },
     /** The roster tools, offered to the main bot only. */
     private val roster: suspend () -> List<Bot> = { emptyList() },
     private val createBot: suspend (String, String) -> Bot = { _, _ -> error("Hatching isn't available.") },
@@ -135,12 +136,14 @@ class LocalTools(
     ) + if (peers.isEmpty()) emptyList() else listOf(
         ToolSchema(
             "message_bot",
-            "Send a message to another of the person's bots: " + peers.joinToString(", ") { it.name } +
-                ". It doesn't wait for an answer: their answer arrives in this chat when they finish. " +
+            "Ask or tell another of the person's bots something: " + peers.joinToString(", ") { it.name } +
+                ". It doesn't wait: send every ask you need, then finish your turn, and the answers come back to you together once they're all in. " +
                 "Use it when the person asks you to tell, ask or work with another bot, or when their request clearly needs one.",
             params(
                 "to", "string", "The bot's name",
-                "message", "string", "What to tell or ask them, written to them", required = listOf("to", "message"),
+                "message", "string", "What to tell or ask them, written to them",
+                "expect", "string", "ask (default): you need their answer; tell: you're only passing something on, and nothing comes back",
+                required = listOf("to", "message"),
             ),
         ),
     ) + if (!main) emptyList() else listOf(
@@ -186,7 +189,7 @@ class LocalTools(
         "use_skill" -> "Load the ${args.str("name")} skill"
         "vault_type" -> "Type the ${args.str("name")} secret into “${lastSnapshotLabel(args.int("id"))}”"
         "routine_create" -> "Schedule “${args.str("name")}”: ${args.str("schedule")} — ${args.str("prompt").take(120)}"
-        "message_bot" -> "Message ${args.str("to")}: ${args.str("message").take(120)}"
+        "message_bot" -> (if (args.str("expect").lowercase() == "tell") "Tell " else "Ask ") + "${args.str("to")}: ${args.str("message").take(120)}"
         "plan" -> "Plan the task"
         "bot_list" -> "List the bots"
         "bot_create" -> "Hatch a bot: ${args.str("name")}"
@@ -254,7 +257,7 @@ class LocalTools(
             val raw = args.str("to")
             val target = pickPeer(raw, peers)
             when {
-                target != null -> messageBot(target, args.str("message"))
+                target != null -> messageBot(target, args.str("message"), args.str("expect").lowercase().ifBlank { "ask" })
                 peers.isEmpty() -> "There are no other bots to message."
                 else -> "No bot named " + normalizeName(raw).ifEmpty { "that" } +
                     ". Use exactly one of these names: " + peers.joinToString(", ") { it.name } + "."

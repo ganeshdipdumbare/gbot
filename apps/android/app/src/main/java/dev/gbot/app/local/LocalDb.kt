@@ -21,7 +21,7 @@ import java.util.UUID
  * routines, skills, integrations, saved secrets and providers. Rows hold the
  * same JSON the server sends, so the rest of the app needs no second model.
  */
-class LocalDb(context: Context) : SQLiteOpenHelper(context, "gbot-local.db", null, 2) {
+class LocalDb(context: Context) : SQLiteOpenHelper(context, "gbot-local.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE bots (id TEXT PRIMARY KEY, json TEXT NOT NULL)")
@@ -36,6 +36,7 @@ class LocalDb(context: Context) : SQLiteOpenHelper(context, "gbot-local.db", nul
         db.execSQL("CREATE TABLE mcp (id TEXT PRIMARY KEY, json TEXT NOT NULL)")
         db.execSQL("CREATE TABLE vault (id TEXT PRIMARY KEY, json TEXT NOT NULL)")
         db.execSQL("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+        db.execSQL(QUEUE_TABLE)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -52,6 +53,41 @@ class LocalDb(context: Context) : SQLiteOpenHelper(context, "gbot-local.db", nul
             db.execSQL("CREATE TABLE mcp (id TEXT PRIMARY KEY, json TEXT NOT NULL)")
             db.execSQL("CREATE TABLE vault (id TEXT PRIMARY KEY, json TEXT NOT NULL)")
         }
+        if (old < 3) db.execSQL(QUEUE_TABLE)
+    }
+
+    // Runs waiting for their turn, so closing the app doesn't lose them.
+
+    @Synchronized fun putQueued(id: String, at: String, body: String) {
+        writableDatabase.insertWithOnConflict("queue", null, ContentValues().apply {
+            put("id", id); put("at", at); put("json", body)
+        }, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    @Synchronized fun removeQueued(id: String) { writableDatabase.delete("queue", "id = ?", arrayOf(id)) }
+
+    @Synchronized fun queued(): List<Pair<String, String>> =
+        readableDatabase.rawQuery("SELECT id, json FROM queue ORDER BY at, rowid", null).use { c ->
+            buildList { while (c.moveToNext()) add(c.getString(0) to c.getString(1)) }
+        }
+
+    // Bot-to-bot exchange cards (docs/protocol/bot-asks.md). Rows hold the
+    // message JSON, so a card is found by the text of its data.
+
+    /** The exchange cards whose [key] is [value] ("round" or "ask"), oldest first. */
+    @Synchronized fun exchangeCards(key: String, value: String): List<Message> = readableDatabase.rawQuery(
+        "SELECT json FROM msgs WHERE json LIKE '%\"kind\":\"botmsg\"%' AND json LIKE ? ORDER BY at, rowid",
+        arrayOf("%\"$key\":\"$value\"%"),
+    ).use { c ->
+        buildList { while (c.moveToNext()) runCatching { json.decodeFromString(Message.serializer(), c.getString(0)) }.getOrNull()?.let(::add) }
+    }
+
+    /** Every exchange card from the last two days that belongs to a round or an ask. */
+    @Synchronized fun recentExchangeCards(since: String): List<Message> = readableDatabase.rawQuery(
+        "SELECT json FROM msgs WHERE at > ? AND json LIKE '%\"kind\":\"botmsg\"%' AND json LIKE '%\"ask\":%' ORDER BY at, rowid",
+        arrayOf(since),
+    ).use { c ->
+        buildList { while (c.moveToNext()) runCatching { json.decodeFromString(Message.serializer(), c.getString(0)) }.getOrNull()?.let(::add) }
     }
 
     // Bots
@@ -246,3 +282,5 @@ class LocalDb(context: Context) : SQLiteOpenHelper(context, "gbot-local.db", nul
             buildList { while (c.moveToNext()) runCatching { json.decodeFromString(serializer, c.getString(0)) }.getOrNull()?.let(::add) }
         }
 }
+
+private const val QUEUE_TABLE = "CREATE TABLE queue (id TEXT PRIMARY KEY, at TEXT NOT NULL, json TEXT NOT NULL)"

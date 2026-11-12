@@ -81,7 +81,8 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import java.time.Duration
 
-private data class ChatRow(val m: Message, val first: Boolean, val last: Boolean, val stamp: String?)
+/** [round] is set on a round's first ask (all of them) and empty on the rest, which it draws. */
+private data class ChatRow(val m: Message, val first: Boolean, val last: Boolean, val stamp: String?, val round: List<Message>? = null)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -239,6 +240,9 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
 
     val rows = remember(messages) {
         val all = messages.orEmpty()
+        // A bot's asks from one turn show as one round card.
+        val rounds = all.filter { it.role == "event" && it.kind == "botmsg" && it.botId == it.str("from") && it.str("round") != null }
+            .groupBy { it.str("round") }.filterValues { it.size > 1 }
         all.mapIndexed { i, m ->
             val prev = all.getOrNull(i - 1); val next = all.getOrNull(i + 1)
             fun same(a: Message?) = a != null && a.role == m.role && a.botId == m.botId && a.str("from") == m.str("from") && a.role != "card" && a.role != "event"
@@ -246,7 +250,9 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
                 val a = parseTime(prev.createdAt); val b = parseTime(m.createdAt)
                 a == null || b == null || Duration.between(a, b).toMinutes() > 30
             }
-            ChatRow(m, !same(prev) || gap, !same(next), if (gap) stampOf(m.createdAt) else null)
+            val round = rounds[m.str("round")]?.takeIf { m.role == "event" && m.botId == m.str("from") }
+                ?.let { if (it.first().id == m.id) it else emptyList() }
+            ChatRow(m, !same(prev) || gap, !same(next), if (gap) stampOf(m.createdAt) else null, round)
         }.asReversed()
     }
     val typing = (if (bot != null) listOf(bot.id) else members.map { it.id }).filter { id ->
@@ -319,6 +325,8 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
                     when {
                         m.role == "card" -> if (author != null) Card(m, author, onTakeover)
                         m.role == "event" && m.kind == "activity" -> Activity(m)
+                        r.round?.isEmpty() == true -> Unit
+                        r.round != null -> RoundCard(r.round, s.bots)
                         m.role == "event" && m.kind == "botmsg" -> Exchange(m, s.bots)
                         m.role == "event" -> EventLine(m, author)
                         else -> Bubble(m, author, r.first, r.last, group != null, onLong)

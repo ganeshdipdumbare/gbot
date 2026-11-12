@@ -21,6 +21,14 @@ func mockTurns(script []any) []kritrim.Turn {
 			args, _ := m["args"].(map[string]any)
 			turn.ToolCalls = []kritrim.ToolCall{{ID: fmt.Sprintf("call_%s_%d", name, i), Name: name, Args: args}}
 		}
+		// Several calls in one turn: {"tools": [{"tool": ..., "args": ...}, ...]}.
+		calls, _ := m["tools"].([]any)
+		for k, c := range calls {
+			cm, _ := c.(map[string]any)
+			name, _ := cm["tool"].(string)
+			args, _ := cm["args"].(map[string]any)
+			turn.ToolCalls = append(turn.ToolCalls, kritrim.ToolCall{ID: fmt.Sprintf("call_%s_%d_%d", name, i, k), Name: name, Args: args})
+		}
 		out = append(out, turn)
 	}
 	return out

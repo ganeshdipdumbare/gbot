@@ -100,7 +100,10 @@ fun Activity(m: Message) {
     }
 }
 
-private val noReplyText = mapOf("delivered" to "No reply needed", "needs_you" to "Needs the person before it can reply", "failed" to "No reply")
+private val noReplyText = mapOf(
+    "delivered" to "No reply needed", "needs_you" to "Needs the person before it can reply", "failed" to "No reply",
+    "expired" to "Didn't answer in time", "cancelled" to "Stopped before answering",
+)
 private fun oneLine(s: String) = s.replace(Regex("[*_`#>]+"), "").replace(Regex("\\s+"), " ").trim()
 
 /** One bot messaging another: a centered divider; tap to read the exchange. */
@@ -118,10 +121,16 @@ fun Exchange(m: Message, bots: List<Bot>) {
     // the direction, so a received message reads "Me ← Them".
     val left = if (outbound) from else to
     val right = if (outbound) to else from
-    val label = if (outbound) "Messaged ${to?.name ?: "a bot"}" else "Message from ${from?.name ?: "a bot"}"
+    val tell = m.str("expect") == "tell"
+    val label = when {
+        outbound && tell -> "Told ${to?.name ?: "a bot"}"
+        outbound -> "Asked ${to?.name ?: "a bot"}"
+        else -> "Message from ${from?.name ?: "a bot"}"
+    }
     val line = when {
         !reply.isNullOrEmpty() -> (if (outbound) "${to?.name ?: "Bot"}: " else "Replied: ") + oneLine(reply)
         status in noReplyText -> noReplyText.getValue(status)
+        status == "working" -> if (outbound) "${to?.name ?: "Bot"} is on it…" else "Working on it…"
         else -> if (outbound) "Sent" else ""
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -141,8 +150,79 @@ fun Exchange(m: Message, bots: List<Bot>) {
             }
             Turn(from) { Text(m.str("message").orEmpty(), style = T.body, color = g.ink) }
             if (!reply.isNullOrEmpty() || status != "sent") Turn(to) {
-                if (!reply.isNullOrEmpty()) Markdown(reply) else Text(noReplyText[status] ?: status, style = T.body, color = g.ink3)
+                if (!reply.isNullOrEmpty()) Markdown(reply) else Text(statusText(status), style = T.body, color = g.ink3)
             }
+            GButton("Close", { open = false }, Modifier.align(Alignment.CenterHorizontally), variant = Variant.Soft)
+        }
+    }
+}
+
+private fun statusText(status: String): String = noReplyText[status] ?: when (status) {
+    "working" -> "Working on it…"
+    "sent", "" -> "Waiting its turn…"
+    else -> status
+}
+
+/** "Pip", "Pip and Taro", "Pip, Taro and 2 more". */
+private fun names(bots: List<Bot?>): String {
+    val n = bots.map { it?.name ?: "a bot" }
+    return when {
+        n.size <= 1 -> n.firstOrNull().orEmpty()
+        n.size == 2 -> "${n[0]} and ${n[1]}"
+        n.size == 3 -> "${n[0]}, ${n[1]} and ${n[2]}"
+        else -> "${n[0]}, ${n[1]} and ${n.size - 2} more"
+    }
+}
+
+private fun took(ms: Long): String {
+    val s = (ms + 500) / 1000
+    return if (s < 60) "${s}s" else "${s / 60}m ${s % 60}s"
+}
+
+/**
+ * A round: the asks one bot sent in one turn, as one line. It counts the
+ * answers as they land; tap to read every question and answer.
+ */
+@Composable
+fun RoundCard(ms: List<Message>, bots: List<Bot>) {
+    val g = LocalG.current
+    var open by remember { mutableStateOf(false) }
+    val from = bots.find { it.id == ms.first().str("from") }
+    val tos = ms.map { m -> bots.find { it.id == m.str("to") } }
+    val answered = ms.count { dev.gbot.app.local.askEnded(it.str("status")) }
+    val joined = ms.any { it.str("joined") == "true" }
+    val ms0 = ms.firstNotNullOfOrNull { it.str("tookMs")?.toDoubleOrNull()?.toLong() }
+    val line = when {
+        joined && ms0 != null -> "All answered · ${took(ms0)}"
+        answered == ms.size -> "All answered"
+        else -> "$answered of ${ms.size} answered"
+    }
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.clip(RoundedCornerShape(50)).tap { open = true }.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            tos.filterNotNull().take(3).forEachIndexed { i, b ->
+                Box(Modifier.padding(start = if (i == 0) 0.dp else 2.dp)) { Gbot(b.look, b.id, 16) }
+            }
+            Spacer(Modifier.width(6.dp))
+            Text("Asked ${names(tos)}", style = T.small, color = g.ink2)
+        }
+        Text(line, style = T.tiny.copy(fontSize = 12.5.sp), color = g.ink3)
+    }
+    if (open) Dialog(onDismissRequest = { open = false }) {
+        Column(Modifier.clip(RoundedCornerShape(22.dp)).background(if (g.dark) androidx.compose.ui.graphics.Color(0xFF262626) else androidx.compose.ui.graphics.Color.White).padding(18.dp).heightIn(max = 600.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.align(Alignment.CenterHorizontally).clip(RoundedCornerShape(50)).background(g.surface).padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (from != null) Gbot(from.look, from.id, 18)
+                Text(" ${from?.name ?: "A bot"} asked ${ms.size} bots", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
+            }
+            ms.forEachIndexed { i, m ->
+                val to = tos[i]
+                val reply = m.str("reply")
+                if (i > 0) Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(min = 1.dp, max = 1.dp).background(g.surface2))
+                Turn(from) { Text(m.str("message").orEmpty(), style = T.body, color = g.ink) }
+                Turn(to) {
+                    if (!reply.isNullOrEmpty()) Markdown(reply) else Text(statusText(m.str("status").orEmpty()), style = T.body, color = g.ink3)
+                }
+            }
+            Text(line, style = T.tiny, color = g.ink3, modifier = Modifier.align(Alignment.CenterHorizontally))
             GButton("Close", { open = false }, Modifier.align(Alignment.CenterHorizontally), variant = Variant.Soft)
         }
     }

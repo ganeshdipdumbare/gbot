@@ -304,13 +304,24 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
   };
 
   const rows = useMemo(() => {
-    const out: { m: Message; first: boolean; last: boolean; stamp?: string }[] = [];
+    const out: { m: Message; first: boolean; last: boolean; stamp?: string; round?: Message[] }[] = [];
+    // A bot's asks from one turn show as one round card, drawn where the
+    // first one sits; the rest draw nothing.
+    const rounds = new Map<string, Message[]>();
+    for (const m of messages ?? []) {
+      const r = m.data?.round;
+      if (m.role === "event" && m.data?.kind === "botmsg" && m.botId === m.data?.from && typeof r === "string") {
+        rounds.set(r, [...(rounds.get(r) ?? []), m]);
+      }
+    }
     (messages ?? []).forEach((m, i, all) => {
       const prev = all[i - 1];
       const same = (a?: Message) => !!a && a.role === m.role && a.botId === m.botId && a.data?.from === m.data?.from && a.role !== "card" && a.role !== "event";
       // A quiet timestamp after a gap, like Grok Bot.
       const gap = !prev || new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() > 30 * 60_000;
-      out.push({ m, first: !same(prev) || gap, last: !same(all[i + 1]), stamp: gap ? stampOf(m.createdAt) : undefined });
+      const members = typeof m.data?.round === "string" && m.botId === m.data?.from ? rounds.get(m.data.round) : undefined;
+      const round = members && members.length > 1 ? (members[0].id === m.id ? members : []) : undefined;
+      out.push({ m, first: !same(prev) || gap, last: !same(all[i + 1]), stamp: gap ? stampOf(m.createdAt) : undefined, round });
     });
     return out;
   }, [messages]);
@@ -344,14 +355,16 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
         )}
         {messages && messages.length === 0 && (bot ? <Hello bot={bot} /> : <GroupHello group={group!} members={members} />)}
         {error && <p className="text-center text-danger text-[13px]">{error}</p>}
-        {rows.map(({ m, first, last, stamp }) => {
+        {rows.map(({ m, first, last, stamp, round }) => {
           // Another bot's message to this one is shown as coming from it.
           const from = typeof m.data?.from === "string" ? bots.find((b) => b.id === m.data!.from) : undefined;
           const author = from ?? (m.botId ? byId[m.botId] : undefined);
           return (
             <div key={m.id}>
               {stamp && <div className="text-center text-[12px] text-ink-3 pt-5 pb-1">{stamp}</div>}
-              {m.role === "card"
+              {round
+                ? round.length > 0 && <RoundCard ms={round} enter={settled.current.has(m.id) ? "" : "entry-in"} />
+                : m.role === "card"
                 ? author && <Card m={m} bot={author} onTakeover={onTakeover} />
                 : <Row m={m} author={author} first={first} last={last} inGroup={!!group} chatKey={chatKey} animate={!settled.current.has(m.id)} />}
             </div>
@@ -500,10 +513,19 @@ function Activity({ m, enter }: { m: Message; enter: string }) {
   );
 }
 
-type ExchangeData = { from: string; to: string; message: string; reply?: string; status: string };
+// The keys of docs/protocol/bot-asks.md this view reads.
+type ExchangeData = {
+  from: string; to: string; message: string; reply?: string; status: string;
+  expect?: "ask" | "tell"; round?: string; joined?: boolean; tookMs?: number;
+};
 
 // What the other side shows when there is no reply text.
-const noReplyText: Record<string, string> = { delivered: "No reply needed", needs_you: "Needs the person before it can reply", failed: "No reply" };
+const noReplyText: Record<string, string> = {
+  delivered: "No reply needed", needs_you: "Needs the person before it can reply", failed: "No reply",
+  expired: "Didn't answer in time", cancelled: "Stopped before answering",
+};
+const ended = new Set(["replied", "delivered", "failed", "needs_you", "expired", "cancelled"]);
+const statusText = (status: string) => noReplyText[status] ?? (status === "working" ? "Working on it…" : status === "sent" ? "Waiting its turn…" : status);
 
 // The reply as one plain line for the divider's second line.
 const oneLine = (s: string) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
@@ -521,7 +543,7 @@ function Exchange({ m, enter }: { m: Message; enter: string }) {
   const to = bots.find((b) => b.id === d.to);
   const outbound = m.botId === d.from;
   const peer = outbound ? to : from;
-  const label = outbound ? `Messaged ${to?.name ?? "a bot"}` : `Message from ${from?.name ?? "a bot"}`;
+  const label = outbound ? `${d.expect === "tell" ? "Told" : "Asked"} ${to?.name ?? "a bot"}` : `Message from ${from?.name ?? "a bot"}`;
   const line = exchangeLine(d, outbound, to?.name);
   return (
     <>
@@ -544,8 +566,74 @@ function exchangeLine(d: ExchangeData, outbound: boolean, toName?: string): stri
   if (d.reply) return `${outbound ? `${toName ?? "Bot"}: ` : "Replied: "}${oneLine(d.reply)}`;
   if (d.status === "failed") return noReplyText.failed;
   if (d.status === "delivered") return noReplyText.delivered;
-  if (d.status === "needs_you") return noReplyText.needs_you;
+  if (noReplyText[d.status]) return noReplyText[d.status];
+  if (d.status === "working") return outbound ? `${toName ?? "Bot"} is on it…` : "Working on it…";
   return outbound ? "Sent" : "";
+}
+
+// "Pip", "Pip and Taro", "Pip, Taro and 2 more".
+function names(list: (Bot | undefined)[]): string {
+  const n = list.map((b) => b?.name ?? "a bot");
+  if (n.length <= 1) return n[0] ?? "";
+  if (n.length === 2) return `${n[0]} and ${n[1]}`;
+  if (n.length === 3) return `${n[0]}, ${n[1]} and ${n[2]}`;
+  return `${n[0]}, ${n[1]} and ${n.length - 2} more`;
+}
+
+function took(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+// A round: the asks one bot sent in one turn, as one line that counts the
+// answers as they land. Open it to read every question and answer.
+function RoundCard({ ms, enter }: { ms: Message[]; enter: string }) {
+  const [open, setOpen] = useState(false);
+  const bots = useStore((s) => s.bots);
+  const ds = ms.map((m) => m.data as ExchangeData);
+  const from = bots.find((b) => b.id === ds[0].from);
+  const tos = ds.map((d) => bots.find((b) => b.id === d.to));
+  const answered = ds.filter((d) => ended.has(d.status)).length;
+  const tookMs = ds.find((d) => typeof d.tookMs === "number")?.tookMs;
+  const line = ds.some((d) => d.joined) && tookMs != null ? `All answered · ${took(tookMs)}`
+    : answered === ds.length ? "All answered" : `${answered} of ${ds.length} answered`;
+  const label = `Asked ${names(tos)}`;
+  return (
+    <>
+      <div className={`${enter} my-3 flex flex-col items-center gap-0.5 text-center`}>
+        <button onClick={() => setOpen(true)} aria-label={`${label}. ${line}. Open the answers`}
+          className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[13px] text-ink-2 hover:bg-hover hover:text-ink cursor-pointer transition-colors duration-[120ms]">
+          <span className="flex items-center gap-0.5">
+            {tos.filter(Boolean).slice(0, 3).map((b) => <Gbot key={b!.id} look={b!.look} seed={b!.id} size={16} mood="idle" />)}
+          </span>
+          <span>{label}</span>
+        </button>
+        <span className="text-[12.5px] text-ink-3">{line}</span>
+      </div>
+      <Modal open={open} onClose={() => setOpen(false)} width={560}>
+        <div className="px-5 pb-5 pt-6 space-y-5">
+          <div className="mx-auto flex w-fit items-center gap-2 rounded-full bg-surface px-3.5 py-1.5 text-[14px]">
+            {from && <Gbot look={from.look} seed={from.id} size={18} mood="idle" />}
+            <span className="font-medium">{from?.name ?? "A bot"} asked {ds.length} bots</span>
+          </div>
+          {ds.map((d, i) => (
+            <div key={ms[i].id} className={`space-y-4 ${i > 0 ? "border-t border-line pt-5" : ""}`}>
+              <ExchangeTurn bot={from}><div className="whitespace-pre-wrap break-words">{d.message}</div></ExchangeTurn>
+              <ExchangeTurn bot={tos[i]}>
+                {d.reply
+                  ? <div className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.reply) }} />
+                  : <div className="text-ink-3">{statusText(d.status)}</div>}
+              </ExchangeTurn>
+            </div>
+          ))}
+          <div className="text-center text-[12px] text-ink-3">{line}</div>
+          <div className="flex justify-center pt-1">
+            <button onClick={() => setOpen(false)} className="rounded-full bg-surface hover:bg-hover px-4 py-2 text-[14px] cursor-pointer transition-colors duration-[120ms]">Close</button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
 }
 
 // The exchange itself: both bots, the message, and the reply once it
@@ -567,7 +655,7 @@ function ExchangeView({ open, onClose, from, to, d }: { open: boolean; onClose: 
           <ExchangeTurn bot={to}>
             {d.reply
               ? <div className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.reply) }} />
-              : <div className="text-ink-3">{noReplyText[d.status] ?? d.status}</div>}
+              : <div className="text-ink-3">{statusText(d.status)}</div>}
           </ExchangeTurn>
         )}
         <div className="flex justify-center pt-1">

@@ -66,18 +66,20 @@ type Job struct {
 	Thread    string // the paused group session a resume continues
 	Depth     int    // hops so far: group handoffs and messages between bots
 	QueueID   string // the durable queue record behind a chat run
+	Root      string // the person's request this run is part of
+
+	round     string // the round this run's asks go into, once it sends one
+	joinRound string // set on the run that gets a round's answers back
+	tainted   bool   // the run read outside text
 
 	model  string // the model this run resolved to
 	skills []*store.Skill
 	peers  []*store.Bot // bots this run can message
 	// Set when another bot messaged this one: the reply goes to the
-	// exchange cards, not into this bot's chat. Nothing wakes the sender.
+	// exchange cards, not into this bot's chat. An ask's answer goes back
+	// to the sender with the rest of its round (see rounds.go).
 	exchange []*store.Message
 }
-
-// maxBotHops caps a chain of bots messaging each other, so two bots
-// can't keep a conversation going on their own forever.
-const maxBotHops = 4
 
 // user is the person a run is for: a group's creator, or the person whose
 // chat the run is in.
@@ -145,6 +147,7 @@ type Runtime struct {
 	mcp       map[string]mcpState      // by server id
 	providers map[string]providerState // by provider id
 	syncMu    sync.Mutex               // serializes agent rebuilds
+	rounds    *rounds
 }
 
 // agentSlot is one built agent and the runs still using it.
@@ -162,7 +165,7 @@ func New(cfg Config, st *store.Store, hub *Hub, cat *models.Catalog, log *slog.L
 	r := &Runtime{cfg: cfg, store: st, hub: hub, catalog: cat, log: log,
 		sessions: store.NewSessions(st), mem: store.NewMemory(st),
 		agents: map[string]*agentSlot{}, workers: map[string]*worker{}, presence: map[string]Presence{},
-		mcp: map[string]mcpState{}, providers: map[string]providerState{}}
+		mcp: map[string]mcpState{}, providers: map[string]providerState{}, rounds: newRounds()}
 	r.addSecret(cfg.DatabaseURL)
 	return r, nil
 }
@@ -473,7 +476,7 @@ When you use information from a web page, cite it: put a Markdown link to that p
 		sb.WriteString("Reply only as yourself, briefly. Messages from others are prefixed with their name. If a teammate fits a task better, hand it to them by writing @Name in your reply. Don't speak for others.")
 	}
 	if len(j.peers) > 0 {
-		sb.WriteString("\n\nThe person's other bots, which you can message with message_bot. Your message doesn't wait for a reply: the reply shows on the message's card, and you get it in your next prompt. The person sees a card for every message, so never tell them you sent one:\n")
+		sb.WriteString("\n\nThe person's other bots, which you can message with message_bot. Ask (the default) when you need their answer: send every ask you need now, then finish your turn; the answers all come back to you together in one message once they're in. Tell when you're only passing something on: nothing comes back. Don't ask the same bot the same thing twice. The person sees a card for every message, so never tell them you sent one:\n")
 		for _, p := range j.peers {
 			fmt.Fprintf(&sb, "- %s: %s\n", p.Name, firstNonEmpty(p.Title, "teammate"))
 		}
@@ -506,10 +509,21 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	defer func() { r.finishQueue(j, qStatus, qErr) }()
 	c := j.convo()
 	bg := context.WithoutCancel(ctx)
+	r.rounds.startRun(j)
+	// The asks this run sends go back together once it ends.
+	defer func() {
+		if j.round != "" {
+			r.closeRound(j.round)
+		}
+	}()
 	// The exchange cards get the reply, or why there isn't one.
 	status, outcome := "failed", b.Name+" didn't reply."
 	if len(j.exchange) > 0 {
 		defer func() { r.settleExchange(j, status, outcome) }()
+		r.markExchange(j, map[string]any{"status": "working"})
+	}
+	if j.joinRound != "" {
+		r.markJoined(j.joinRound)
 	}
 	// The run uses the requester's approvals, tools, skills and memory,
 	// never the bot owner's: a teammate's connections stay their own.
@@ -541,11 +555,10 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	defer doneWithAgent()
 	rules, _ := r.store.ToolRules(bg, req.ID)
 	j.skills, _ = r.store.ListSkills(bg, req.ID)
-	// Bots can message each other, up to a few hops. In a group, the
-	// bots in it are @mentioned instead. A bot answering a message
-	// can't message the sender back: its answer is the reply, and a
-	// second message would start a second exchange.
-	if j.Depth < maxBotHops {
+	// Bots can message each other, within the request's limits. In a
+	// group, the bots in it are @mentioned instead. A bot answering a
+	// message can't message the sender back: its answer is the reply.
+	if canMessage(j.Depth, r.rounds.sent(j.Root)) {
 		var sender string
 		if len(j.exchange) > 0 {
 			sender, _ = j.exchange[0].Data["from"].(string)
@@ -559,6 +572,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	}
 	rc := &runCtx{botID: b.ID, userID: req.ID, mode: req.ApprovalMode, allow: map[string]bool{}, block: map[string]bool{},
 		mcpPrefix: r.mcpPrefixes(req.ID), tainted: j.Untrusted}
+	defer func() { j.tainted = rc.isTainted() }()
 	for _, t := range rules {
 		if t.Rule == "allow" {
 			rc.allow[t.Tool] = true
@@ -753,6 +767,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	if res != nil {
 		tokens = res.Usage.Total()
 	}
+	r.rounds.addTokens(j.Root, tokens)
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
 		qStatus = "stopped"
@@ -824,22 +839,34 @@ func groupThread(j *Job, runID string) string {
 // noReply is what a bot answers when nothing needs to go back.
 const noReply = "NO_REPLY"
 
-// messageBot sends another bot a message without waiting, like Grok
-// Bot. The sender is not woken by the reply: the recipient answers on
-// the exchange cards, and the sender sees the reply in its next prompt.
-// Both chats get a card for the exchange ("Messaged Grok Bot", "Message
-// from Pip"); the other bot's chat stays the person's.
-func (r *Runtime) messageBot(ctx context.Context, j *Job, to *store.Bot, text string) (string, error) {
+// messageBot sends another bot a message without waiting. An ask's
+// answer goes back to the sender with the rest of the asks it sends in
+// this run, in one run of its own once they're all in (see rounds.go); a
+// tell's goes nowhere. Both chats get a card for the message ("Messaged
+// Grok Bot", "Message from Pip"); the other bot's chat stays the
+// person's.
+func (r *Runtime) messageBot(ctx context.Context, j *Job, to *store.Bot, text, expect string) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "", errors.New("the message is empty")
 	}
+	if expect != "tell" {
+		expect = "ask"
+	}
+	if !r.rounds.take(j.Root, j.Depth) {
+		return "", fmt.Errorf("you can't message more bots for this request (at most %d messages, %d bots deep). Finish with what you have and tell the person what's missing", maxAsksPerRoot, maxAskDepth)
+	}
 	from, c := j.Bot, j.convo()
 	data := func() map[string]any {
-		return map[string]any{"kind": "botmsg", "from": from.ID, "to": to.ID, "message": text, "status": "sent"}
+		return map[string]any{"kind": "botmsg", "ask": newID("ak_"), "from": from.ID, "to": to.ID, "message": text,
+			"expect": expect, "root": j.Root, "depth": j.Depth + 1, "status": "sent"}
 	}
-	out := &store.Message{BotID: from.ID, GroupID: c.GroupID, ChatUser: c.User, Role: "event", Content: "Messaged " + to.Name, Data: data()}
-	in := &store.Message{BotID: to.ID, ChatUser: c.User, Role: "event", Content: "Message from " + from.Name, Data: data()}
+	d := data()
+	if expect == "ask" {
+		d["round"] = r.openRound(j)
+	}
+	out := &store.Message{BotID: from.ID, GroupID: c.GroupID, ChatUser: c.User, Role: "event", Content: "Messaged " + to.Name, Data: d}
+	in := &store.Message{BotID: to.ID, ChatUser: c.User, Role: "event", Content: "Message from " + from.Name, Data: d}
 	for _, m := range []*store.Message{out, in} {
 		if err := r.store.AddMessage(context.WithoutCancel(ctx), m, nil); err != nil {
 			return "", err
@@ -847,10 +874,12 @@ func (r *Runtime) messageBot(ctx context.Context, j *Job, to *store.Bot, text st
 		r.chat(c, Event{Type: "message", BotID: m.BotID, GroupID: m.GroupID, Data: m})
 	}
 	rc := runFrom(ctx)
-	prompt := fmt.Sprintf("Message from %s, another of the person's bots. Write your answer to %s as your reply here; it appears on the message's card, and %s doesn't wait for it. If nothing needs to go back, reply with just %s.\n\n%s", from.Name, from.Name, from.Name, noReply, text)
-	r.Enqueue(Job{Bot: to, For: c.User, Prompt: prompt, Trigger: "bot", Untrusted: rc != nil && rc.isTainted(), Depth: j.Depth + 1,
-		exchange: []*store.Message{out, in}})
-	return fmt.Sprintf("Sent to %s. The person sees a card for it; never tell them you sent it. %s's reply shows on that card and you'll see it in your next prompt.", to.Name, to.Name), nil
+	r.Enqueue(Job{Bot: to, For: c.User, Prompt: askPrompt(from.Name, text, expect), Trigger: "bot", Untrusted: rc != nil && rc.isTainted(),
+		Depth: j.Depth + 1, Root: j.Root, exchange: []*store.Message{out, in}})
+	if expect == "tell" {
+		return fmt.Sprintf("Sent to %s. Nothing comes back from a tell. The person sees a card for it; never tell them you sent it.", to.Name), nil
+	}
+	return fmt.Sprintf("Sent to %s. Don't wait for the answer: once this turn ends and every bot you asked has answered, all the answers come back to you together. The person sees a card for it; never tell them you sent it.", to.Name), nil
 }
 
 // sendWords mark a line that reports sending a message or what will
@@ -879,15 +908,30 @@ func announcesSend(text string, to []string) bool {
 	return false
 }
 
-// settleExchange writes how a bot-to-bot exchange ended onto both of its
-// cards. The sender isn't run again: its next prompt carries the reply
-// (see pendingReplies).
+// settleExchange writes how a bot-to-bot message ended onto both of its
+// cards. An ask's answer goes back to the sender with the rest of its
+// round (see rounds.go); a tell's sender is never woken.
 func (r *Runtime) settleExchange(j *Job, status, reply string) {
 	if status == "replied" && strings.Trim(reply, " .`*") == noReply {
 		status, reply = "delivered", ""
 	}
-	for _, m := range j.exchange {
-		if upd, err := r.store.MergeMessageData(context.Background(), m.ID, map[string]any{"status": status, "reply": reply}); err == nil {
+	if status == "replied" && len(j.exchange) > 0 && j.exchange[0].Data["expect"] == "tell" {
+		status = "delivered"
+	}
+	r.markExchange(j, map[string]any{"status": status, "reply": reply, "tainted": j.tainted})
+	if len(j.exchange) > 0 {
+		if round, _ := j.exchange[0].Data["round"].(string); round != "" {
+			r.maybeJoin(round)
+		}
+	}
+}
+
+// markExchange merges fields onto both cards of the message this run
+// answers, and shows the change.
+func (r *Runtime) markExchange(j *Job, fields map[string]any) {
+	for i, m := range j.exchange {
+		if upd, err := r.store.MergeMessageData(context.Background(), m.ID, fields); err == nil {
+			j.exchange[i] = upd
 			r.chat(j.convo(), Event{Type: "message_update", BotID: upd.BotID, GroupID: upd.GroupID, Data: upd})
 		}
 	}
@@ -905,7 +949,8 @@ func (r *Runtime) pendingReplies(ctx context.Context, b *store.Bot, user string)
 	var ids []string
 	for _, m := range msgs {
 		d := m.Data
-		if d["kind"] != "botmsg" || d["from"] != b.ID || d["status"] != "replied" || d["seen"] == true {
+		// Messages sent in a round get their answers back with the round.
+		if d["kind"] != "botmsg" || d["from"] != b.ID || d["status"] != "replied" || d["seen"] == true || d["round"] != nil {
 			continue
 		}
 		reply, _ := d["reply"].(string)

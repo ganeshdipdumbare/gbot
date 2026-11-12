@@ -311,6 +311,7 @@ func (r *Runtime) Recover(ctx context.Context) {
 	if len(items) > 0 {
 		r.log.Info("resumed queued messages", "count", len(items))
 	}
+	r.recoverAsks(ctx)
 }
 
 func (r *Runtime) jobFromQueue(ctx context.Context, q *store.QueueItem) (*Job, error) {

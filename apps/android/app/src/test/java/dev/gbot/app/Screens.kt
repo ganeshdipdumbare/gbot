@@ -25,6 +25,8 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
@@ -79,6 +81,18 @@ class Screens {
             "/api/bots/b1/sharing" to """{"visibility":"private","members":[],"spaceMembers":[]}""",
             "/api/groups/g1/messages" to """{"messages":[{"id":"gm0","groupId":"g1","role":"user","content":"Plan the launch post","createdAt":"${ago(32)}"},{"id":"gm1","groupId":"g1","botId":"b1","role":"bot","content":"Juno, can you check the copy?","createdAt":"${ago(30)}"}]}""",
             "/api/groups/g1/queue" to """{"items":[]}""",
+            "/api/bots/b4/messages" to """{"messages":[
+              {"id":"o1","botId":"b4","role":"user","content":"Get Nori and Juno's take on the launch, and let Pixel know it's Friday","createdAt":"${ago(8)}"},
+              {"id":"o2","botId":"b4","role":"event","content":"Messaged Nori","data":{"kind":"botmsg","ask":"ak_1","from":"b4","to":"b2","message":"Anything in the inbox that blocks a Friday launch?","expect":"ask","round":"rd_1","root":"rt_1","depth":1,"status":"replied","reply":"Nothing blocking. Two customers asked for the date — I'll reply once it's set.","joined":true,"tookMs":41000},"createdAt":"${ago(7)}"},
+              {"id":"o3","botId":"b4","role":"event","content":"Messaged Juno","data":{"kind":"botmsg","ask":"ak_2","from":"b4","to":"b3","message":"Is PR 214 safe to ship Friday?","expect":"ask","round":"rd_1","root":"rt_1","depth":1,"status":"replied","reply":"**Yes**, after one fix: the migration needs an index. I left a comment.","joined":true,"tookMs":41000},"createdAt":"${ago(7)}"},
+              {"id":"o4","botId":"b4","role":"event","content":"Messaged Pixel","data":{"kind":"botmsg","ask":"ak_3","from":"b4","to":"b1","message":"Launch is Friday.","expect":"tell","root":"rt_1","depth":1,"status":"delivered"},"createdAt":"${ago(7)}"},
+              {"id":"o5","botId":"b4","role":"bot","content":"Friday works. Nori sees nothing blocking in the inbox, and Juno says PR 214 is safe once the migration gets an index. I let Pixel know.","createdAt":"${ago(6)}"},
+              {"id":"o6","botId":"b4","role":"user","content":"Ask them both for a one-line launch tweet","createdAt":"${ago(2)}"},
+              {"id":"o7","botId":"b4","role":"event","content":"Messaged Nori","data":{"kind":"botmsg","ask":"ak_4","from":"b4","to":"b2","message":"One-line launch tweet?","expect":"ask","round":"rd_2","root":"rt_2","depth":1,"status":"replied","reply":"Ship day: gbot bots now work as a team."},"createdAt":"${ago(1)}"},
+              {"id":"o8","botId":"b4","role":"event","content":"Messaged Juno","data":{"kind":"botmsg","ask":"ak_5","from":"b4","to":"b3","message":"One-line launch tweet?","expect":"ask","round":"rd_2","root":"rt_2","depth":1,"status":"working"},"createdAt":"${ago(1)}"}
+            ]}""",
+            "/api/bots/b4/queue" to """{"items":[]}""",
+            "/api/bots/b4/computer" to """{"state":"asleep","controller":"bot","network":true,"available":true,"backend":"microsandbox"}""",
             "/api/settings/rules" to """{"rules":[{"tool":"browser_open","rule":"allow"}]}""",
             "/api/mcp" to """{"servers":[{"id":"x1","name":"Notion","url":"https://mcp.notion.com/mcp","oauth":true,"enabled":true,"status":"connected","tools":["m1234abcd__search","m1234abcd__create_page"]}]}""",
             "/api/slack" to """{"eventUrl":"https://bots.example.com/slack/events","installs":[
@@ -134,6 +148,16 @@ class Screens {
     @Test fun login() = shot("login") { LoginScreen({}, {}) }
     @Test fun appearance() = shot("appearance") { SettingsTab(rememberNavController(), "appearance") }
     @Test fun slack() = shot("slack") { SettingsTab(rememberNavController(), "slack") }
+    @Test fun asks() = shot("asks") { ChatScreen(rememberNavController(), "b4") }
+
+    /** A round's popup: every question and answer in one place. */
+    @Test fun roundPopup() {
+        shot("asks-before-popup") { ChatScreen(rememberNavController(), "b4") }
+        rule.onAllNodesWithText("Asked Nori and Juno", useUnmergedTree = true)[0].performClick()
+        repeat(4) { rule.waitForIdle(); Thread.sleep(150) }
+        val bmp = rule.onNode(androidx.compose.ui.test.isDialog()).captureToImage().asAndroidBitmap()
+        File(File("build/shots").apply { mkdirs() }, "asks-popup.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
 
     /** The same roster with the theme forced, not left to the host's setting. */
     @Test fun homeDark() {

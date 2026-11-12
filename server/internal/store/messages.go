@@ -195,3 +195,47 @@ func (s *Store) FailInterruptedRuns(ctx context.Context) error {
 	_, err := s.DB.Exec(ctx, `UPDATE runs SET status='error', error='server restarted', finished_at=now() WHERE status='running'`)
 	return err
 }
+
+// Bot-to-bot exchange cards. Both cards of one message share its data;
+// see docs/protocol/bot-asks.md.
+
+const botmsgWhere = `role='event' AND data->>'kind'='botmsg'`
+
+// RoundCards returns every exchange card of one round, oldest first.
+func (s *Store) RoundCards(ctx context.Context, round string) ([]*Message, error) {
+	return s.listMessages(ctx, `SELECT `+msgCols+` FROM messages WHERE `+botmsgWhere+` AND data->>'round'=$1 ORDER BY created_at`, round)
+}
+
+// AskCards returns the two cards of one message.
+func (s *Store) AskCards(ctx context.Context, ask string) ([]*Message, error) {
+	return s.listMessages(ctx, `SELECT `+msgCols+` FROM messages WHERE `+botmsgWhere+` AND data->>'ask'=$1 ORDER BY created_at`, ask)
+}
+
+// OpenAsks returns the receivers' cards of messages that were never
+// answered, from the last two days: what a restart has to pick up again.
+func (s *Store) OpenAsks(ctx context.Context) ([]*Message, error) {
+	return s.listMessages(ctx, `SELECT `+msgCols+` FROM messages WHERE `+botmsgWhere+`
+		AND data->>'status' IN ('sent','working') AND data ? 'ask' AND bot_id::text = data->>'to'
+		AND created_at > now() - interval '2 days' ORDER BY created_at`)
+}
+
+// UnjoinedRounds returns the rounds whose answers never went back to the
+// bot that asked, from the last two days.
+func (s *Store) UnjoinedRounds(ctx context.Context) ([]string, error) {
+	rows, err := s.DB.Query(ctx, `SELECT DISTINCT data->>'round' FROM messages WHERE `+botmsgWhere+`
+		AND data ? 'round' AND bot_id::text = data->>'from' AND coalesce(data->>'joined','') <> 'true'
+		AND created_at > now() - interval '2 days'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
