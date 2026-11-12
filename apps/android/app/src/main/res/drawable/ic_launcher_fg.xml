@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The white head touches the base, so no black shows below it. -->
+<!-- The white head touches the base, so no base shows below it. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -7,15 +7,11 @@
     android:viewportHeight="108">
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,48a30,30 0 1,1 0,60a30,30 0 1,1 0,-60Z" />
-    <group android:rotation="20" android:pivotX="46.5" android:pivotY="75">
-        <path
-            android:fillColor="#000000"
-            android:pathData="M43,70A3.5,3.5 0 0,1 50,70V80A3.5,3.5 0 0,1 43,80Z" />
-    </group>
-    <group android:rotation="20" android:pivotX="61.5" android:pivotY="75">
-        <path
-            android:fillColor="#000000"
-            android:pathData="M58,70A3.5,3.5 0 0,1 65,70V80A3.5,3.5 0 0,1 58,80Z" />
-    </group>
+        android:pathData="M54,32a38,38 0 1,1 0,76a38,38 0 1,1 0,-76Z" />
+    <path
+        android:fillColor="#141414"
+        android:pathData="M40,60A4.5,4.5 0 0,1 49,60V72A4.5,4.5 0 0,1 40,72Z" />
+    <path
+        android:fillColor="#141414"
+        android:pathData="M59,60A4.5,4.5 0 0,1 68,60V72A4.5,4.5 0 0,1 59,72Z" />
 </vector>

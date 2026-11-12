@@ -61,7 +61,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -261,13 +260,13 @@ fun GbotLogo(size: Int = 30, onClick: (() -> Unit)? = null) {
     }
     val lift by animateFloatAsState(if (happy) -2.5f else 0f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow), label = "lift")
     Box(Modifier.size(44.dp).pressable { happy = true; onClick?.invoke() }.semantics { contentDescription = "gbot" }, contentAlignment = Alignment.Center) {
-        Box(Modifier.size(size.dp).offset(y = lift.dp).clip(RoundedCornerShape(size * 0.3f)).background(Color.Black), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(size.dp).offset(y = lift.dp).clip(RoundedCornerShape(size * 0.3f)).background(Color(0xFF141414)), contentAlignment = Alignment.Center) {
             Canvas(Modifier.matchParentSize()) {
                 val unit = this.size.minDimension / 108f
                 withTransform({ scale(unit, unit, Offset.Zero) }) {
-                    drawCircle(Color.White, 30f, Offset(54f, 78f))
-                    rotate(20f, Offset(46.5f, 75f)) { drawRoundRect(Color.Black, Offset(43f, 66.5f), Size(7f, 17f), CornerRadius(3.5f)) }
-                    rotate(20f, Offset(61.5f, 75f)) { drawRoundRect(Color.Black, Offset(58f, 66.5f), Size(7f, 17f), CornerRadius(3.5f)) }
+                    drawCircle(Color.White, 38f, Offset(54f, 70f))
+                    drawRoundRect(Color(0xFF141414), Offset(40f, 55.5f), Size(9f, 21f), CornerRadius(4.5f))
+                    drawRoundRect(Color(0xFF141414), Offset(59f, 55.5f), Size(9f, 21f), CornerRadius(4.5f))
                 }
             }
         }
