@@ -8,6 +8,8 @@ import dev.gbot.app.local.LocalProviders
 import dev.gbot.app.local.ModelMemory
 import dev.gbot.app.local.normalizeName
 import dev.gbot.app.local.pickPeer
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -211,5 +213,22 @@ class LocalTest {
         assertFalse(dev.gbot.app.local.carriesAnswer(" `NO_REPLY`. "))
         assertFalse(dev.gbot.app.local.carriesAnswer("(no answer)"))
         assertFalse(dev.gbot.app.local.carriesAnswer("   "))
+    }
+
+    // ---- The exchange card is what the chat UI opens on tap ----
+
+    @Test
+    fun `an exchange card carries the keys the popup reads`() {
+        val sent = dev.gbot.app.local.exchangeData("a", "b", "say hi to Pip")
+        assertEquals("botmsg", sent["kind"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("a", sent["from"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("b", sent["to"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("say hi to Pip", sent["message"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("sent", sent["status"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(null, sent["reply"])
+
+        val done = dev.gbot.app.local.exchangeData("a", "b", "ask Pip for a joke", status = "replied", reply = "a joke")
+        assertEquals("replied", done["status"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("a joke", done["reply"]?.jsonPrimitive?.contentOrNull)
     }
 }

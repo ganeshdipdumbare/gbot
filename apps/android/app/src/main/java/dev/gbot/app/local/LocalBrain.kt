@@ -125,7 +125,14 @@ class LocalBrain(
         emitQueue(chat)
     }
 
-    private fun start(bot: Bot, prompt: String, group: Group?, depth: Int, from: String? = null) {
+    private fun start(
+        bot: Bot,
+        prompt: String,
+        group: Group?,
+        depth: Int,
+        from: String? = null,
+        exchange: List<GMessage> = emptyList(),
+    ) {
         // A new message keeps the model warm.
         idleJob?.cancel()
         idleJob = null
@@ -138,7 +145,7 @@ class LocalBrain(
             runLock.withLock {
                 while (qid in paused && isActive) delay(300)
                 doneQueued(chat, qid)
-                runCatching { run(bot, prompt, group, depth, from) }
+                runCatching { run(bot, prompt, group, depth, from, exchange) }
                     .onFailure {
                         if (it is CancellationException) {
                             // Stop is silent; any other cancellation is a fault.
@@ -245,7 +252,14 @@ class LocalBrain(
 
     fun cancelGroup(groupId: String) = cancel("g:$groupId")
 
-    private suspend fun run(bot: Bot, prompt: String, group: Group?, depth: Int, from: String? = null) {
+    private suspend fun run(
+        bot: Bot,
+        prompt: String,
+        group: Group?,
+        depth: Int,
+        from: String? = null,
+        exchange: List<GMessage> = emptyList(),
+    ) {
         val model = api.resolveModel(bot.model)
         log("run bot=${bot.name} model=${bot.model.ifBlank { "default" }} group=${group?.id ?: "-"}")
         emitPresence(bot.id, group, "thinking")
@@ -302,7 +316,7 @@ class LocalBrain(
             }
             log("reply ${content.length} chars")
             reply(bot, group, content)
-            if (group == null && from != null) passAnswer(bot, from, content, depth)
+            if (group == null && from != null) passAnswer(bot, from, content, depth, exchange)
             if (group != null && depth < 3) handoff(group, bot, content, depth)
         } finally {
             browsing.remove(bot.id)
@@ -552,48 +566,54 @@ class LocalBrain(
     private fun messageBot(from: Bot, group: Group?, to: Bot, text: String, depth: Int): String {
         val body = text.trim()
         if (body.isEmpty()) return "Write something to send."
-        event(from, group, "Messaged **${to.name}**")
-        val m = GMessage(
-            id = "m_" + UUID.randomUUID().toString().take(8), botId = to.id, role = "user",
-            content = "${from.name}: $body", createdAt = now(),
-        )
-        runCatching { db.putMessage(m) }.onFailure { log("could not save the message", it) }
-        runCatching { emit("message", to.id, json.encodeToJsonElement(m)) }
+        // Both sides get the same card, so either chat can show the whole
+        // exchange, and neither looks like something the person typed.
+        val data = exchangeData(from.id, to.id, body)
+        val out = event(from, group, "Messaged ${to.name}", data)
+        val incoming = event(to, null, "Message from ${from.name}", data)
         start(
             to,
             "Message from ${from.name}, another of the person's bots. Answer ${from.name} directly: " +
                 "your reply is sent back to them. If nothing needs to go back, reply with exactly $NO_REPLY.\n\n$body",
-            null, depth + 1, from = from.id,
+            null, depth + 1, from = from.id, exchange = listOf(out, incoming),
         )
         return "Sent to ${to.name}. Their answer comes back here, so don't wait for it in this reply."
     }
 
     /**
-     * A bot answered a message from another bot: carry the answer back, so
-     * the person doesn't have to read it in one chat and repeat it in the
-     * other. The chain stops after MAX_HOPS.
+     * A bot answered a message from another bot: put the answer on both
+     * cards and let the sender read it in its own chat. The chain stops
+     * after MAX_HOPS, but the card still ends up complete.
      */
-    private fun passAnswer(bot: Bot, fromId: String, answer: String, depth: Int) {
-        if (depth >= MAX_HOPS || !carriesAnswer(answer)) return
+    private fun passAnswer(bot: Bot, fromId: String, answer: String, depth: Int, exchange: List<GMessage>) {
         val sender = db.bot(fromId) ?: return
         val body = answer.trim()
-        val m = GMessage(
-            id = "m_" + UUID.randomUUID().toString().take(8), botId = sender.id, role = "user",
-            content = "${bot.name}: $body", createdAt = now(),
-        )
-        runCatching { db.putMessage(m) }.onFailure { log("could not save the answer", it) }
-        runCatching { emit("message", sender.id, json.encodeToJsonElement(m)) }
-        start(sender, "Reply from ${bot.name}, another of the person's bots:\n\n$body", null, depth + 1)
+        val carries = carriesAnswer(answer)
+        for (m in exchange) {
+            val next = m.copy(data = exchangeData(
+                from = m.str("from").orEmpty(),
+                to = m.str("to").orEmpty(),
+                message = m.str("message").orEmpty(),
+                status = if (carries) "replied" else "delivered",
+                reply = if (carries) body else "",
+            ))
+            runCatching { db.putMessage(next) }.onFailure { log("could not save the answer", it) }
+            runCatching { emit("message_update", next.botId.orEmpty(), json.encodeToJsonElement(next), next.groupId) }
+        }
+        if (carries && depth < MAX_HOPS) {
+            start(sender, "Reply from ${bot.name}, another of the person's bots:\n\n$body", null, depth + 1)
+        }
     }
 
     /** A quiet line in the transcript: something happened, no reply needed. */
-    private fun event(bot: Bot, group: Group?, content: String) {
+    private fun event(bot: Bot, group: Group?, content: String, data: JsonObject? = null): GMessage {
         val m = GMessage(
             id = "m_" + UUID.randomUUID().toString().take(8), botId = bot.id, groupId = group?.id, role = "event",
-            content = content, createdAt = now(),
+            content = content, createdAt = now(), data = data,
         )
         runCatching { db.putMessage(m) }.onFailure { log("could not save the event", it) }
         runCatching { emit("message", bot.id, json.encodeToJsonElement(m), group?.id) }
+        return m
     }
 
     private fun report(bot: Bot, group: Group?, e: Throwable) {
@@ -683,6 +703,26 @@ class LocalBrain(
 
 /** What a bot replies when it has nothing to send back. */
 const val NO_REPLY = "NO_REPLY"
+
+/**
+ * The card data for one bot-to-bot message. The chat UI reads exactly these
+ * keys to draw the "Messaged X" line and the tap-through popup, so an
+ * exchange without them is invisible: no preview and nothing to open.
+ */
+fun exchangeData(
+    from: String,
+    to: String,
+    message: String,
+    status: String = "sent",
+    reply: String = "",
+): JsonObject = buildJsonObject {
+    put("kind", "botmsg")
+    put("from", from)
+    put("to", to)
+    put("message", message)
+    put("status", status)
+    if (reply.isNotEmpty()) put("reply", reply)
+}
 
 /** Whether a bot's reply is worth carrying back to the bot that wrote first. */
 fun carriesAnswer(reply: String): Boolean {
