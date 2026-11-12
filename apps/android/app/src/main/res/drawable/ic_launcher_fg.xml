@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The gbot character, white on black. Sized inside the adaptive safe zone. -->
+<!-- The white head touches the base, so no base shows below it. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#F7F7F4"
-        android:pathData="M54,23a31,31 0 1,1 0,62a31,31 0 1,1 0,-62Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,32a38,38 0 1,1 0,76a38,38 0 1,1 0,-76Z" />
     <path
-        android:fillColor="#16131C"
-        android:pathData="M40.96,48.52A3.97,3.97 0 0,1 48.9,48.52V56.46A3.97,3.97 0 0,1 40.96,56.46Z" />
+        android:fillColor="#141414"
+        android:pathData="M40,60A4.5,4.5 0 0,1 49,60V72A4.5,4.5 0 0,1 40,72Z" />
     <path
-        android:fillColor="#16131C"
-        android:pathData="M59.1,48.52A3.97,3.97 0 0,1 67.04,48.52V56.46A3.97,3.97 0 0,1 59.1,56.46Z" />
+        android:fillColor="#141414"
+        android:pathData="M59,60A4.5,4.5 0 0,1 68,60V72A4.5,4.5 0 0,1 59,72Z" />
 </vector>

@@ -2,6 +2,7 @@ package dev.gbot.app.ui.settings
 
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -135,7 +137,7 @@ fun Team(back: () -> Unit) {
 
 // ---- Integrations -------------------------------------------------------
 
-private data class CatalogApp(val name: String, val blurb: String, val url: String, val tint: Long, val category: String, val token: Boolean = false)
+private data class CatalogApp(val name: String, val blurb: String, val url: String, val tint: Long, val category: String, val token: Boolean = false, val open: Boolean = false)
 private val categories = listOf("Work", "Design", "Data", "Developer", "Finance")
 private val catalog = listOf(
     CatalogApp("Notion", "Pages, databases and notes", "https://mcp.notion.com/mcp", 0xFF1F1F1F, "Work"),
@@ -155,10 +157,12 @@ private val catalog = listOf(
     CatalogApp("Wix", "Manage your Wix site", "https://mcp.wix.com/mcp", 0xFF0C6EFC, "Design"),
     CatalogApp("Gamma", "Generate presentations", "https://mcp.gamma.app/mcp", 0xFF6C3BF2, "Design"),
     CatalogApp("HeyGen", "Create AI videos", "https://mcp.heygen.com/mcp", 0xFF6D5DF6, "Design"),
+    CatalogApp("Excalidraw", "Sketch diagrams", "https://mcp.excalidraw.com/mcp", 0xFF6965DB, "Design", open = true),
     CatalogApp("Supabase", "Projects, tables and SQL", "https://mcp.supabase.com/mcp", 0xFF1F9D6B, "Data"),
     CatalogApp("Amplitude", "Events, charts and cohorts", "https://mcp.amplitude.com/mcp", 0xFF1E61F0, "Data"),
     CatalogApp("Mixpanel", "Query product analytics", "https://mcp.mixpanel.com/mcp", 0xFF7856FF, "Data"),
     CatalogApp("Metricool", "Track social and ad analytics", "https://ai.metricool.com/mcp", 0xFF6F4EF2, "Data"),
+    CatalogApp("Parallel", "Web search and research", "https://mcp.parallel.ai/mcp", 0xFF1F2937, "Data", open = true),
     CatalogApp("GitHub", "Repos, issues and pull requests", "https://api.githubcopilot.com/mcp/", 0xFF24292F, "Developer", token = true),
     CatalogApp("Sentry", "Errors, projects and releases", "https://mcp.sentry.dev/mcp", 0xFF362D59, "Developer"),
     CatalogApp("Postman", "Collections, APIs and environments", "https://mcp.postman.com/mcp", 0xFFFF6C37, "Developer"),
@@ -173,6 +177,18 @@ private val catalog = listOf(
     CatalogApp("Daloopa", "Financial model data", "https://mcp.daloopa.com/mcp", 0xFF1F3A93, "Finance"),
 )
 private fun sameUrl(a: String, b: String) = a.trimEnd('/') == b.trimEnd('/')
+private fun iconRes(name: String) = "ic_" + name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+
+/** The app's own logo on a white rounded tile, or its first letter. */
+@Composable
+private fun AppIcon(name: String, tint: Long, size: androidx.compose.ui.unit.Dp) {
+    val ctx = LocalContext.current
+    val id = remember(name) { ctx.resources.getIdentifier(iconRes(name), "drawable", ctx.packageName) }
+    Box(Modifier.size(size).clip(RoundedCornerShape(12.dp)).background(Color.White), contentAlignment = Alignment.Center) {
+        if (id != 0) Image(painterResource(id), contentDescription = null, modifier = Modifier.size(size * 0.68f))
+        else Text(name.take(1), color = Color(tint), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+    }
+}
 
 @Composable
 fun Integrations(back: () -> Unit) {
@@ -205,6 +221,13 @@ fun Integrations(back: () -> Unit) {
     fun connect(a: CatalogApp) {
         error = ""
         if (a.token) { adding = Triple(a.name, a.url, true); token = ""; return }
+        if (a.open) {
+            scope.launch {
+                try { app.api.addMcp(a.name, a.url, null); app.toast("${a.name} connected"); load() }
+                catch (e: Exception) { error = e.message ?: "Couldn't connect" }
+            }
+            return
+        }
         connecting = a
         scope.launch {
             try { val r = app.api.startMcpOAuth(a.name, a.url); authUrl = r.url; openAuth(r.url) }
@@ -231,7 +254,7 @@ fun Integrations(back: () -> Unit) {
                         .pressable(!on && connecting == null) { connect(a) }.padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Color(a.tint)), contentAlignment = Alignment.Center) { Text(a.name.take(1), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                    AppIcon(a.name, a.tint, 38.dp)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) { Text(a.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink); Text(a.blurb, style = T.tiny, color = g.ink2, maxLines = 1) }
                     if (on) Icon("check", color = g.live) else Text(if (waiting) "Signing in…" else "Connect", style = T.tiny.copy(fontWeight = FontWeight.Medium), color = g.ink3)
@@ -246,7 +269,7 @@ fun Integrations(back: () -> Unit) {
     connecting?.let { c ->
         Popup({ connecting = null; authUrl = "" }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Color(c.tint)), contentAlignment = Alignment.Center) { Text(c.name.take(1), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                AppIcon(c.name, c.tint, 38.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Signing in to ${c.name}", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)

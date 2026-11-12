@@ -1,6 +1,9 @@
 package dev.gbot.app.ui
 
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +26,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -52,8 +56,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -241,21 +249,26 @@ fun TopBar(title: String, onBack: (() -> Unit)?, subtitle: String? = null, lead:
 }
 
 /**
- * The gbot mark: the character from the app icon, white on black. Tap it
- * and it hops and smiles; at rest it blinks and its eyes wander.
+ * The gbot mark, like the app icon: a white bot head touching the base of
+ * a black tile. Tap it and it hops; at rest it sits still.
  */
 @Composable
-fun GbotLogo(size: Int = 22, onClick: (() -> Unit)? = null) {
+fun GbotLogo(size: Int = 30, onClick: (() -> Unit)? = null) {
     var happy by remember { mutableStateOf(false) }
     LaunchedEffect(happy) {
         if (happy) { delay(900); happy = false }
     }
+    val lift by animateFloatAsState(if (happy) -2.5f else 0f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow), label = "lift")
     Box(Modifier.size(44.dp).pressable { happy = true; onClick?.invoke() }.semantics { contentDescription = "gbot" }, contentAlignment = Alignment.Center) {
-        Box(Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
-            Gbot(
-                dev.gbot.app.net.Look(shape = "circle", hue = "white", eyes = "pill"),
-                "gbot", size, mood = if (happy) "happy" else "idle", lively = true,
-            )
+        Box(Modifier.size(size.dp).offset(y = lift.dp).clip(RoundedCornerShape(size * 0.3f)).background(Color(0xFF141414)), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.matchParentSize()) {
+                val unit = this.size.minDimension / 108f
+                withTransform({ scale(unit, unit, Offset.Zero) }) {
+                    drawCircle(Color.White, 38f, Offset(54f, 70f))
+                    drawRoundRect(Color(0xFF141414), Offset(40f, 55.5f), Size(9f, 21f), CornerRadius(4.5f))
+                    drawRoundRect(Color(0xFF141414), Offset(59f, 55.5f), Size(9f, 21f), CornerRadius(4.5f))
+                }
+            }
         }
     }
 }

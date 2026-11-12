@@ -142,7 +142,7 @@ fun HomeScreen(nav: NavHostController) {
         // Header, as the web sidebar: name, new group, new bot.
         Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 8.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                GbotLogo(22) { mainBot?.let { nav.navigate(R.chat(it.id)) } }
+                GbotLogo { mainBot?.let { nav.navigate(R.chat(it.id)) } }
                 Text("gbot", style = T.body.copy(fontWeight = FontWeight.SemiBold, fontSize = 17.sp, letterSpacing = (-0.3).sp), color = g.ink)
             }
             IconBtn("users", "New group", { nav.navigate(R.NEW_GROUP) })
