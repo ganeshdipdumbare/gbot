@@ -20,6 +20,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 
@@ -52,6 +54,19 @@ class GbotApp : Application() {
             prefs.edit().putBoolean("alerts", v).apply()
             if (v && mode == Mode.Server && hasSession()) LiveService.start(this) else LiveService.stop(this)
         }
+
+    /**
+     * Light or dark: "system", "light" or "dark". Lazy, because field
+     * initializers run before the Application has a context to read prefs
+     * from.
+     */
+    private val _theme by lazy { MutableStateFlow(prefs.getString("theme", "system") ?: "system") }
+    val theme: StateFlow<String> get() = _theme
+
+    fun setTheme(v: String) {
+        prefs.edit().putString("theme", v).apply()
+        _theme.value = v
+    }
 
     fun hasSession() = mode == Mode.Local || prefs.getBoolean("signedIn", false)
 

@@ -85,7 +85,7 @@ private data class ChatRow(val m: Message, val first: Boolean, val last: Boolean
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(nav: NavHostController, key: ChatKey) {
+fun ChatScreen(nav: NavHostController, key: ChatKey, prefill: String = "") {
     val app = GbotApp.instance
     val g = LocalG.current
     val s by app.store.state.collectAsState()
@@ -165,6 +165,7 @@ fun ChatScreen(nav: NavHostController, key: ChatKey) {
             Composer(
                 placeholder = if (bot != null) "Message ${bot.name}…" else "Message ${group!!.name}…",
                 busy = busy,
+                prefill = prefill,
                 mentionable = if (group != null) members else s.bots.filter { it.id != bot?.id },
                 onSend = { t -> app.voice.stop(); scope.launch { app.store.sendMessage(key, t) } },
                 onStop = { scope.attempt(fail = "Couldn't stop") { if (bot != null) app.api.stop(bot.id) else app.api.stopGroup(group!!.id) } },

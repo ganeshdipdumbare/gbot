@@ -92,6 +92,7 @@ fun SettingsHome(nav: NavHostController) {
     val s by app.store.state.collectAsState()
     val scope = rememberCoroutineScope()
     var signingOut by remember { mutableStateOf(false) }
+    val theme by app.theme.collectAsState()
     LaunchedEffect(Unit) { app.store.loadModels() }
     val local = app.mode == Mode.Local
     val me = s.me
@@ -111,6 +112,7 @@ fun SettingsHome(nav: NavHostController) {
         Group {
             Row("gear", "General", "Approvals and tool rules") { nav.navigate(R.settings("general")) }
             Row("bell", "Notifications", if (app.alertsEnabled) "On, even when gbot is closed" else "Only while gbot is open") { nav.navigate(R.settings("notifications")) }
+            Row("moon", "Appearance", when (theme) { "light" -> "Always light"; "dark" -> "Always dark"; else -> "Follows your phone" }) { nav.navigate(R.settings("appearance")) }
             Row("chip", "Models", chosen?.let { "Default: ${it.label}" } ?: best?.let { "Default: best available (${it.label})" } ?: "Default model, providers and keys", last = true) { nav.navigate(R.settings("models")) }
         }
         if (local) {
@@ -166,6 +168,7 @@ fun SettingsTab(nav: NavHostController, tab: String) {
     when (tab) {
         "general" -> General(back)
         "notifications" -> Notifications(back)
+        "appearance" -> Appearance(back)
         "models" -> Models(back)
         "team" -> Team(back)
         "integrations" -> Integrations(back)
@@ -266,6 +269,34 @@ private fun Notifications(back: () -> Unit) {
         }, variant = Variant.Ghost, small = true)
         Text("You'll get: bots that need you (approve or decline right from the notification), bots that finish, and replies in groups.", style = T.tiny, color = g.ink3)
         if (Build.VERSION.SDK_INT < 26) Text("", style = T.tiny)
+    }
+}
+
+@Composable
+private fun Appearance(back: () -> Unit) {
+    val app = GbotApp.instance
+    val g = LocalG.current
+    val theme by app.theme.collectAsState()
+    val options = listOf(
+        Triple("system", "System", "Matches your phone's light or dark setting."),
+        Triple("light", "Light", "Always light, whatever the phone does."),
+        Triple("dark", "Dark", "Always dark, whatever the phone does."),
+    )
+    Screen("Appearance", back) {
+        Panel(padding = 6.dp) {
+            options.forEach { (id, label, _) ->
+                androidx.compose.foundation.layout.Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).pressable { app.setTheme(id) }
+                        .padding(horizontal = 10.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(label, style = T.body.copy(fontWeight = FontWeight.Medium), color = g.ink, modifier = Modifier.weight(1f))
+                    if (theme == id) Icon("check", size = 18.dp, color = g.live)
+                }
+            }
+        }
+        Text(options.find { it.first == theme }?.third.orEmpty(), style = T.small, color = g.ink2)
+        Text("gbot keeps its own palette either way, so your bots look the same on every phone.", style = T.tiny, color = g.ink3)
     }
 }
 

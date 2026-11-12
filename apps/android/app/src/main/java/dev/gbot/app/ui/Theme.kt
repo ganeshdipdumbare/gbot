@@ -5,6 +5,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -12,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import dev.gbot.app.GbotApp
 
 // packages/ui-tokens, as Compose colors.
 @Immutable
@@ -51,7 +54,13 @@ object T {
 
 @Composable
 fun GbotTheme(content: @Composable () -> Unit) {
-    val g = if (isSystemInDarkTheme()) Dark else Light
+    val pref by GbotApp.instance.theme.collectAsState()
+    val dark = when (pref) {
+        "light" -> false
+        "dark" -> true
+        else -> isSystemInDarkTheme()
+    }
+    val g = if (dark) Dark else Light
     val scheme = if (g.dark) darkColorScheme(
         primary = g.emphasis, onPrimary = g.onEmphasis, background = g.bg, onBackground = g.ink,
         surface = g.bg, onSurface = g.ink, surfaceVariant = Color(0xFF2A2A2A), onSurfaceVariant = g.ink2,

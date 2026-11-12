@@ -32,13 +32,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import dev.gbot.app.GbotApp
 import dev.gbot.app.Mode
 import dev.gbot.app.MainActivity
+import dev.gbot.app.Shortcuts
 import dev.gbot.app.net.ApiError
 import dev.gbot.app.ui.chat.ChatScreen
 import dev.gbot.app.ui.screens.BotSettingsScreen
@@ -49,6 +53,7 @@ import dev.gbot.app.ui.screens.HomeScreen
 import dev.gbot.app.ui.screens.LoginScreen
 import dev.gbot.app.ui.screens.NewGroupScreen
 import dev.gbot.app.ui.screens.ServerScreen
+import dev.gbot.app.ui.screens.SharePicker
 import dev.gbot.app.ui.settings.SettingsHome
 import dev.gbot.app.ui.settings.SettingsTab
 import kotlinx.coroutines.delay
@@ -57,7 +62,7 @@ object R {
     const val SERVER = "server"
     const val LOGIN = "login"
     const val HOME = "home"
-    fun chat(k: String) = "chat/${Uri.encode(k)}"
+    fun chat(k: String, prefill: String = "") = "chat/${Uri.encode(k)}" + if (prefill.isEmpty()) "" else "?prefill=${Uri.encode(prefill)}"
     fun bot(id: String) = "bot/$id"
     fun group(id: String) = "group/$id"
     fun computer(id: String, take: Boolean = false) = "computer/$id?take=$take"
@@ -100,6 +105,11 @@ fun AppRoot(activity: MainActivity) {
     LaunchedEffect(me.me?.id) {
         if (me.me != null && Build.VERSION.SDK_INT >= 33) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
+    // The launcher icon's long-press menu follows the roster.
+    val ctx = LocalContext.current
+    LaunchedEffect(me.bots, me.hidden) {
+        Shortcuts.publish(ctx, me.bots.filter { it.id !in me.hidden })
+    }
     // Opening a chat from a notification.
     val req by activity.openRequest.collectAsState()
     LaunchedEffect(req, me.me?.id) {
@@ -110,6 +120,7 @@ fun AppRoot(activity: MainActivity) {
     }
 
     val g = LocalG.current
+    NowTicker {
     Box(Modifier.fillMaxSize().background(g.bg)) {
         NavHost(
             nav, start,
@@ -127,7 +138,16 @@ fun AppRoot(activity: MainActivity) {
             ) }
             composable(R.LOGIN) { LoginScreen(onSignedIn = { nav.home() }, onChangeServer = { nav.navigate(R.SERVER) }) }
             composable(R.HOME) { HomeScreen(nav) }
-            composable("chat/{key}") { e -> ChatScreen(nav, Uri.decode(e.arguments?.getString("key").orEmpty())) }
+            composable(
+                "chat/{key}?prefill={prefill}",
+                arguments = listOf(navArgument("prefill") { type = NavType.StringType; defaultValue = "" }),
+            ) { e ->
+                ChatScreen(
+                    nav,
+                    Uri.decode(e.arguments?.getString("key").orEmpty()),
+                    prefill = e.arguments?.getString("prefill").orEmpty(),
+                )
+            }
             composable("bot/{id}") { e -> BotSettingsScreen(nav, e.arguments?.getString("id").orEmpty()) }
             composable("group/{id}") { e -> GroupSettingsScreen(nav, e.arguments?.getString("id").orEmpty()) }
             composable("computer/{id}?take={take}") { e -> ComputerScreen(nav, e.arguments?.getString("id").orEmpty(), e.arguments?.getString("take") == "true") }
@@ -137,6 +157,16 @@ fun AppRoot(activity: MainActivity) {
             composable("settings/{tab}") { e -> SettingsTab(nav, e.arguments?.getString("tab").orEmpty()) }
         }
         Toasts(Modifier.align(Alignment.BottomCenter))
+    }
+    val shared by activity.shareRequest.collectAsState()
+    shared?.let { text ->
+        if (app.hasSession()) SharePicker(
+            bots = me.bots.filter { it.id !in me.hidden },
+            text = text,
+            onPick = { b -> activity.shareRequest.value = null; nav.navigate(R.chat(b.id, text)) },
+            onDismiss = { activity.shareRequest.value = null },
+        )
+    }
     }
 }
 

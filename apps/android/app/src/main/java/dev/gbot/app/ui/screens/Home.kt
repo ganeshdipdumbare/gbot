@@ -34,6 +34,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -73,7 +74,7 @@ import dev.gbot.app.ui.moodOf
 import dev.gbot.app.ui.presenceText
 import dev.gbot.app.ui.pressable
 import dev.gbot.app.ui.resolveLook
-import dev.gbot.app.ui.timeAgo
+import dev.gbot.app.ui.timeAgoLive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.LocalTime
@@ -106,12 +107,12 @@ fun HomeScreen(nav: NavHostController) {
     val g = LocalG.current
     val s by app.store.state.collectAsState()
     val scope = rememberCoroutineScope()
-    var q by remember { mutableStateOf("") }
+    var q by rememberSaveable { mutableStateOf("") }
     var refreshing by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<Bot?>(null) }
     var renaming by remember { mutableStateOf<Bot?>(null) }
     var deleting by remember { mutableStateOf<Bot?>(null) }
-    var showHidden by remember { mutableStateOf(false) }
+    var showHidden by rememberSaveable { mutableStateOf(false) }
     val clip = LocalClipboardManager.current
 
     LaunchedEffect(Unit) {
@@ -305,7 +306,7 @@ fun BotRow(b: Bot, p: Presence?, computerOn: Boolean, unread: Int, onClick: () -
     val blocked = p?.state == "blocked"
     RowShell(
         onClick, onLong, { Gbot(b.look, b.id, 42, mood = moodOf(p, b), live = p?.live == true || computerOn) },
-        b.name, b.pinned, timeAgo(b.lastMessage?.createdAt),
+        b.name, b.pinned, timeAgoLive(b.lastMessage?.createdAt),
         if (busy) statusOf(p!!) else preview(b.lastMessage?.content).ifEmpty { b.title.ifEmpty { "General-purpose bot" } },
         if (busy) (if (blocked) g.danger else g.live) else if (unread > 0) g.ink else g.ink2, busy || unread > 0, unread,
     )
@@ -317,7 +318,7 @@ private fun GroupRow(gr: Group, bots: List<Bot>, presence: Map<String, Presence>
     val members = gr.botIds.mapNotNull { id -> bots.find { it.id == id } }
     val working = members.find { presence[it.id]?.state in listOf("thinking", "working") }
     RowShell(
-        onClick, onLong, { Stack(members, 26, presence) }, gr.name, false, timeAgo(gr.lastMessage?.createdAt),
+        onClick, onLong, { Stack(members, 26, presence) }, gr.name, false, timeAgoLive(gr.lastMessage?.createdAt),
         if (working != null) "${working.name} is ${presence[working.id]?.state}…" else preview(gr.lastMessage?.content).ifEmpty { members.joinToString(", ") { it.name } },
         if (working != null) g.live else if (unread > 0) g.ink else g.ink2, working != null || unread > 0, unread,
     )

@@ -45,6 +45,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,17 +76,22 @@ private data class Suggestion(val key: String, val label: String, val hint: Stri
  * mic dictates, and the button sends (or stops a reply in progress).
  */
 @Composable
-fun Composer(placeholder: String, busy: Boolean, mentionable: List<Bot>, onSend: (String) -> Unit, onStop: () -> Unit) {
+fun Composer(placeholder: String, busy: Boolean, mentionable: List<Bot>, onSend: (String) -> Unit, onStop: () -> Unit, prefill: String = "") {
     val app = GbotApp.instance
     val g = LocalG.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var value by remember { mutableStateOf(TextFieldValue("")) }
+    val haptic = LocalHapticFeedback.current
+    var value by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     var skills by remember { mutableStateOf<List<Skill>>(emptyList()) }
     var menu by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { skills = SkillCache.get() }
 
     fun setText(t: String) { value = TextFieldValue(t, TextRange(t.length)) }
+
+    // Text shared in from another app. It waits in the box: sending is
+    // still the person's call.
+    LaunchedEffect(prefill) { if (prefill.isNotEmpty() && value.text.isEmpty()) setText(prefill) }
 
     val dictation = remember { Dictation(ctx, app.voice, app.api) { t -> val x = value.text; setText((if (x.isNotEmpty()) x.trimEnd() + " " else "") + t) } }
     var mode by remember { mutableStateOf(Dictation.Mode.None) }
@@ -125,6 +133,7 @@ fun Composer(placeholder: String, busy: Boolean, mentionable: List<Bot>, onSend:
     fun send() {
         val t = text.trim()
         if (t.isEmpty()) return
+        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
         setText("")
         onSend(t)
     }

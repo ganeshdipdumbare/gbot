@@ -4,7 +4,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -33,13 +33,16 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +56,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -68,6 +73,7 @@ import dev.gbot.app.GbotApp
 import dev.gbot.app.net.Bot
 import dev.gbot.app.net.Presence
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
@@ -77,26 +83,29 @@ import java.time.format.FormatStyle
 
 fun Modifier.tap(enabled: Boolean = true, onClick: () -> Unit): Modifier = clickable(enabled = enabled, role = Role.Button, onClick = onClick)
 
-/** Press-to-shrink, like the web's whileTap. */
+/**
+ * Press-to-shrink, like the web's whileTap.
+ *
+ * Both branches go through [combinedClickable] so the press reaches [src]
+ * and the shrink actually plays. A hand-rolled detectTapGestures does not
+ * emit press interactions, which left every long-pressable row -- the whole
+ * roster -- flat on touch and silent to TalkBack.
+ */
 @Composable
 fun Modifier.pressable(enabled: Boolean = true, onLong: (() -> Unit)? = null, onClick: () -> Unit): Modifier {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val s by animateFloatAsState(if (pressed) 0.96f else 1f, label = "press")
     val haptic = LocalHapticFeedback.current
-    return this.scale(s).then(
-        if (onLong != null) Modifier.combinedClickableCompat(src, enabled, onClick) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onLong() }
-        else Modifier.clickable(src, null, enabled = enabled, role = Role.Button, onClick = onClick)
+    return this.scale(s).combinedClickable(
+        interactionSource = src,
+        indication = null,
+        enabled = enabled,
+        role = Role.Button,
+        onLongClick = onLong?.let { f -> { haptic.performHapticFeedback(HapticFeedbackType.LongPress); f() } },
+        onClick = onClick,
     )
 }
-
-private fun Modifier.combinedClickableCompat(src: MutableInteractionSource, enabled: Boolean, onClick: () -> Unit, onLong: () -> Unit) =
-    this.then(
-        Modifier.pointerInput(enabled, onClick, onLong) {
-            if (!enabled) return@pointerInput
-            detectTapGestures(onLongPress = { onLong() }, onTap = { onClick() })
-        }
-    )
 
 enum class Variant { Primary, Soft, Ghost, Danger }
 
@@ -126,6 +135,7 @@ fun IconBtn(icon: String, label: String, onClick: () -> Unit, modifier: Modifier
     val g = LocalG.current
     Box(
         modifier.size(size).clip(CircleShape).background(if (filled) g.surface2 else Color.Transparent)
+            .semantics { contentDescription = label }
             .clickable(enabled = enabled, role = Role.Button, onClickLabel = label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, size = if (size < 36.dp) 17.dp else 19.dp, color = if (enabled) tint else tint.copy(alpha = 0.35f)) }
@@ -278,20 +288,43 @@ fun CoroutineScope.attempt(ok: String? = null, fail: String? = null, block: susp
 // Presence and time, as the web shows them.
 val presenceText = mapOf("idle" to "", "thinking" to "Thinking…", "working" to "Working…", "waiting" to "Needs you", "blocked" to "Stuck", "done" to "Done!")
 
-fun moodOf(p: Presence?, bot: Bot? = null): String {
+fun moodOf(p: Presence?, bot: Bot? = null, nowMs: Long = System.currentTimeMillis()): String {
     val s = p?.state ?: "idle"
     if (s != "idle") return s
     val last = bot?.lastMessage?.createdAt ?: bot?.createdAt
     val at = last?.let { runCatching { Instant.parse(it) }.getOrNull() }
-    if (at != null && Duration.between(at, Instant.now()).toHours() > 12) return "sleepy"
+    if (at != null && Duration.between(at, Instant.ofEpochMilli(nowMs)).toHours() > 12) return "sleepy"
     return "idle"
 }
 
 fun parseTime(iso: String?): Instant? = iso?.let { runCatching { Instant.parse(it) }.getOrNull() ?: runCatching { java.time.OffsetDateTime.parse(it).toInstant() }.getOrNull() }
 
-fun timeAgo(iso: String?): String {
+/** Now, in millis, nudged forward every 30s by [NowTicker]. */
+val LocalNow = compositionLocalOf { System.currentTimeMillis() }
+
+/** Keeps every relative time under it honest without a timer per row. */
+@Composable
+fun NowTicker(content: @Composable () -> Unit) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    CompositionLocalProvider(LocalNow provides now, content = content)
+}
+
+/** "2m" that becomes "3m" on its own. */
+@Composable
+fun timeAgoLive(iso: String?): String {
+    val now = LocalNow.current
+    return remember(iso, now) { timeAgo(iso, now) }
+}
+
+fun timeAgo(iso: String?, nowMs: Long = System.currentTimeMillis()): String {
     val at = parseTime(iso) ?: return ""
-    val s = Duration.between(at, Instant.now()).seconds
+    val s = Duration.between(at, Instant.ofEpochMilli(nowMs)).seconds
     return when {
         s < 60 -> "now"
         s < 3600 -> "${s / 60}m"

@@ -127,4 +127,15 @@ class Screens {
     @Test fun computer() = shot("computer") { ComputerScreen(rememberNavController(), "b1", false) }
     @Test fun hatch() = shot("hatch") { HatchScreen(rememberNavController()) }
     @Test fun login() = shot("login") { LoginScreen({}, {}) }
+    @Test fun appearance() = shot("appearance") { SettingsTab(rememberNavController(), "appearance") }
+
+    /** The same roster with the theme forced, not left to the host's setting. */
+    @Test fun homeDark() {
+        GbotApp.instance.setTheme("dark")
+        try {
+            shot("home-dark") { HomeScreen(rememberNavController()) }
+        } finally {
+            GbotApp.instance.setTheme("system")
+        }
+    }
 }
