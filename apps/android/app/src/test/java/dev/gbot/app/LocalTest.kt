@@ -6,6 +6,8 @@ import dev.gbot.app.local.Cron
 import dev.gbot.app.local.Mentions
 import dev.gbot.app.local.LocalProviders
 import dev.gbot.app.local.ModelMemory
+import dev.gbot.app.local.normalizeName
+import dev.gbot.app.local.pickPeer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -163,5 +165,40 @@ class LocalTest {
             since = now,
         )
         assertEquals(null, out["b1"])
+    }
+
+    // ---- A small model decorates the name it was given ----
+
+    private val roster = listOf(
+        dev.gbot.app.net.Bot(id = "1", name = "Taro"),
+        dev.gbot.app.net.Bot(id = "2", name = "Remy"),
+        dev.gbot.app.net.Bot(id = "3", name = "Taro Two"),
+    )
+
+    @Test
+    fun `the decoration around a name is ignored`() {
+        assertEquals("Taro", normalizeName("@Taro"))
+        assertEquals("Taro", normalizeName(" “Taro” "))
+        assertEquals("Taro", normalizeName("Taro."))
+        assertEquals("Taro", normalizeName("Taro\u00A0"))
+        assertEquals("Taro", normalizeName("\u200BTaro\u200B"))
+        assertEquals("", normalizeName("  "))
+    }
+
+    @Test
+    fun `a decorated name still finds its bot`() {
+        // This exact shape produced: No bot named Taro. You can message Taro.
+        assertEquals("2", pickPeer(" @Remy ", roster)?.id)
+        assertEquals("1", pickPeer("“Taro”", roster)?.id)
+        assertEquals("1", pickPeer("@Taro, say hello", roster)?.id)
+        assertEquals("1", pickPeer("Taro", roster)?.id)
+    }
+
+    @Test
+    fun `an ambiguous partial is not guessed`() {
+        assertEquals(null, pickPeer("Tar", roster))
+        assertEquals(null, pickPeer("Nobody", roster))
+        assertEquals(null, pickPeer("", roster))
+        assertEquals(null, pickPeer("Taro", emptyList()))
     }
 }

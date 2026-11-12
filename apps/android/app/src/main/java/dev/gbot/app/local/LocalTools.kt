@@ -150,12 +150,13 @@ class LocalTools(
 
     suspend fun run(name: String, args: JsonObject): String = when (name) {
         "message_bot" -> {
-            val want = args.str("to").removePrefix("@").trim()
-            val target = peers.find { it.name.equals(want, ignoreCase = true) }
+            val raw = args.str("to")
+            val target = pickPeer(raw, peers)
             when {
                 target != null -> messageBot(target, args.str("message"))
                 peers.isEmpty() -> "There are no other bots to message."
-                else -> "No bot named “$want”. You can message " + peers.joinToString(", ") { it.name } + "."
+                else -> "No bot named " + normalizeName(raw).ifEmpty { "that" } +
+                    ". Use exactly one of these names: " + peers.joinToString(", ") { it.name } + "."
             }
         }
         "browser_open" -> {
@@ -299,3 +300,44 @@ class LocalTools(
 private fun JsonObject.str(k: String): String = this[k]?.jsonPrimitive?.contentOrNull.orEmpty()
 private fun JsonObject.int(k: String): Int = this[k]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.toInt() ?: -1
 private fun JsonObject.bool(k: String): Boolean = this[k]?.jsonPrimitive?.contentOrNull == "true"
+
+// A small model does not always hand back the name it was given. It may
+// quote it, curly-quote it, keep the @, add a full stop, paste the whole
+// list, or slip in a non-breaking or zero-width space. All of those look
+// identical on screen, which is how "No bot named Taro. You can message
+// Taro." happened. Matching forgives the decoration rather than the name.
+
+private val invisible = Regex("[\\u200B-\\u200D\\uFEFF]")
+private val edges = charArrayOf('@', '"', '\'', '\u201C', '\u201D', '\u2018', '\u2019', '`', '*', '_')
+
+/** A name with the decoration taken off. */
+fun normalizeName(s: String): String = s
+    .replace(invisible, "")
+    .replace('\u00A0', ' ')
+    .trim()
+    .trim(*edges)
+    .trim()
+    .trimEnd('.', ',', ':', ';', '!', '?')
+    .trim(*edges)
+    .trim()
+
+/**
+ * Which bot the model meant. Exact names first, across the whole string
+ * and its first word, then an unambiguous partial. Never guesses between
+ * two bots that both fit.
+ */
+fun pickPeer(raw: String, peers: List<Bot>): Bot? {
+    if (peers.isEmpty()) return null
+    val tries = listOf(raw, raw.substringBefore(','), raw.substringBefore(' ')).map(::normalizeName).filter { it.isNotEmpty() }
+    for (want in tries) {
+        peers.firstOrNull { normalizeName(it.name).equals(want, ignoreCase = true) }?.let { return it }
+    }
+    for (want in tries) {
+        val hits = peers.filter {
+            val n = normalizeName(it.name)
+            n.isNotEmpty() && (n.startsWith(want, ignoreCase = true) || want.startsWith(n, ignoreCase = true))
+        }
+        if (hits.size == 1) return hits[0]
+    }
+    return null
+}
