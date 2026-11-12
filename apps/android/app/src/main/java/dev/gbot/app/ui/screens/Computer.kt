@@ -376,7 +376,17 @@ internal fun Routines(bot: Bot) {
     LaunchedEffect(bot.id) { app.live.events.collect { e -> if (e.s("type") == "routine" && e.s("botId") == bot.id) load() } }
 
     Text("Routines", style = T.h2, color = g.ink, modifier = Modifier.padding(top = 8.dp))
-    if (app.mode == Mode.Local) Text("On this phone they run while gbot is open, and a missed time catches up when you come back.", style = T.tiny, color = g.ink3)
+    if (app.mode == Mode.Local) {
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        val exact = remember { dev.gbot.app.live.RoutineAlarm.exact(ctx) }
+        Text(
+            if (exact) "They run on this phone, even when gbot is closed." else "They run on this phone, even when gbot is closed, though Android may start them a few minutes late.",
+            style = T.tiny, color = g.ink3,
+        )
+        if (!exact && android.os.Build.VERSION.SDK_INT >= 31) GButton("Allow on-time routines", {
+            runCatching { ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, android.net.Uri.parse("package:${ctx.packageName}"))) }
+        }, variant = Variant.Soft, small = true)
+    }
     secret?.let { r ->
         Panel {
             Text("Webhook ready. Copy the key now; it won't be shown again.", style = T.small.copy(fontWeight = FontWeight.SemiBold), color = g.ink)

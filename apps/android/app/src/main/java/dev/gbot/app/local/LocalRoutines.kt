@@ -35,6 +35,8 @@ object Mentions {
 class LocalRoutines(
     private val db: LocalDb,
     private val scope: CoroutineScope,
+    /** After each tick: set the alarm for the next one, so it fires with the app closed too. */
+    private val arm: (List<Routine>) -> Unit = {},
     private val fire: (Routine) -> Unit,
 ) {
     private var job: Job? = null
@@ -54,7 +56,10 @@ class LocalRoutines(
         job = null
     }
 
-    private fun tick() {
+    /** Fire what is due now, e.g. when the alarm wakes the app. */
+    fun tickNow() = scope.launch(Dispatchers.IO) { runCatching { tick() } }
+
+    @Synchronized private fun tick() {
         val now = ZonedDateTime.now()
         for (r in db.allRoutines()) {
             if (!r.active || r.kind != "schedule") continue
@@ -69,5 +74,6 @@ class LocalRoutines(
             db.putRoutine(r.copy(nextRunAt = cron.next(now)?.toInstant()?.toString(), lastRunAt = now.toInstant().toString()))
             fire(r)
         }
+        arm(db.allRoutines())
     }
 }

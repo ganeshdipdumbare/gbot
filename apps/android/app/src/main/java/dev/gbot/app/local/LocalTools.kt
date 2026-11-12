@@ -45,7 +45,23 @@ class LocalTools(
     private val createBot: suspend (String, String) -> Bot = { _, _ -> error("Hatching isn't available.") },
     private val changeBot: suspend (String, JsonObject) -> Bot = { _, _ -> error("Changing bots isn't available.") },
     private val archiveBot: suspend (String) -> Unit = { error("Archiving isn't available.") },
+    /** What only the running brain can do: ask the person, routines, and checking the work. */
+    private val host: ToolHost? = null,
 ) {
+    /** The run behind these tools. */
+    interface ToolHost {
+        suspend fun ask(question: String, options: List<String>): String
+        suspend fun routines(): List<dev.gbot.app.net.Routine>
+        suspend fun setRoutine(id: String, active: Boolean)
+        suspend fun deleteRoutine(id: String)
+        suspend fun runRoutine(id: String)
+        fun contract(goal: String, checks: List<String>): String
+        suspend fun verify(): String
+    }
+
+    /** The bot's own folder on this phone: notes, drafts and files it makes. */
+    private val folder: java.io.File by lazy { java.io.File(ctx.filesDir, "bots/$botId/files").apply { mkdirs() }.canonicalFile }
+
     /** Only the person's main bot looks after the roster. */
     private val main = botId == MAIN_BOT
 
@@ -81,6 +97,16 @@ class LocalTools(
             params("id", "integer", "The field id from browser_read", required = listOf("id")),
         ),
         ToolSchema("browser_back", "Go back to the previous page.", params()),
+        ToolSchema("browser_forward", "Go forward again after browser_back.", params()),
+        ToolSchema("browser_reload", "Reload the page that is open.", params()),
+        ToolSchema(
+            "browser_scroll", "Scroll the page, then read it again. Use it when what you need is further down or loads as you scroll.",
+            params("direction", "string", "down (default) or up"),
+        ),
+        ToolSchema(
+            "browser_wait", "Wait for a slow page to finish, then read it again.",
+            params("seconds", "integer", "1 to 10, default 3"),
+        ),
         ToolSchema(
             "open_in_chrome", "Hand a page to the phone's real browser, for sites that need you signed in there.",
             params("url", "string", "Full web address", required = listOf("url")),
@@ -111,6 +137,42 @@ class LocalTools(
             "Write down the steps of a task before starting, then work through them in order. Internal: the person never sees it.",
             params("steps", "string", "The steps, one per line, in order", required = listOf("steps")),
         ),
+        ToolSchema(
+            "ask_user",
+            "Ask the person a question when you need information or a decision only they can give. They answer on a card in the chat; " +
+                "don't ask in plain text when this fits. Give 2-4 short options when the answer is a choice.",
+            params(
+                "question", "string", "One short, specific question",
+                "options", "string", "Choices, one per line (optional)", required = listOf("question"),
+            ),
+        ),
+        ToolSchema("file_list", "List the files in your own folder on this phone.", params()),
+        ToolSchema(
+            "file_read", "Read one of the files in your folder.",
+            params("path", "string", "The file's name, as file_list shows it", required = listOf("path")),
+        ),
+        ToolSchema(
+            "file_write", "Write a file in your folder: notes, drafts, lists or data to keep between messages. Replaces the file if it exists.",
+            params("path", "string", "A file name like notes/trip.md", "content", "string", "The whole file", required = listOf("path", "content")),
+        ),
+        ToolSchema(
+            "task_contract",
+            "Before a task with a deliverable, agree a short contract: the goal and 3-6 concrete checks the person can verify. The person approves it on a card.",
+            params("goal", "string", "What done means, in one line", "checks", "string", "The checks, one per line", required = listOf("goal", "checks")),
+        ),
+        ToolSchema(
+            "task_verify",
+            "Check what you actually did against the agreed contract, independently, and add a Verification receipt to your answer. " +
+                "Call it before saying the task is done. If a check fails, fix it or say what remains.",
+            params(),
+        ),
+        ToolSchema("routine_list", "List your routines, with their schedules and whether they are on.", params()),
+        ToolSchema(
+            "routine_update", "Turn one of your routines on or off.",
+            params("name", "string", "The routine's name", "active", "boolean", "true to turn it on, false to pause it", required = listOf("name", "active")),
+        ),
+        ToolSchema("routine_delete", "Delete one of your routines.", params("name", "string", "The routine's name", required = listOf("name"))),
+        ToolSchema("routine_run", "Run one of your routines now.", params("name", "string", "The routine's name", required = listOf("name"))),
         ToolSchema(
             "use_skill", "Load the full instructions of one of the skills listed in your system prompt.",
             params("name", "string", "The skill's name", required = listOf("name")),
@@ -173,10 +235,18 @@ class LocalTools(
         ),
     )
 
+    /** A path inside the bot's folder, or null if it would leave it. */
+    private fun fileIn(path: String): java.io.File? {
+        val clean = path.trim().trimStart('/').ifEmpty { return null }
+        val f = java.io.File(folder, clean).canonicalFile
+        return if (f.path.startsWith(folder.path + java.io.File.separator)) f else null
+    }
+
     /** Tools that change something out in the world, so they ask first. */
     fun needsApproval(name: String) = name in setOf(
         "browser_open", "browser_click", "browser_fill", "browser_enter", "open_in_chrome", "vault_type",
         "routine_create", "web_fetch", "bot_create", "bot_update", "bot_archive",
+        "routine_update", "routine_delete", "task_contract",
     )
 
     fun describe(name: String, args: JsonObject): String = when (name) {
@@ -189,6 +259,13 @@ class LocalTools(
         "use_skill" -> "Load the ${args.str("name")} skill"
         "vault_type" -> "Type the ${args.str("name")} secret into “${lastSnapshotLabel(args.int("id"))}”"
         "routine_create" -> "Schedule “${args.str("name")}”: ${args.str("schedule")} — ${args.str("prompt").take(120)}"
+        "routine_update" -> (if (args.str("active") == "true") "Turn on “" else "Pause “") + args.str("name") + "”"
+        "routine_delete" -> "Delete the routine “${args.str("name")}”"
+        "routine_run" -> "Run “${args.str("name")}” now"
+        "task_contract" -> "Agree on the task: ${args.str("goal")}\n" + args.str("checks").lines().filter { it.isNotBlank() }.joinToString("\n") { "• ${it.trim().trimStart('-', '•', '*', ' ')}" }
+        "task_verify" -> "Check the work"
+        "ask_user" -> args.str("question")
+        "file_write" -> "Write ${args.str("path")}"
         "message_bot" -> (if (args.str("expect").lowercase() == "tell") "Tell " else "Ask ") + "${args.str("to")}: ${args.str("message").take(120)}"
         "plan" -> "Plan the task"
         "bot_list" -> "List the bots"
@@ -320,6 +397,41 @@ class LocalTools(
             ?: "No skill named ${args.str("name")}. Use one from the list in your system prompt."
         "vault_type" -> vaultType(args)
         "routine_create" -> schedule(args.str("name"), args.str("prompt"), args.str("schedule"))
+        "browser_forward" -> browser.forward().also(::noteLabels)
+        "browser_reload" -> browser.reload().also(::noteLabels)
+        "browser_scroll" -> browser.scroll(args.str("direction").lowercase() != "up").also(::noteLabels)
+        "browser_wait" -> browser.waitFor(args.int("seconds").takeIf { it > 0 } ?: 3).also(::noteLabels)
+        "ask_user" -> host?.ask(args.str("question").trim(), args.str("options").lines().map { it.trim().trimStart('-', '•', '*', ' ') }.filter { it.isNotEmpty() }.take(4))
+            ?: "Asking isn't available here."
+        "file_list" -> folder.walkTopDown().filter { it.isFile }.map { it.relativeTo(folder).path + " (${it.length()} bytes)" }.toList()
+            .ifEmpty { listOf("Your folder is empty.") }.joinToString("\n")
+        "file_read" -> fileIn(args.str("path"))?.takeIf { it.isFile }?.let { f -> f.readText().take(20_000).ifEmpty { "(empty file)" } }
+            ?: "No such file. Use file_list to see what is there."
+        "file_write" -> fileIn(args.str("path"))?.let { f ->
+            val content = args.str("content")
+            if (content.length > 200_000) return "That's too big for one file; split it up."
+            f.parentFile?.mkdirs()
+            f.writeText(content)
+            "Saved ${f.relativeTo(folder).path} (${content.length} characters)."
+        } ?: "Use a plain file name inside your folder, like notes/trip.md."
+        "task_contract" -> host?.contract(args.str("goal").trim(), args.str("checks").lines().map { it.trim().trimStart('-', '•', '*', ' ') }.filter { it.isNotEmpty() }.take(6))
+            ?: "Contracts aren't available here."
+        "task_verify" -> host?.verify() ?: "Checking isn't available here."
+        "routine_list" -> host?.routines()?.let { list ->
+            if (list.isEmpty()) "You have no routines."
+            else list.joinToString("\n") { "- ${it.name}: ${it.`when`.ifEmpty { it.schedule.orEmpty() }}${if (it.active) "" else " (paused)"} — ${it.prompt.take(120)}" }
+        } ?: "Routines aren't available here."
+        "routine_update", "routine_delete", "routine_run" -> {
+            val h = host ?: return "Routines aren't available here."
+            val wanted = args.str("name").trim()
+            val r = h.routines().find { it.name.equals(wanted, ignoreCase = true) }
+                ?: return "No routine named “$wanted”. You have: " + h.routines().joinToString(", ") { it.name }.ifEmpty { "none" } + "."
+            when (name) {
+                "routine_update" -> { val on = args.str("active") != "false"; h.setRoutine(r.id, on); if (on) "Turned on “${r.name}”." else "Paused “${r.name}”." }
+                "routine_delete" -> { h.deleteRoutine(r.id); "Deleted “${r.name}”." }
+                else -> { h.runRoutine(r.id); "Started “${r.name}”. Its answer arrives in this chat." }
+            }
+        }
         else -> "That tool does not exist on this phone."
     }
 

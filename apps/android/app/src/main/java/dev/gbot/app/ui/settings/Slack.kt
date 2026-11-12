@@ -67,23 +67,29 @@ fun SlackTab(back: () -> Unit) {
     val local = app.mode == Mode.Local
 
     suspend fun reload() { data = app.api.slack() }
-    LaunchedEffect(Unit) { if (!local) runCatching { reload() } }
+    LaunchedEffect(Unit) { runCatching { reload() } }
+    // On the phone a workspace connects in the background: watch it come up.
+    LaunchedEffect(data) {
+        if (data?.installs?.any { it.status == "connecting" } == true) { kotlinx.coroutines.delay(1500); runCatching { reload() } }
+    }
 
     Screen("Slack", back) {
-        if (local) {
-            Panel {
-                Text("Slack needs your server", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
-                Text("Slack has to reach gbot over the internet, so this works when you connect your own server rather than running on this phone.", style = T.small, color = g.ink2)
-            }
-            return@Screen
-        }
         val d = data
         if (d == null) {
             Text("Loading…", style = T.small, color = g.ink3)
             return@Screen
         }
 
-        if (d.eventUrl.isEmpty()) Panel {
+        if (d.socket) Panel {
+            Text("Set up a Slack app for this phone", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
+            Text("Slack can't reach a phone, so the phone reaches Slack instead (Socket Mode). In your Slack app:", style = T.small, color = g.ink2)
+            Text(
+                "1. Socket Mode → turn it on, and make an app-level token with connections:write (xapp-…).\n" +
+                    "2. Event Subscriptions → subscribe to app_mention.\n" +
+                    "3. OAuth & Permissions → add app_mentions:read and chat:write, install the app, and copy the bot token (xoxb-…).",
+                style = T.tiny, color = g.ink3,
+            )
+        } else if (d.eventUrl.isEmpty()) Panel {
             Text("Set a public address first", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
             Text("Slack delivers events over the internet, so the server needs GBOT_PUBLIC_URL set to the https:// address people open.", style = T.small, color = g.ink2)
         } else {
@@ -103,7 +109,10 @@ fun SlackTab(back: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(install.teamName.ifEmpty { "Slack workspace" }, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
-                        Text(install.teamId, style = T.tiny.copy(fontFamily = FontFamily.Monospace), color = g.ink3)
+                        Text(
+                            install.teamId + when (install.status) { "listening" -> " · listening"; "connecting" -> " · connecting…"; else -> "" },
+                            style = T.tiny.copy(fontFamily = FontFamily.Monospace), color = g.ink3,
+                        )
                     }
                     GButton("Disconnect", { disconnecting = install }, variant = Variant.Danger, small = true)
                 }
@@ -136,16 +145,26 @@ fun SlackTab(back: () -> Unit) {
         }
 
         SectionTitle(if (d.installs.isEmpty()) "Connect a workspace" else "Connect another")
-        ConnectForm { teamId, teamName, token, secret ->
-            scope.attempt("Slack connected", "Couldn't connect") {
-                app.api.connectSlack(buildJsonObject {
-                    put("teamId", teamId); put("teamName", teamName)
-                    put("botToken", token); put("signingSecret", secret)
-                })
-                reload()
+        if (d.socket) {
+            SocketForm { bot, appToken ->
+                scope.attempt("Slack connected", "Couldn't connect") {
+                    app.api.connectSlack(buildJsonObject { put("botToken", bot); put("appToken", appToken) })
+                    reload()
+                }
             }
+            Text("Both tokens stay on this phone and are never shown to bots. While a workspace is connected, a quiet notification keeps gbot listening.", style = T.tiny, color = g.ink3)
+        } else {
+            ConnectForm { teamId, teamName, token, secret ->
+                scope.attempt("Slack connected", "Couldn't connect") {
+                    app.api.connectSlack(buildJsonObject {
+                        put("teamId", teamId); put("teamName", teamName)
+                        put("botToken", token); put("signingSecret", secret)
+                    })
+                    reload()
+                }
+            }
+            Text("The bot token and signing secret are encrypted with the server key. Neither is ever sent back to this app.", style = T.tiny, color = g.ink3)
         }
-        Text("The bot token and signing secret are encrypted with the server key. Neither is ever sent back to this app.", style = T.tiny, color = g.ink3)
     }
 
     disconnecting?.let { install ->
@@ -156,6 +175,23 @@ fun SlackTab(back: () -> Unit) {
             onConfirm = { scope.attempt("Disconnected", "Couldn't disconnect") { app.api.disconnectSlack(install.id); reload() } },
             onDismiss = { disconnecting = null },
         )
+    }
+}
+
+/** Phone mode: the workspace and its name come from the bot token. */
+@Composable
+private fun SocketForm(onConnect: (String, String) -> Unit) {
+    var bot by remember { mutableStateOf("") }
+    var appToken by remember { mutableStateOf("") }
+    Panel {
+        Label("Bot token", "starts with xoxb-")
+        Field(bot, { bot = it.trim() }, placeholder = "xoxb-…", password = true)
+        Label("App-level token", "starts with xapp-, with connections:write")
+        Field(appToken, { appToken = it.trim() }, placeholder = "xapp-…", password = true)
+        GButton("Connect", {
+            onConnect(bot, appToken)
+            bot = ""; appToken = ""
+        }, Modifier.fillMaxWidth(), enabled = bot.startsWith("xoxb-") && appToken.startsWith("xapp-"), icon = "plug")
     }
 }
 

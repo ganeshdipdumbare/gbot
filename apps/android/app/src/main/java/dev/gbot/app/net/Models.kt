@@ -109,8 +109,9 @@ data class Routine(
 @Serializable data class UrlResp(val url: String = "")
 @Serializable data class VaultResp(val secrets: List<VaultSecret> = emptyList())
 @Serializable data class SlackLink(val installId: String = "", val channelId: String = "", val channel: String = "", val botId: String = "", val createdAt: String = "")
-@Serializable data class SlackInstall(val id: String = "", val teamId: String = "", val teamName: String = "", val createdAt: String = "", val links: List<SlackLink> = emptyList())
-@Serializable data class SlackResp(val installs: List<SlackInstall> = emptyList(), val eventUrl: String = "")
+@Serializable data class SlackInstall(val id: String = "", val teamId: String = "", val teamName: String = "", val createdAt: String = "", val links: List<SlackLink> = emptyList(), val status: String = "")
+/** [socket]: this is the phone, which listens over Slack's Socket Mode instead of an event URL. */
+@Serializable data class SlackResp(val installs: List<SlackInstall> = emptyList(), val eventUrl: String = "", val socket: Boolean = false)
 
 @Serializable data class SkillsResp(val skills: List<Skill> = emptyList())
 @Serializable data class SpacesResp(val spaces: List<Space> = emptyList(), val current: String = "")

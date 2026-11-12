@@ -40,6 +40,15 @@ class MainActivity : ComponentActivity() {
             return
         }
         val link = intent.data
+        if (intent.action == Intent.ACTION_VIEW && link?.scheme == "gbot" && link.host == "oauth") {
+            // Back from signing in to an app: gbot://oauth/callback?code=…&state=…
+            // (gbot://oauth/done only brings the app back after a loopback sign-in).
+            if (link.path == "/callback") {
+                val params = link.queryParameterNames.associateWith { link.getQueryParameter(it).orEmpty() }
+                GbotApp.instance.finishMcpOAuth(params)
+            }
+            return
+        }
         if (intent.action == Intent.ACTION_VIEW && link?.scheme == "gbot") {
             // gbot://chat/<id>, or gbot://<id>.
             val id = link.pathSegments?.lastOrNull().orEmpty().ifEmpty { link.host.orEmpty() }

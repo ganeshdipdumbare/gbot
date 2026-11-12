@@ -102,6 +102,30 @@ class Alerts(private val context: Context, private val store: Store) {
             .setContentIntent(open(null))
             .build()
 
+    /** Phone mode, while the bots answer Slack from this phone. */
+    fun listening(): android.app.Notification =
+        NotificationCompat.Builder(context, CH_LIVE)
+            .setSmallIcon(R.drawable.ic_notify)
+            .setContentTitle("gbot is listening on Slack")
+            .setContentText("Your bots answer Slack from this phone.")
+            .setOngoing(true)
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setContentIntent(open(null))
+            .build()
+
+    /** Phone mode, while a routine or other work runs with the app closed. */
+    fun working(): android.app.Notification =
+        NotificationCompat.Builder(context, CH_LIVE)
+            .setSmallIcon(R.drawable.ic_notify)
+            .setContentTitle("gbot is working")
+            .setContentText("A bot is running a routine on this phone.")
+            .setOngoing(true)
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setContentIntent(open(null))
+            .build()
+
     private fun base(k: ChatKey, channel: String, title: String, text: String) =
         NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notify)
@@ -136,6 +160,7 @@ class Alerts(private val context: Context, private val store: Store) {
         const val CH_DONE = "done"
         const val CH_LIVE = "live"
         const val LIVE_ID = 1
+        const val LOCAL_ID = 2
         fun idFor(k: ChatKey) = 1000 + (k.hashCode() and 0x7ffffff)
         fun plain(md: String) = md.replace(Regex("```[\\s\\S]*?```"), " (code) ").replace(Regex("[*_`#>|]"), "").replace(Regex("\\s+"), " ").trim()
     }

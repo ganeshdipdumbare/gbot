@@ -119,6 +119,7 @@ fun SettingsHome(nav: NavHostController) {
             Group {
                 Row("users", "Team", "Sharing between people needs a server") { nav.navigate(R.settings("team")) }
                 Row("plug", "Integrations", "Apps your bots can use") { nav.navigate(R.settings("integrations")) }
+                Row("users", "Slack", "Bring a bot into a channel") { nav.navigate(R.settings("slack")) }
                 Row("lock", "Vault", "Secrets bots can type, never see", last = true) { nav.navigate(R.settings("vault")) }
             }
             Group {

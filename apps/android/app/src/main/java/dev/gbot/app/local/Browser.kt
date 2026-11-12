@@ -130,6 +130,28 @@ class BrowserController(private val ctx: Context) {
         return snapshot()
     }
 
+    suspend fun reload(): String {
+        ensure()
+        val done = CompletableDeferred<Unit>()
+        page = done
+        main.post { web?.reload() }
+        withTimeoutOrNull(30_000) { done.await() }
+        return snapshot()
+    }
+
+    /** Scroll most of a screen, let lazy content load, then read again. */
+    suspend fun scroll(down: Boolean): String {
+        ensure()
+        eval("window.scrollBy(0, ${if (down) "" else "-"}Math.round(window.innerHeight * 0.85))")
+        kotlinx.coroutines.delay(600)
+        return snapshot()
+    }
+
+    suspend fun waitFor(seconds: Int): String {
+        kotlinx.coroutines.delay(seconds.coerceIn(1, 10) * 1000L)
+        return snapshot()
+    }
+
     /** Title, URL, visible text and the things that can be clicked or typed into. */
     suspend fun snapshot(): String {
         ensure()

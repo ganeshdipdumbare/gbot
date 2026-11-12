@@ -82,7 +82,7 @@ class LocalApi(
     val brain by lazy { LocalBrain(ctx, db, this, events, browser, scope) }
     private val prefs = ctx.getSharedPreferences("gbot", android.content.Context.MODE_PRIVATE)
     private val routines by lazy {
-        LocalRoutines(db, scope) { r -> db.bot(r.botId)?.let { brain.launchRoutine(it, r.prompt) } }
+        LocalRoutines(db, scope, arm = { dev.gbot.app.live.RoutineAlarm.arm(ctx, it) }) { r -> db.bot(r.botId)?.let { brain.launchRoutine(it, r.prompt) } }
     }
 
     private val cards = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
@@ -430,12 +430,42 @@ class LocalApi(
 
     override suspend fun removeBotMember(id: String, userId: String): Sharing = unsupported()
 
-    // Slack needs a server Slack can reach; on the phone there is none.
-    override suspend fun slack(): SlackResp = SlackResp()
-    override suspend fun connectSlack(b: JsonObject): SlackInstall = throw UnsupportedOperationException("Slack needs your server")
-    override suspend fun disconnectSlack(id: String) {}
-    override suspend fun linkSlack(id: String, b: JsonObject): SlackLink = throw UnsupportedOperationException("Slack needs your server")
-    override suspend fun unlinkSlack(id: String, channelId: String) {}
+    // Slack, over Socket Mode: the phone opens the connection, so Slack
+    // never has to reach it (see LocalSlack).
+    val slack by lazy { LocalSlack(ctx, db, scope, ::fromSlack) }
+
+    override suspend fun slack(): SlackResp = withContext(Dispatchers.IO) { SlackResp(slack.installs(), socket = true) }
+
+    override suspend fun connectSlack(b: JsonObject): SlackInstall = withContext(Dispatchers.IO) {
+        fun f(k: String) = (b[k] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        slack.connect(f("botToken"), f("appToken")).also { dev.gbot.app.live.LocalService.sync(ctx) }
+    }
+
+    override suspend fun disconnectSlack(id: String) = withContext(Dispatchers.IO) {
+        slack.disconnect(id)
+        dev.gbot.app.live.LocalService.sync(ctx)
+    }
+
+    override suspend fun linkSlack(id: String, b: JsonObject): SlackLink = withContext(Dispatchers.IO) {
+        fun f(k: String) = (b[k] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (db.bot(f("botId")) == null) throw IllegalArgumentException("No such bot")
+        slack.link(id, f("channelId"), f("channel"), f("botId"))
+    }
+
+    override suspend fun unlinkSlack(id: String, channelId: String) = withContext(Dispatchers.IO) { slack.unlink(id, channelId) }
+
+    /** A linked channel mentioned a bot: the message lands in its chat and the reply goes back to the thread. */
+    private fun fromSlack(install: SlackInstall, link: SlackLink, e: SlackEvent) {
+        val bot = db.bot(link.botId) ?: return
+        val m = Message(
+            id = "m_" + UUID.randomUUID().toString().take(8), botId = bot.id, role = "user",
+            content = e.prompt, createdAt = Instant.now().toString(),
+            data = buildJsonObject { put("via", "slack"); put("channel", link.channel.ifEmpty { link.channelId }) },
+        )
+        db.putMessage(m)
+        emit("message", bot.id, json.encodeToJsonElement(Message.serializer(), m))
+        brain.launchSlack(bot, e.prompt, SlackTarget(install.id, e.channel, e.thread))
+    }
 
     override suspend fun spaces(): SpacesResp = SpacesResp()
 
@@ -465,6 +495,7 @@ class LocalApi(
                 nextRunAt = cron.next(now)?.toInstant()?.toString(), lastRunAt = null,
             )
             db.putRoutine(r)
+            armRoutines()
             r
         }
 
@@ -475,10 +506,11 @@ class LocalApi(
         } else r.nextRunAt
         val out = r.copy(active = active, nextRunAt = next)
         db.putRoutine(out)
+        armRoutines()
         out
     }
 
-    override suspend fun deleteRoutine(id: String, rid: String) = withContext(Dispatchers.IO) { db.removeRoutine(rid) }
+    override suspend fun deleteRoutine(id: String, rid: String) = withContext(Dispatchers.IO) { db.removeRoutine(rid); armRoutines() }
 
     /** The routine_create tool: the same routine the settings screen makes. */
     suspend fun scheduleFromChat(botId: String, name: String, prompt: String, cron: String): String {
@@ -497,8 +529,90 @@ class LocalApi(
 
     override suspend fun mcp(): McpResp = withContext(Dispatchers.IO) { McpResp(db.mcp()) }
 
-    override suspend fun startMcpOAuth(name: String, url: String): UrlResp =
-        throw UnsupportedOperationException("Sign-in integrations need your gbot server. Add this one with a token instead.")
+    /**
+     * Sign in to an app, on the phone: find its sign-in, register gbot as a
+     * client, and hand back the page to open. The browser comes back to
+     * gbot://oauth/callback, or to a short-lived listener on 127.0.0.1 for
+     * apps that only allow web addresses (see finishMcpOAuth).
+     */
+    override suspend fun startMcpOAuth(name: String, url: String): UrlResp = withContext(Dispatchers.IO) {
+        val clean = url.trim()
+        if (!clean.startsWith("https://") && !clean.startsWith("http://")) throw IllegalArgumentException("The integration needs an http(s) address")
+        val cfg = McpOAuth.discover(clean)
+        val state = McpOAuth.random()
+        val verifier = McpOAuth.random()
+        var loopback: OAuthLoopback? = null
+        val (client, redirect) = runCatching { McpOAuth.register(cfg, APP_REDIRECT) to APP_REDIRECT }.getOrElse { first ->
+            // Some apps only take web redirects; a loopback one is the native-app way (RFC 8252).
+            val lb = OAuthLoopback({ params -> scope.launch(Dispatchers.IO) { finishMcpOAuth(params) } })
+            runCatching { McpOAuth.register(cfg, lb.redirect) to lb.redirect }
+                .onSuccess { loopback = lb }
+                .getOrElse { lb.close(); throw first }
+        }
+        val pending = PendingOAuth(name.trim().ifBlank { "Integration" }, clean, cfg, client, verifier, redirect, System.currentTimeMillis() + OAUTH_TTL_MS)
+        savePending(state, pending)
+        loopback?.start()
+        UrlResp(McpOAuth.authUrl(cfg, client.id, redirect, state, verifier))
+    }
+
+    /** The browser came back from a sign-in: gbot://oauth/callback?code=…&state=…, or the loopback listener. */
+    fun finishMcpOAuth(params: Map<String, String>) {
+        val state = params["state"].orEmpty()
+        val p = takePending(state) ?: run {
+            if (state.isNotEmpty()) toast("That sign-in expired. Start it again from Integrations.")
+            return
+        }
+        params["error"]?.let { err ->
+            toast("${p.name}: ${params["error_description"] ?: err}")
+            return
+        }
+        val code = params["code"].orEmpty()
+        if (code.isEmpty()) { toast("${p.name} didn't return a sign-in code."); return }
+        scope.launch(Dispatchers.IO) {
+            try {
+                val tokens = McpOAuth.exchange(p.cfg, p.client, code, p.verifier, p.redirect)
+                // Signing in again replaces the old connection to the same app.
+                val old = db.mcp().find { it.url.trimEnd('/') == p.url.trimEnd('/') }
+                val m = (old ?: McpServer(id = UUID.randomUUID().toString().take(6), name = p.name, url = p.url))
+                    .copy(hasAuth = true, oauth = true, enabled = true, status = "connecting")
+                mcp.putToken(m.id, null)
+                mcp.putOAuth(m.id, tokens)
+                db.putMcp(m)
+                forgetMcp()
+                val probed = mcp.probe(m)
+                db.putMcp(probed)
+                forgetMcp()
+                if (probed.status == "ok") toast("${p.name} connected") else toast("Signed in to ${p.name}, but it isn't answering yet")
+            } catch (e: Exception) {
+                toast("Couldn't finish signing in to ${p.name}: ${e.message}")
+            }
+        }
+    }
+
+    @kotlinx.serialization.Serializable
+    private data class PendingOAuth(
+        val name: String, val url: String, val cfg: McpOAuth.Config, val client: McpOAuth.Client,
+        val verifier: String, val redirect: String, val expires: Long,
+    )
+
+    // Pending sign-ins are saved, so one still finishes if the app was
+    // closed while the person was in the browser.
+    private fun savePending(state: String, p: PendingOAuth) = synchronized(prefs) {
+        val now = System.currentTimeMillis()
+        val e = prefs.edit()
+        prefs.all.keys.filter { it.startsWith("oauthp_") }.forEach { k ->
+            val old = runCatching { json.decodeFromString(PendingOAuth.serializer(), prefs.getString(k, "").orEmpty()) }.getOrNull()
+            if (old == null || old.expires < now) e.remove(k)
+        }
+        e.putString("oauthp_$state", json.encodeToString(PendingOAuth.serializer(), p)).commit()
+    }
+
+    private fun takePending(state: String): PendingOAuth? = synchronized(prefs) {
+        if (state.isEmpty()) return null
+        val raw = prefs.getString("oauthp_$state", null) ?: return null
+        prefs.edit().remove("oauthp_$state").commit()
+        runCatching { json.decodeFromString(PendingOAuth.serializer(), raw) }.getOrNull()?.takeIf { it.expires > System.currentTimeMillis() }
+    }
 
     override suspend fun addMcp(name: String, url: String, token: String?): McpServer = withContext(Dispatchers.IO) {
         val clean = url.trim()
@@ -614,14 +728,30 @@ class LocalApi(
 
     private fun <T> unsupported(): T = throw UnsupportedOperationException("That needs your gbot server")
 
+    private companion object {
+        const val APP_REDIRECT = "gbot://oauth/callback"
+        const val OAUTH_TTL_MS = 15 * 60 * 1000L
+    }
+
+    /** Something is running or waiting its turn. */
+    fun busy(): Boolean = runCatching { brain.busy() }.getOrDefault(false)
+
+    fun tickRoutines() { routines.tickNow() }
+
+    private fun armRoutines() = dev.gbot.app.live.RoutineAlarm.arm(ctx, db.allRoutines())
+
     fun start() {
         routines.start()
+        // Listen on connected Slack workspaces while the phone is the brain.
+        scope.launch(Dispatchers.IO) { runCatching { slack.start(); dev.gbot.app.live.LocalService.sync(ctx) } }
         // Pick up runs and messages between bots the app was closed on.
         scope.launch(Dispatchers.IO) { runCatching { brain.recover() } }
     }
 
     fun stopLocal() {
         routines.stop()
+        runCatching { slack.stop() }
+        dev.gbot.app.live.LocalService.stop(ctx)
         runCatching { browser.destroy() }
         scope.launch { brain.shutdown() }
     }

@@ -38,8 +38,28 @@ class Mcp(private val ctx: Context) {
 
     fun token(id: String): String? = prefs.getString("mcptoken_$id", null)
     fun putToken(id: String, token: String?) {
-        if (token.isNullOrEmpty()) prefs.edit().remove("mcptoken_$id").apply()
+        if (token.isNullOrEmpty()) prefs.edit().remove("mcptoken_$id").remove("mcpoauth_$id").apply()
         else prefs.edit().putString("mcptoken_$id", token).apply()
+    }
+
+    /** A sign-in's tokens, kept in this app's private storage like every other key. */
+    fun oauth(id: String): McpOAuth.Tokens? = McpOAuth.decode(prefs.getString("mcpoauth_$id", null))
+    fun putOAuth(id: String, t: McpOAuth.Tokens) { prefs.edit().putString("mcpoauth_$id", McpOAuth.encode(t)).commit() }
+
+    /**
+     * The Authorization value for a server: a signed-in app's access token,
+     * renewed first when it is about to expire (or [force]d after a 401),
+     * else the pasted token.
+     */
+    private fun bearer(server: McpServer, force: Boolean = false): String? {
+        val t = oauth(server.id) ?: return token(server.id)
+        if (!force && !t.expired()) return t.access
+        return synchronized(this) {
+            // Another call may have renewed it while this one waited.
+            val cur = oauth(server.id) ?: return@synchronized t.access
+            if (cur.access != t.access && !cur.expired()) return@synchronized cur.access
+            McpOAuth.refresh(cur).also { putOAuth(server.id, it) }.access
+        }
     }
 
     /** Initialize and list the tools, so the picker can show them. */
@@ -119,14 +139,16 @@ class Mcp(private val ctx: Context) {
                 put("params", params)
             }, expectResponse = true)
 
-        private fun request(body: JsonObject, expectResponse: Boolean): JsonObject? {
+        private fun request(body: JsonObject, expectResponse: Boolean, renewed: Boolean = false): JsonObject? {
             val b = Request.Builder().url(server.url)
                 .header("Accept", "application/json, text/event-stream")
                 .header("Content-Type", "application/json")
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
-            token(server.id)?.let { if (it.isNotBlank()) b.header("Authorization", "Bearer $it") }
+            bearer(server, force = renewed)?.let { if (it.isNotBlank()) b.header("Authorization", "Bearer $it") }
             sessionId?.let { b.header("Mcp-Session-Id", it) }
             client.newCall(b.build()).execute().use { res ->
+                // A signed-in app's token can die early: renew once and retry.
+                if (res.code == 401 && !renewed && oauth(server.id) != null) return request(body, expectResponse, renewed = true)
                 res.header("Mcp-Session-Id")?.let { sessionId = it }
                 val text = res.body.string()
                 if (!res.isSuccessful) throw IllegalStateException("${server.name} returned ${res.code} ${text.take(200)}")

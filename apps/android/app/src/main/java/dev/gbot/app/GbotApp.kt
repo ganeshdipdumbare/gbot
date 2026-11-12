@@ -142,6 +142,27 @@ class GbotApp : Application() {
         http.server = url
     }
 
+    /** Phone mode has a run going or waiting. */
+    fun localBusy(): Boolean = mode == Mode.Local && runCatching { localApi?.busy() == true }.getOrDefault(false)
+
+    /** A routine alarm went off: fire what is due now. */
+    fun tickRoutines() {
+        if (mode == Mode.Local) runCatching { localApi?.tickRoutines() }
+    }
+
+    /** Phone mode has a Slack workspace to listen on. */
+    fun slackConnected(): Boolean = mode == Mode.Local && runCatching { localApi?.slack?.any() == true }.getOrDefault(false)
+
+    /** Make sure phone mode is listening on Slack (the service calls this after a restart). */
+    fun startLocalListening() {
+        if (mode == Mode.Local) runCatching { localApi?.slack?.start() }
+    }
+
+    /** A sign-in to an app came back to the phone. On a server account the server handles its own. */
+    fun finishMcpOAuth(params: Map<String, String>) {
+        localApi?.finishMcpOAuth(params) ?: toast("That sign-in belongs to your server; finish it there.")
+    }
+
     /** What one bot remembers on this phone; empty on a server account. */
     fun memories(bot: String): List<dev.gbot.app.local.Note> = localApi?.memories(bot).orEmpty()
 

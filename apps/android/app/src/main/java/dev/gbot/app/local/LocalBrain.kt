@@ -78,16 +78,25 @@ class LocalBrain(
     private val paused = ConcurrentHashMap.newKeySet<String>()
     private val stopped = ConcurrentHashMap.newKeySet<String>()
     private val browsing = ConcurrentHashMap.newKeySet<String>()
+    // What the running run agreed and did, for task_verify. One run holds
+    // the turn at a time, so one is enough.
+    @Volatile private var proof: RunBook? = null
     @Volatile private var warnedCpu = false
 
     fun launch(bot: Bot, prompt: String) = start(Work(bot.id, prompt))
 
     fun launchRoutine(bot: Bot, prompt: String) = start(Work(bot.id, prompt, kind = "routine"))
 
+    fun launchSlack(bot: Bot, prompt: String, target: SlackTarget) =
+        start(Work(bot.id, prompt, kind = "slack", slack = target))
+
     fun launchGroup(group: Group, bot: Bot, prompt: String, depth: Int) =
         start(Work(bot.id, prompt, groupId = group.id, depth = depth, kind = "group"))
 
     fun queueFor(chat: String): List<QueueItem> = queues[chat].orEmpty().toList()
+
+    /** Something is running or waiting its turn. */
+    fun busy(): Boolean = jobs.isNotEmpty()
 
     fun chatOf(qid: String): String? = queues.entries.find { (_, list) -> list.any { it.id == qid } }?.key
 
@@ -317,6 +326,7 @@ class LocalBrain(
         w.joinRound?.let(::markJoined)
         // The asks this run sends go back together once it ends.
         val round = RunRound()
+        val runProof = RunBook().also { proof = it }
         emitPresence(bot.id, group, "thinking")
         try {
             fun stage(detail: String) = emitPresence(bot.id, group, "working", detail)
@@ -337,6 +347,24 @@ class LocalBrain(
                 createBot = { name, title -> api.createBot(name, title, dev.gbot.app.net.Look()) },
                 changeBot = { id, patch -> api.updateBot(id, patch) },
                 archiveBot = { id -> api.archiveBot(id) },
+                host = object : LocalTools.ToolHost {
+                    override suspend fun ask(question: String, options: List<String>) = askPerson(bot, group, question, options)
+                    override suspend fun routines() = db.routines(bot.id)
+                    override suspend fun setRoutine(id: String, active: Boolean) { api.updateRoutine(bot.id, id, active) }
+                    override suspend fun deleteRoutine(id: String) { api.deleteRoutine(bot.id, id) }
+                    override suspend fun runRoutine(id: String) { api.runRoutine(bot.id, id) }
+                    override fun contract(goal: String, checks: List<String>): String {
+                        if (goal.isEmpty() || checks.isEmpty()) return "Give the goal and at least one check."
+                        runProof.contract = Contract(goal, checks)
+                        return "Contract set with ${checks.size} checks. Do the work, then call task_verify before saying it is done."
+                    }
+                    override suspend fun verify(): String {
+                        val c = runProof.contract ?: return "Agree on a task_contract first."
+                        book.call(w.root)
+                        val raw = oneShot(model, "You are an independent verifier.", verifyPrompt(prompt, c, runProof.evidence()), 1200)
+                        return receipt(raw).also { runProof.receipt = it }
+                    }
+                },
             )
             val mcpTools = withTimeoutOrNull(MCP_TIMEOUT_MS) { api.mcpSchemas() }.orEmpty()
             val history = historyFor(bot, group, prompt)
@@ -397,7 +425,10 @@ class LocalBrain(
             log("reply ${content.length} chars")
             // The sentinel is for the machinery, not the chat: a bot with
             // nothing to say says nothing at all.
-            val said = cleanReply(content)
+            // A checked deliverable carries its receipt, even if the model forgot to show it.
+            val said = cleanReply(content).let { a ->
+                if (runProof.receipt.isEmpty() || a.isEmpty() || a.contains("**Verification**")) a else a + "\n\n" + runProof.receipt
+            }
             if (exchange.isNotEmpty()) {
                 status = when {
                     text == null -> "failed"
@@ -407,6 +438,8 @@ class LocalBrain(
                 outcome = said
             } else {
                 if (said.isNotEmpty()) reply(bot, group, said)
+                // Asked from Slack: the answer goes back into that thread too.
+                if (said.isNotEmpty()) w.slack?.let { t -> runCatching { api.slack.post(t, said) } }
                 if (group != null && w.depth < 3) handoff(group, bot, said, w)
             }
         } catch (e: Throwable) {
@@ -420,6 +453,7 @@ class LocalBrain(
         } finally {
             if (exchange.isNotEmpty()) settle(exchange, status, outcome)
             round.id?.let(::closeRound)
+            if (proof === runProof) proof = null
             browsing.remove(bot.id)
             emitComputer(bot.id, false)
             emitPresence(bot.id, group, "idle")
@@ -610,6 +644,63 @@ class LocalBrain(
         return runCatching {
             (if (api.isMcpTool(name)) api.callMcp(name, args) else tools.run(name, args)).take(4000)
         }.getOrElse { "The tool failed: ${it.message}" }
+            .also { proof?.add(evidenceName(name, args), it) }
+    }
+
+    /** How a step reads to the verifier: what was done, never what was typed. */
+    private fun evidenceName(name: String, args: JsonObject): String {
+        fun a(k: String) = (args[k] as? JsonPrimitive)?.content.orEmpty()
+        return when (name) {
+            "browser_open" -> "opened ${a("url")}"
+            "browser_read" -> "read the page"
+            "browser_click" -> "clicked [${a("id")}]"
+            "browser_fill" -> "typed into [${a("id")}]"
+            "browser_enter" -> "submitted [${a("id")}]"
+            "web_fetch" -> "fetched ${a("url")}"
+            "file_write", "file_read" -> "$name: ${a("path")}"
+            else -> name
+        }
+    }
+
+    /** A question for the person, on a card; the run waits for the answer. */
+    private suspend fun askPerson(bot: Bot, group: Group?, question: String, options: List<String>): String {
+        if (question.isBlank()) return "Write the question."
+        val id = "c_" + UUID.randomUUID().toString().take(8)
+        val card = GMessage(
+            id = id, botId = bot.id, groupId = group?.id, role = "card", content = question, createdAt = now(),
+            data = buildJsonObject {
+                put("kind", "question")
+                put("status", "pending")
+                put("options", JsonArray(options.map { JsonPrimitive(it) }))
+            },
+        )
+        db.putMessage(card)
+        emit("message", bot.id, json.encodeToJsonElement(card), group?.id)
+        emitPresence(bot.id, group, "waiting", "Has a question")
+        api.awaitAnswer(id)
+        emitPresence(bot.id, group, "thinking")
+        val m = db.message(id)
+        val answer = m?.str("answer").orEmpty()
+        return if (m?.str("status") == "answered" && answer.isNotBlank()) "The person answered: $answer"
+        else "The person skipped the question. Carry on with your best judgement, or ask it differently."
+    }
+
+    /** One plain call to the model, with no tools or history: planning aside, used to check work. */
+    private suspend fun oneShot(model: BrainModel?, system: String, prompt: String, maxTokens: Int): String = when (model) {
+        is BrainModel.Remote -> api.providers.run(model.provider, model.name, system, emptyList(), prompt, emptyList(), onText = {}, execute = { "" })
+        is BrainModel.Local -> withContext(Dispatchers.IO) {
+            val config = ConversationConfig(
+                systemInstruction = Contents.of(system), initialMessages = emptyList(), tools = emptyList(),
+                automaticToolCalling = false, samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.2, seed = 0),
+                maxOutputToken = maxTokens,
+            )
+            engine(model.file).createConversation(config).use { conv ->
+                val sb = StringBuilder()
+                conv.sendMessageAsync(Message.user(prompt.take(6000))).collect { sb.append(textOf(it)) }
+                sb.toString()
+            }
+        }
+        null -> ""
     }
 
     /** A card in the chat, and a wait. Nothing changes outside until it is answered. */
@@ -715,7 +806,12 @@ class LocalBrain(
             appendLine("- open_in_chrome: hand the page to the person's real browser when a site needs their sign-in there.")
             appendLine("- vault_type: type a saved secret into a field on a site it was saved for; you never see the value.")
             appendLine("- use_skill: load the full instructions of a skill.")
+            appendLine("- browser_forward, browser_reload, browser_scroll, browser_wait: more ways around a page.")
             appendLine("- notify, remember, recall, web_fetch, profile.")
+            appendLine("- ask_user: ask the person a question on a card, with options when it's a choice. Use it rather than asking in plain text.")
+            appendLine("- file_list, file_read, file_write: your own folder on this phone, for notes, drafts and data you keep.")
+            appendLine("- routine_list, routine_update, routine_delete, routine_run: your scheduled routines.")
+            appendLine("- task_contract, task_verify: for a task with a deliverable, agree a goal and 3-6 checks first, do the work, then verify before you say it's done. Never claim success against a failed check.")
             if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots something; asks' answers come back to you together.")
             if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot itself can't be archived.")
             if (api.localMcp().any { it.enabled && it.status == "ok" }) appendLine("- Tools starting with mc… come from connected integrations; they work like the others.")
@@ -1005,6 +1101,9 @@ fun exchangeData(
     put("status", "sent")
 }
 
+/** Runs a person asked for, here or through Slack. */
+private val PEOPLE = setOf("person", "routine", "group", "slack")
+
 /** The round a run's asks go into, made when it sends the first one. */
 class RunRound(var id: String? = null)
 
@@ -1025,6 +1124,8 @@ data class Work(
     val from: String? = null,
     /** Set on the run that gets a round's answers back. */
     val joinRound: String? = null,
+    /** Set when the message came from Slack: where the answer goes back. */
+    val slack: SlackTarget? = null,
     val tries: Int = 0,
 ) {
     val priority: Int get() = when (kind) {
@@ -1034,10 +1135,10 @@ data class Work(
     }
 
     /** Saved until it finishes; bots' messages and joins come back from their cards instead. */
-    val durable: Boolean get() = kind == "person" || kind == "routine" || kind == "group"
+    val durable: Boolean get() = kind in PEOPLE
 
     /** Only a message from the person gets a planning pass. */
-    val plans: Boolean get() = kind == "person" || kind == "routine" || kind == "group"
+    val plans: Boolean get() = kind in PEOPLE
 }
 
 sealed class BrainModel {
