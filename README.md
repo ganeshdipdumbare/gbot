@@ -1,11 +1,21 @@
-# gbot
+<p align="center">
+  <img src="docs/media/icon.png" width="128" height="128" alt="gbot icon">
+</p>
 
-Cute, persistent AI teammates that run entirely on your own machine.
+<h1 align="center">gbot</h1>
+
+<p align="center">Cute, persistent AI teammates that run entirely on your own machine.</p>
 
 Each bot is a simple, expressive character with its own name, memory, one
 continuous chat, and its own computer. Bots remember what you tell them,
 show what they're doing through their eyes and motion (thinking, working,
 needs you, stuck, done), and keep working while you keep chatting.
+
+## Screenshots
+
+| New bot | Chat and approvals | Group chat | Integrations |
+|---|---|---|---|
+| ![Give a bot a name, job, shape and color](docs/media/hatch.png) | ![A bot answers with results and asks before booking](docs/media/chat.png) | ![Three bots in one chat, handing work to each other](docs/media/group.png) | ![Apps that connect with one sign-in](docs/media/integrations.png) |
 
 - **Approvals and questions.** Bots ask before risky steps with a card in the
   chat (Ask, Auto or Never ask, plus allow/block lists). They ask you
@@ -28,10 +38,10 @@ needs you, stuck, done), and keep working while you keep chatting.
   access does not mean the whole internet.
 - **Routines.** Prompts a bot runs on a schedule or when a webhook fires.
   Ask for one in chat, or set it up in the bot's panel.
-- **Integrations.** One-click sign-in to apps that publish an MCP server
-  (Notion, Linear, Jira, Stripe and more), custom MCP servers with tokens, and
-  skills you write once and use anywhere with `/`. Tokens are encrypted at rest
-  and scoped to your account.
+- **Integrations.** One-click sign-in to 33 apps that publish an MCP server
+  (Notion, Linear, Jira, Stripe, Figma, Datadog and more), custom MCP servers
+  with tokens, and skills you write once and use anywhere with `/`. Tokens are
+  encrypted at rest and scoped to your account.
 - **Group chats.** Up to six bots in one chat. The first leads, `@mentions`
   bring others in, and bots hand work to each other.
 - **Slack.** Mention a bot in a channel and it answers in the thread, with
