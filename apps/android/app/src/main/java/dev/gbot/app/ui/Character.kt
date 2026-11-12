@@ -19,8 +19,11 @@ data class Hue(val body: Long, val eye: Long = 0xFF16131C)
 val hues = linkedMapOf(
     "cobalt" to Hue(0xFF3B6CF6), "coral" to Hue(0xFFFF6A4D), "sun" to Hue(0xFFFFC233), "mint" to Hue(0xFF2EC78E),
     "grape" to Hue(0xFF8B5CF6), "bubblegum" to Hue(0xFFFF66B3), "sky" to Hue(0xFF3DBEF5), "cream" to Hue(0xFFF1E7D6),
+    // The app's own mark only; kept out of hueNames so bot looks stay
+    // stable and the pickers don't offer it.
+    "white" to Hue(0xFFF7F7F4),
 )
-val hueNames = hues.keys.toList()
+val hueNames = hues.keys.filter { it != "white" }
 
 data class Traits(val shape: String, val hue: String, val eyes: String)
 

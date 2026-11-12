@@ -18,6 +18,9 @@ func TestNeedsApproval(t *testing.T) {
 		want bool
 	}{
 		{"ask: reads pass", rc("ask", false), "browser_snapshot", false},
+		{"ask: opening a page asks", rc("ask", false), "browser_navigate", true},
+		{"auto: opening a page asks", rc("auto", false), "browser_navigate", true},
+		{"never: opening a page passes", rc("never", false), "browser_navigate", false},
 		{"ask: writes ask", rc("ask", false), "browser_click", true},
 		{"ask: memory never asks", rc("ask", false), "remember", false},
 		{"ask: allow list wins", rc("ask", false), "allowed", false},

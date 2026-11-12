@@ -67,6 +67,7 @@ import dev.gbot.app.ui.Field
 import dev.gbot.app.ui.GButton
 import dev.gbot.app.ui.Gbot
 import dev.gbot.app.ui.GbotLogo
+import dev.gbot.app.local.MAIN_BOT
 import dev.gbot.app.ui.Icon
 import dev.gbot.app.ui.IconBtn
 import dev.gbot.app.ui.LocalG
@@ -128,6 +129,7 @@ fun HomeScreen(nav: NavHostController) {
 
     val initials = (s.me?.name ?: "").split(Regex("\\s+")).mapNotNull { it.firstOrNull()?.uppercaseChar() }.take(2).joinToString("").ifEmpty { (s.me?.email?.firstOrNull()?.uppercaseChar() ?: '?').toString() }
     val visible = s.bots.filter { it.id !in s.hidden }
+    val mainBot = s.bots.find { it.id == MAIN_BOT }
     val hidden = s.bots.filter { it.id in s.hidden }
     val needle = q.trim().lowercase()
     fun match(vararg xs: String?) = needle.isEmpty() || xs.any { it?.lowercase()?.contains(needle) == true }
@@ -140,7 +142,7 @@ fun HomeScreen(nav: NavHostController) {
         // Header, as the web sidebar: name, new group, new bot.
         Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 8.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                GbotLogo(26)
+                GbotLogo(22) { mainBot?.let { nav.navigate(R.chat(it.id)) } }
                 Text("gbot", style = T.body.copy(fontWeight = FontWeight.SemiBold, fontSize = 17.sp, letterSpacing = (-0.3).sp), color = g.ink)
             }
             IconBtn("users", "New group", { nav.navigate(R.NEW_GROUP) })
@@ -218,7 +220,7 @@ fun HomeScreen(nav: NavHostController) {
                 SheetItem("screen", "Computer and routines") { menu = null; nav.navigate(R.computer(b.id)) }
                 SheetItem("copy", "Copy conversation ID") { menu = null; clip.setText(AnnotatedString(b.id)); app.toast("Copied conversation ID") }
                 SheetItem("eyeOff", "Hide") { menu = null; app.store.setHidden(s.hidden + b.id) }
-                if (b.isOwner) SheetItem("trash", "Delete", danger = true) { menu = null; deleting = b }
+                if (b.isOwner && b.id != MAIN_BOT) SheetItem("trash", "Delete", danger = true) { menu = null; deleting = b }
             }
         }
     }

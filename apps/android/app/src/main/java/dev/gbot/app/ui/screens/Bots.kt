@@ -36,6 +36,7 @@ import androidx.navigation.NavHostController
 import dev.gbot.app.GbotApp
 import dev.gbot.app.Mode
 import dev.gbot.app.data.groupKey
+import dev.gbot.app.local.MAIN_BOT
 import dev.gbot.app.net.Bot
 import dev.gbot.app.net.Look
 import dev.gbot.app.net.Sharing
@@ -190,7 +191,7 @@ fun BotSettingsScreen(nav: NavHostController, id: String) {
         }
         ErrorText(error)
         if (canManage && app.mode == Mode.Server) ShareSection(bot)
-        if (bot.isOwner) GButton("Archive bot", { archiving = true }, variant = Variant.Danger)
+        if (bot.isOwner && bot.id != MAIN_BOT) GButton("Archive bot", { archiving = true }, variant = Variant.Danger)
     }
     if (archiving) Confirm("Archive ${bot.name}?", "Their chat is kept.", "Archive", onConfirm = {
         scope.attempt("${bot.name} archived") { app.api.archiveBot(bot.id); app.store.removeBot(bot.id); nav.home() }

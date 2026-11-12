@@ -127,6 +127,10 @@ var alwaysAsk = map[string]bool{
 	"routine_create": true,
 	"task_contract":  true,
 	"vault_type":     true,
+	// Opening a page leaves the bot's own state (the person's IP, cookies,
+	// and whatever the site does), so it is a step worth a card even
+	// though it writes nothing.
+	"browser_navigate": true,
 }
 
 // needsApproval applies the requester's approval mode to one call.

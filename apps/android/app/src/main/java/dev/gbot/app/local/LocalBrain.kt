@@ -264,6 +264,10 @@ class LocalBrain(
                 schedule = { name, p, cron -> api.scheduleFromChat(bot.id, name, p, cron) },
                 peers = peers,
                 messageBot = { target, text -> messageBot(bot, target, text, depth) },
+                roster = { db.bots() },
+                createBot = { name, title -> api.createBot(name, title, dev.gbot.app.net.Look()) },
+                changeBot = { id, patch -> api.updateBot(id, patch) },
+                archiveBot = { id -> api.archiveBot(id) },
             )
             val mcpTools = withTimeoutOrNull(MCP_TIMEOUT_MS) { api.mcpSchemas() }.orEmpty()
             val history = historyFor(bot, group, prompt)
@@ -526,6 +530,7 @@ class LocalBrain(
             appendLine("- use_skill: load the full instructions of a skill.")
             appendLine("- notify, remember, recall, web_fetch, profile.")
             if (peers.isNotEmpty()) appendLine("- message_bot: send another of the person's bots a message; their answer comes back to this chat.")
+            if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot itself can't be archived and keeps its name.")
             if (api.localMcp().any { it.enabled && it.status == "ok" }) appendLine("- Tools starting with mc… come from connected integrations; they work like the others.")
             appendLine()
             appendLine("Rules:")

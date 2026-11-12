@@ -226,6 +226,18 @@ class LocalTest {
     // ---- The exchange card is what the chat UI opens on tap ----
 
     @Test
+    fun `the roster reads as one line per bot`() {
+        val bots = listOf(
+            dev.gbot.app.net.Bot(id = "1", name = "Taro", title = "Jokes", model = "local:x"),
+            dev.gbot.app.net.Bot(id = "2", name = "Pip", title = "", model = ""),
+        )
+        val out = dev.gbot.app.local.rosterSummary(bots)
+        assertTrue(out.contains("- Taro — Jokes (local:x)"))
+        assertTrue(out.contains("- Pip — no title (default model)"))
+        assertEquals("There are no bots yet.", dev.gbot.app.local.rosterSummary(emptyList()))
+    }
+
+    @Test
     fun `an exchange card carries the keys the popup reads`() {
         val sent = dev.gbot.app.local.exchangeData("a", "b", "say hi to Pip")
         assertEquals("botmsg", sent["kind"]?.jsonPrimitive?.contentOrNull)

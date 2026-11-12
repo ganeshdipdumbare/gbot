@@ -39,7 +39,14 @@ class LocalTools(
     /** The person's other bots, which this one may message. */
     private val peers: List<Bot> = emptyList(),
     private val messageBot: suspend (Bot, String) -> String = { _, _ -> "Messaging isn't available." },
+    /** The roster tools, offered to the main bot only. */
+    private val roster: suspend () -> List<Bot> = { emptyList() },
+    private val createBot: suspend (String, String) -> Bot = { _, _ -> error("Hatching isn't available.") },
+    private val changeBot: suspend (String, JsonObject) -> Bot = { _, _ -> error("Changing bots isn't available.") },
+    private val archiveBot: suspend (String) -> Unit = { error("Archiving isn't available.") },
 ) {
+    /** Only the person's main bot looks after the roster. */
+    private val main = botId == MAIN_BOT
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -124,10 +131,38 @@ class LocalTools(
                 "message", "string", "What to tell or ask them, written to them", required = listOf("to", "message"),
             ),
         ),
+    ) + if (!main) emptyList() else listOf(
+        ToolSchema("bot_list", "List the person's bots with their titles and models. Look before you change one.", params()),
+        ToolSchema(
+            "bot_create", "Hatch a new bot for the person.",
+            params(
+                "name", "string", "Short name, e.g. Scout",
+                "title", "string", "What it is for, one line",
+                "instructions", "string", "Standing instructions for it",
+                required = listOf("name"),
+            ),
+        ),
+        ToolSchema(
+            "bot_update", "Change one of the person's bots: its title, instructions or model. Only what you pass changes.",
+            params(
+                "bot", "string", "The bot's name",
+                "title", "string", "New title",
+                "instructions", "string", "New standing instructions",
+                "model", "string", "New model id, as bot_list shows it",
+                required = listOf("bot"),
+            ),
+        ),
+        ToolSchema(
+            "bot_archive", "Archive one of the person's bots. The main bot can't be archived.",
+            params("bot", "string", "The bot's name", required = listOf("bot")),
+        ),
     )
 
     /** Tools that change something out in the world, so they ask first. */
-    fun needsApproval(name: String) = name in setOf("browser_click", "browser_fill", "browser_enter", "open_in_chrome", "vault_type", "routine_create")
+    fun needsApproval(name: String) = name in setOf(
+        "browser_open", "browser_click", "browser_fill", "browser_enter", "open_in_chrome", "vault_type",
+        "routine_create", "web_fetch", "bot_create", "bot_update", "bot_archive",
+    )
 
     fun describe(name: String, args: JsonObject): String = when (name) {
         "browser_open" -> "Open ${args.str("url")}"
@@ -140,6 +175,10 @@ class LocalTools(
         "vault_type" -> "Type the ${args.str("name")} secret into “${lastSnapshotLabel(args.int("id"))}”"
         "routine_create" -> "Schedule “${args.str("name")}”: ${args.str("schedule")} — ${args.str("prompt").take(120)}"
         "message_bot" -> "Message ${args.str("to")}: ${args.str("message").take(120)}"
+        "bot_list" -> "List the bots"
+        "bot_create" -> "Hatch a bot: ${args.str("name")}"
+        "bot_update" -> "Change ${args.str("bot")}"
+        "bot_archive" -> "Archive ${args.str("bot")}"
         else -> name.replace('_', ' ')
     }
 
@@ -149,6 +188,45 @@ class LocalTools(
     private fun lastSnapshotLabel(id: Int): String = lastLabels[id] ?: "#$id"
 
     suspend fun run(name: String, args: JsonObject): String = when (name) {
+        "bot_list" -> rosterSummary(roster())
+        "bot_create" -> {
+            val newName = args.str("name").trim()
+            if (newName.isEmpty()) "Give the new bot a name." else {
+                val b = createBot(newName, args.str("title").trim())
+                val notes = args.str("instructions").trim()
+                if (notes.isNotEmpty()) changeBot(b.id, buildJsonObject { put("instructions", notes) })
+                "Hatched ${b.name}."
+            }
+        }
+        "bot_update" -> {
+            val raw = args.str("bot")
+            val target = pickPeer(raw, roster())
+            val patch = buildJsonObject {
+                if (args.str("title").isNotBlank()) put("title", args.str("title"))
+                if (args.str("instructions").isNotBlank()) put("instructions", args.str("instructions"))
+                if (args.str("model").isNotBlank()) put("model", args.str("model"))
+            }
+            when {
+                target == null -> noBotNamed(raw)
+                patch.isEmpty() -> "Say what to change about ${target.name}: title, instructions or model."
+                else -> {
+                    changeBot(target.id, patch)
+                    "Updated ${target.name}."
+                }
+            }
+        }
+        "bot_archive" -> {
+            val raw = args.str("bot")
+            val target = pickPeer(raw, roster())
+            when {
+                target == null -> noBotNamed(raw)
+                target.id == MAIN_BOT -> "The main bot can't be archived."
+                else -> {
+                    archiveBot(target.id)
+                    "Archived ${target.name}."
+                }
+            }
+        }
         "message_bot" -> {
             val raw = args.str("to")
             val target = pickPeer(raw, peers)
@@ -341,3 +419,14 @@ fun pickPeer(raw: String, peers: List<Bot>): Bot? {
     }
     return null
 }
+
+/** The roster as the main bot reads it: one line per bot. */
+fun rosterSummary(bots: List<Bot>): String {
+    if (bots.isEmpty()) return "There are no bots yet."
+    return bots.joinToString("\n") { b ->
+        "- ${b.name} — ${b.title.trim().ifEmpty { "no title" }} (${b.model.trim().ifEmpty { "default model" }})"
+    }
+}
+
+/** The one line a failed name match gets, in every roster tool. */
+fun noBotNamed(raw: String): String = "No bot named " + normalizeName(raw).ifEmpty { "that" } + "."

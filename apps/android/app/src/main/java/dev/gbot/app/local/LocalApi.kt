@@ -153,8 +153,26 @@ class LocalApi(
 
     // Bots
 
+    /**
+     * The person's main bot: first in the roster, the one the logo opens,
+     * and the only one that may hatch, change or archive the others.
+     */
     override suspend fun bots(): BotsResp = withContext(Dispatchers.IO) {
-        BotsResp(bots = db.bots().map { it.copy(lastMessage = db.lastMessage(it.id)) }, presence = brain.presenceSnapshot())
+        val all = db.bots().let { list -> if (list.any { it.id == MAIN_BOT }) list else list + hatchMainBot() }
+        BotsResp(
+            bots = all.sortedBy { if (it.id == MAIN_BOT) 0 else 1 }.map { it.copy(lastMessage = db.lastMessage(it.id)) },
+            presence = brain.presenceSnapshot(),
+        )
+    }
+
+    private fun hatchMainBot(): Bot {
+        val b = Bot(
+            id = MAIN_BOT, name = "gbot", title = "Your main bot",
+            instructions = MAIN_PURPOSE, model = defaultModelId(), pinned = true,
+            createdAt = Instant.now().toString(),
+        )
+        db.putBot(b)
+        return b
     }
 
     override suspend fun createBot(name: String, title: String, look: Look): Bot = withContext(Dispatchers.IO) {
@@ -194,6 +212,7 @@ class LocalApi(
     }
 
     override suspend fun archiveBot(id: String) = withContext(Dispatchers.IO) {
+        check(id != MAIN_BOT) { "The main bot can't be archived." }
         db.removeBot(id)
         emit("bot_removed", id)
     }
@@ -613,3 +632,13 @@ class LocalApi(
 
 private fun JsonObject.str(k: String): String = this[k]?.jsonPrimitive?.contentOrNull.orEmpty()
 private fun JsonObject.flag(k: String): Boolean = this[k]?.jsonPrimitive?.contentOrNull == "true"
+
+/** The person's main bot: first in the roster, and what the logo opens. */
+const val MAIN_BOT = "b_gbot"
+
+/** What the main bot is for. Its powers are the tools, not these words. */
+const val MAIN_PURPOSE =
+    "You are the person's main bot. You look after their other bots: on request, or when a task " +
+        "clearly needs one, you can list them (bot_list), hatch a new one (bot_create), change a " +
+        "title, instructions or model (bot_update), or archive one (bot_archive). Every change " +
+        "shows the person an approval card first, so ask for nothing extra."

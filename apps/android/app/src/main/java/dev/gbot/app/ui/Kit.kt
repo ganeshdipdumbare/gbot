@@ -240,20 +240,22 @@ fun TopBar(title: String, onBack: (() -> Unit)?, subtitle: String? = null, lead:
 }
 
 /**
- * The gbot mark: the character from the app icon. Tap it and it hops and
- * smiles; at rest it blinks and its eyes wander.
+ * The gbot mark: the character from the app icon, white on black. Tap it
+ * and it hops and smiles; at rest it blinks and its eyes wander.
  */
 @Composable
-fun GbotLogo(size: Int = 26) {
+fun GbotLogo(size: Int = 22, onClick: (() -> Unit)? = null) {
     var happy by remember { mutableStateOf(false) }
     LaunchedEffect(happy) {
         if (happy) { delay(900); happy = false }
     }
-    Box(Modifier.size(44.dp).pressable { happy = true }.semantics { contentDescription = "gbot" }, contentAlignment = Alignment.Center) {
-        Gbot(
-            dev.gbot.app.net.Look(shape = "circle", hue = "grape", eyes = "pill"),
-            "gbot", size, mood = if (happy) "happy" else "idle", lively = true,
-        )
+    Box(Modifier.size(44.dp).pressable { happy = true; onClick?.invoke() }.semantics { contentDescription = "gbot" }, contentAlignment = Alignment.Center) {
+        Box(Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
+            Gbot(
+                dev.gbot.app.net.Look(shape = "circle", hue = "white", eyes = "pill"),
+                "gbot", size, mood = if (happy) "happy" else "idle", lively = true,
+            )
+        }
     }
 }
 

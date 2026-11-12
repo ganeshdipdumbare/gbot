@@ -527,7 +527,6 @@ func clip(s string, n int) string {
 // Read-only tools never need approval and are never marked risky.
 var readonlyTools = map[string]bool{
 	"computer_read_file": true,
-	"browser_navigate":   true,
 	"browser_back":       true,
 	"browser_forward":    true,
 	"browser_reload":     true,

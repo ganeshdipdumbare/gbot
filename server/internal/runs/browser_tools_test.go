@@ -47,9 +47,16 @@ func TestBrowserTools(t *testing.T) {
 		if !untrustedTool(name) {
 			t.Errorf("%s marks the run as having read outside text", name)
 		}
+	}
+	// Going to a new page leaves the bot's own state, so it asks even in
+	// auto mode; the rest of navigation is a revisit and stays read-only.
+	for _, name := range []string{"browser_back", "browser_forward", "browser_reload"} {
 		if !readonlyTool(name) {
-			t.Errorf("%s only loads or reads a page: it must be read-only", name)
+			t.Errorf("%s revisits a page it already loaded and should not need approval", name)
 		}
+	}
+	if readonlyTool("browser_navigate") || !alwaysAsk["browser_navigate"] {
+		t.Error("browser_navigate must ask, in every mode that asks at all")
 	}
 	for _, name := range []string{"browser_click", "browser_type", "browser_press", "browser_check", "browser_cookies"} {
 		if readonlyTool(name) {
