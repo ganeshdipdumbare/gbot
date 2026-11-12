@@ -239,6 +239,24 @@ fun TopBar(title: String, onBack: (() -> Unit)?, subtitle: String? = null, lead:
     }
 }
 
+/**
+ * The gbot mark: the character from the app icon. Tap it and it hops and
+ * smiles; at rest it blinks and its eyes wander.
+ */
+@Composable
+fun GbotLogo(size: Int = 26) {
+    var happy by remember { mutableStateOf(false) }
+    LaunchedEffect(happy) {
+        if (happy) { delay(900); happy = false }
+    }
+    Box(Modifier.size(44.dp).pressable { happy = true }.semantics { contentDescription = "gbot" }, contentAlignment = Alignment.Center) {
+        Gbot(
+            dev.gbot.app.net.Look(shape = "circle", hue = "grape", eyes = "pill"),
+            "gbot", size, mood = if (happy) "happy" else "idle", lively = true,
+        )
+    }
+}
+
 /** A titled screen with a scrolling body that stays clear of the keyboard. */
 @Composable
 fun Screen(title: String, onBack: (() -> Unit)?, subtitle: String? = null, actions: @Composable RowScope.() -> Unit = {}, footer: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {

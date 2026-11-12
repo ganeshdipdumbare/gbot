@@ -66,6 +66,7 @@ import dev.gbot.app.ui.Confirm
 import dev.gbot.app.ui.Field
 import dev.gbot.app.ui.GButton
 import dev.gbot.app.ui.Gbot
+import dev.gbot.app.ui.GbotLogo
 import dev.gbot.app.ui.Icon
 import dev.gbot.app.ui.IconBtn
 import dev.gbot.app.ui.LocalG
@@ -137,8 +138,11 @@ fun HomeScreen(nav: NavHostController) {
 
     Column(Modifier.fillMaxSize().background(g.chrome).statusBarsPadding()) {
         // Header, as the web sidebar: name, new group, new bot.
-        Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 18.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("gbot", style = T.body.copy(fontWeight = FontWeight.SemiBold, fontSize = 17.sp, letterSpacing = (-0.3).sp), color = g.ink, modifier = Modifier.weight(1f))
+        Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 8.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                GbotLogo(26)
+                Text("gbot", style = T.body.copy(fontWeight = FontWeight.SemiBold, fontSize = 17.sp, letterSpacing = (-0.3).sp), color = g.ink)
+            }
             IconBtn("users", "New group", { nav.navigate(R.NEW_GROUP) })
             IconBtn("plus", "New bot", { nav.navigate(R.HATCH) }, tint = g.ink)
         }
