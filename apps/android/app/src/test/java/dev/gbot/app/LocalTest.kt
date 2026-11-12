@@ -225,10 +225,5 @@ class LocalTest {
         assertEquals("b", sent["to"]?.jsonPrimitive?.contentOrNull)
         assertEquals("say hi to Pip", sent["message"]?.jsonPrimitive?.contentOrNull)
         assertEquals("sent", sent["status"]?.jsonPrimitive?.contentOrNull)
-        assertEquals(null, sent["reply"])
-
-        val done = dev.gbot.app.local.exchangeData("a", "b", "ask Pip for a joke", status = "replied", reply = "a joke")
-        assertEquals("replied", done["status"]?.jsonPrimitive?.contentOrNull)
-        assertEquals("a joke", done["reply"]?.jsonPrimitive?.contentOrNull)
     }
 }

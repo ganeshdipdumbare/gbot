@@ -125,14 +125,7 @@ class LocalBrain(
         emitQueue(chat)
     }
 
-    private fun start(
-        bot: Bot,
-        prompt: String,
-        group: Group?,
-        depth: Int,
-        from: String? = null,
-        exchange: List<GMessage> = emptyList(),
-    ) {
+    private fun start(bot: Bot, prompt: String, group: Group?, depth: Int, from: String? = null) {
         // A new message keeps the model warm.
         idleJob?.cancel()
         idleJob = null
@@ -145,7 +138,7 @@ class LocalBrain(
             runLock.withLock {
                 while (qid in paused && isActive) delay(300)
                 doneQueued(chat, qid)
-                runCatching { run(bot, prompt, group, depth, from, exchange) }
+                runCatching { run(bot, prompt, group, depth, from) }
                     .onFailure {
                         if (it is CancellationException) {
                             // Stop is silent; any other cancellation is a fault.
@@ -252,14 +245,7 @@ class LocalBrain(
 
     fun cancelGroup(groupId: String) = cancel("g:$groupId")
 
-    private suspend fun run(
-        bot: Bot,
-        prompt: String,
-        group: Group?,
-        depth: Int,
-        from: String? = null,
-        exchange: List<GMessage> = emptyList(),
-    ) {
+    private suspend fun run(bot: Bot, prompt: String, group: Group?, depth: Int, from: String? = null) {
         val model = api.resolveModel(bot.model)
         log("run bot=${bot.name} model=${bot.model.ifBlank { "default" }} group=${group?.id ?: "-"}")
         emitPresence(bot.id, group, "thinking")
@@ -277,7 +263,7 @@ class LocalBrain(
                 secret = { name -> api.secret(name) },
                 schedule = { name, p, cron -> api.scheduleFromChat(bot.id, name, p, cron) },
                 peers = peers,
-                messageBot = { target, text -> messageBot(bot, group, target, text, depth) },
+                messageBot = { target, text -> messageBot(bot, target, text, depth) },
             )
             val mcpTools = withTimeoutOrNull(MCP_TIMEOUT_MS) { api.mcpSchemas() }.orEmpty()
             val history = historyFor(bot, group, prompt)
@@ -316,7 +302,7 @@ class LocalBrain(
             }
             log("reply ${content.length} chars")
             reply(bot, group, content)
-            if (group == null && from != null) passAnswer(bot, from, content, depth, exchange)
+            if (group == null && from != null) passAnswer(bot, from, content, depth)
             if (group != null && depth < 3) handoff(group, bot, content, depth)
         } finally {
             browsing.remove(bot.id)
@@ -559,50 +545,40 @@ class LocalBrain(
 
     /**
      * One bot messaging another, without waiting and without the person in
-     * the middle. The message lands in the other bot's own chat and starts
-     * its run, which queues behind this one; its answer comes back to this
-     * chat when it finishes (see passAnswer).
+     * the middle. The same message shows as "Messaged X" in the sender's
+     * chat and "Message from Y" in the receiver's, like a chat, and starts
+     * the receiver's run behind this one. A reply is just the next message
+     * the other way (see passAnswer).
      */
-    private fun messageBot(from: Bot, group: Group?, to: Bot, text: String, depth: Int): String {
+    private fun messageBot(from: Bot, to: Bot, text: String, depth: Int): String {
         val body = text.trim()
         if (body.isEmpty()) return "Write something to send."
-        // Both sides get the same card, so either chat can show the whole
-        // exchange, and neither looks like something the person typed.
+        deliver(from, to, body, depth)
+        return "Sent to ${to.name}. Their answer comes back here, so don't wait for it in this reply."
+    }
+
+    /** Show one bot-to-bot message in both chats, then wake the receiver. */
+    private fun deliver(from: Bot, to: Bot, body: String, depth: Int) {
         val data = exchangeData(from.id, to.id, body)
-        val out = event(from, group, "Messaged ${to.name}", data)
-        val incoming = event(to, null, "Message from ${from.name}", data)
+        event(from, null, "Messaged ${to.name}", data)
+        event(to, null, "Message from ${from.name}", data)
         start(
             to,
             "Message from ${from.name}, another of the person's bots. Answer ${from.name} directly: " +
                 "your reply is sent back to them. If nothing needs to go back, reply with exactly $NO_REPLY.\n\n$body",
-            null, depth + 1, from = from.id, exchange = listOf(out, incoming),
+            null, depth + 1, from = from.id,
         )
-        return "Sent to ${to.name}. Their answer comes back here, so don't wait for it in this reply."
     }
 
     /**
-     * A bot answered a message from another bot: put the answer on both
-     * cards and let the sender read it in its own chat. The chain stops
-     * after MAX_HOPS, but the card still ends up complete.
+     * A bot answered a message from another bot: that answer is a new
+     * message the other way, shown in both chats. The chain stops after
+     * MAX_HOPS.
      */
-    private fun passAnswer(bot: Bot, fromId: String, answer: String, depth: Int, exchange: List<GMessage>) {
+    private fun passAnswer(bot: Bot, fromId: String, answer: String, depth: Int) {
+        if (!carriesAnswer(answer) || depth >= MAX_HOPS) return
         val sender = db.bot(fromId) ?: return
-        val body = answer.trim()
-        val carries = carriesAnswer(answer)
-        for (m in exchange) {
-            val next = m.copy(data = exchangeData(
-                from = m.str("from").orEmpty(),
-                to = m.str("to").orEmpty(),
-                message = m.str("message").orEmpty(),
-                status = if (carries) "replied" else "delivered",
-                reply = if (carries) body else "",
-            ))
-            runCatching { db.putMessage(next) }.onFailure { log("could not save the answer", it) }
-            runCatching { emit("message_update", next.botId.orEmpty(), json.encodeToJsonElement(next), next.groupId) }
-        }
-        if (carries && depth < MAX_HOPS) {
-            start(sender, "Reply from ${bot.name}, another of the person's bots:\n\n$body", null, depth + 1)
-        }
+        deliver(bot, sender, answer.trim(), depth)
     }
 
     /** A quiet line in the transcript: something happened, no reply needed. */
@@ -705,23 +681,17 @@ class LocalBrain(
 const val NO_REPLY = "NO_REPLY"
 
 /**
- * The card data for one bot-to-bot message. The chat UI reads exactly these
- * keys to draw the "Messaged X" line and the tap-through popup, so an
- * exchange without them is invisible: no preview and nothing to open.
+ * The data for one bot-to-bot message. The chat UI reads exactly these keys
+ * to draw the "Messaged X" / "Message from Y" line and the tap-through
+ * popup, so a message without them is invisible: no preview, nothing to
+ * open.
  */
-fun exchangeData(
-    from: String,
-    to: String,
-    message: String,
-    status: String = "sent",
-    reply: String = "",
-): JsonObject = buildJsonObject {
+fun exchangeData(from: String, to: String, message: String): JsonObject = buildJsonObject {
     put("kind", "botmsg")
     put("from", from)
     put("to", to)
     put("message", message)
-    put("status", status)
-    if (reply.isNotEmpty()) put("reply", reply)
+    put("status", "sent")
 }
 
 /** Whether a bot's reply is worth carrying back to the bot that wrote first. */
