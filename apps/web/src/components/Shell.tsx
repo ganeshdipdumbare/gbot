@@ -7,7 +7,7 @@ import { Sidebar } from "./Sidebar";
 import { Chat } from "./Chat";
 import { Hatch } from "./Hatch";
 import { BotSettings } from "./BotSettings";
-import { Settings } from "./Settings";
+import { Settings, type SettingsTab } from "./Settings";
 import { CommandK } from "./CommandK";
 import { NewGroup, GroupSettings } from "./NewGroup";
 import { SidePanel } from "./SidePanel";
@@ -15,14 +15,59 @@ import { fade, leave, spring } from "./ui";
 
 export type Panel = null | "hatch" | "bot" | "group" | "settings" | "search" | "newGroup";
 
+const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+const savedWidth = (key: string, def: number, lo: number, hi: number) => {
+  try {
+    const n = Number(localStorage.getItem(key));
+    return Number.isFinite(n) && n > 0 ? clamp(n, lo, hi) : def;
+  } catch { return def; }
+};
+
+// A thin drag handle between panes. It moves in one-pixel steps, so the
+// panel follows the pointer instead of jumping on release.
+function Splitter({ onMove, label }: { onMove: (dx: number) => void; label: string }) {
+  return (
+    <div role="separator" aria-orientation="vertical" aria-label={label} tabIndex={0}
+      className="w-[5px] shrink-0 cursor-col-resize bg-transparent hover:bg-line focus:bg-line outline-none"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        let last = e.clientX;
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        const move = (ev: PointerEvent) => { onMove(ev.clientX - last); last = ev.clientX; };
+        const up = () => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          document.body.style.cursor = "";
+          document.body.style.userSelect = "";
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      }}
+    />
+  );
+}
+
 export function Shell() {
   const [panel, setPanel] = useState<Panel>(null);
   const [drawer, setDrawer] = useState(false);
   const [side, setSide] = useState<null | "computer">(null);
   const [takeover, setTakeover] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"general" | "integrations">("general");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
+  const [sidebarW, setSidebarW] = useState(() => savedWidth("gbot.sidebarW", 272, 64, 420));
+  const [sideW, setSideW] = useState(() => savedWidth("gbot.sideW", 420, 320, 760));
   const wide = useMediaQuery("(min-width: 820px)");
   const roomy = useMediaQuery("(min-width: 1180px)");
+  // The phone app can open a specific settings tab with ?settings=vault.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("settings");
+    const valid: SettingsTab[] = ["general", "providers", "team", "integrations", "vault", "skills", "voice"];
+    if (q && valid.includes(q as SettingsTab)) {
+      setSettingsTab(q as SettingsTab);
+      setPanel("settings");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
   const activeId = useStore((s) => s.activeId);
   const activeBot = useStore((s) => s.bots.find((b) => b.id === s.activeId));
   const activeGroup = useStore((s) => s.groups.find((g) => groupKey(g.id) === s.activeId));
@@ -39,6 +84,13 @@ export function Shell() {
     window.addEventListener("keydown", onKey);
     return () => { off(); window.removeEventListener("keydown", onKey); };
   }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("gbot.sidebarW", String(sidebarW)); } catch { /* storage blocked */ }
+  }, [sidebarW]);
+  useEffect(() => {
+    try { localStorage.setItem("gbot.sideW", String(sideW)); } catch { /* storage blocked */ }
+  }, [sideW]);
 
   // The computer panel belongs to one bot; groups don't have one.
   useEffect(() => { if (isGroupKey(activeId)) setSide(null); setTakeover(false); markRead(activeId); }, [activeId]);
@@ -58,9 +110,10 @@ export function Shell() {
   const sidebar = (
     <Sidebar
       activeId={activeId}
+      compact={sidebarW < 160}
       onSelect={select}
       onHatch={() => { setPanel("hatch"); setDrawer(false); }}
-      onSettings={(tab) => { setSettingsTab(tab ?? "general"); setPanel("settings"); setDrawer(false); }}
+      onSettings={() => { setSettingsTab("general"); setPanel("settings"); setDrawer(false); }}
       onSearch={() => setPanel("search")}
       onNewGroup={() => { setPanel("newGroup"); setDrawer(false); }}
     />
@@ -73,7 +126,10 @@ export function Shell() {
   return (
     <div className="h-full flex">
       {wide ? (
-        <aside className="w-[272px] shrink-0 h-full hairline-r">{sidebar}</aside>
+        <>
+          <aside style={{ width: sidebarW }} className="shrink-0 h-full hairline-r">{sidebar}</aside>
+          <Splitter label="Resize bot list" onMove={(dx) => setSidebarW((w) => clamp(w + dx, 64, 420))} />
+        </>
       ) : (
         <AnimatePresence>
           {drawer && (
@@ -101,14 +157,14 @@ export function Shell() {
 
       {/* Pinned beside the chat on wide screens; a sheet otherwise. */}
       {roomy ? (
-        <AnimatePresence initial={false}>
-          {sidePanel && (
-            <motion.aside key="side" className="h-full hairline-l overflow-hidden shrink-0"
-              initial={{ width: 0 }} animate={{ width: 420 }} exit={{ width: 0, transition: leave }} transition={spring}>
-              <div className="w-[420px] h-full">{sidePanel}</div>
-            </motion.aside>
-          )}
-        </AnimatePresence>
+        sidePanel && (
+          <>
+            <Splitter label="Resize computer panel" onMove={(dx) => setSideW((w) => clamp(w + dx, 320, 760))} />
+            <aside className="h-full hairline-l overflow-hidden shrink-0 fade-in" style={{ width: sideW }}>
+              <div className="h-full" style={{ width: sideW }}>{sidePanel}</div>
+            </aside>
+          </>
+        )
       ) : (
         <AnimatePresence>
           {sidePanel && (

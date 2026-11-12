@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Gbot, type Look } from "@gbot/characters";
 import { api } from "../lib/api";
-import { upsertBot, useStore } from "../lib/store";
+import { clearChat, upsertBot, useStore } from "../lib/store";
 import { attempt, toast } from "../lib/toast";
 import { Modal } from "./Modal";
 import { LookPicker, SurpriseButton } from "./LookPicker";
@@ -13,23 +13,27 @@ import { Button, Icon, Input, Label, TextArea } from "./ui";
 
 export function BotSettings({ open, botId, onClose }: { open: boolean; botId: string | null; onClose: () => void }) {
   const bot = useStore((s) => s.bots.find((b) => b.id === botId));
+  const me = useStore((s) => s.me);
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [instructions, setInstructions] = useState("");
   const [model, setModel] = useState("");
   const [look, setLook] = useState<Look>({});
   const [network, setNetwork] = useState(false);
+  const [hosts, setHosts] = useState("");
   const [readAloud, setReadAloud] = useState(false);
   const [voice, setVoice] = useState("");
   const voices = useSystemVoices();
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [forgetToo, setForgetToo] = useState(false);
 
   useEffect(() => {
     if (!open || !bot) return;
     setName(bot.name); setTitle(bot.title); setInstructions(bot.instructions); setModel(bot.model); setLook(bot.look ?? {});
-    setNetwork(bot.computerNetwork); setReadAloud(bot.readAloud); setVoice(bot.voice);
+    setNetwork(bot.computerNetwork); setHosts((bot.allowedHosts ?? []).join("\n")); setReadAloud(bot.readAloud); setVoice(bot.voice);
     setError(""); setConfirm(false);
   }, [open, bot?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -41,7 +45,8 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
   async function save() {
     setError("");
     try {
-      const b = await api.updateBot(bot!.id, { name, title, instructions, model, look, computerNetwork: network, readAloud, voice });
+      const allowedHosts = hosts.split("\n").map((s) => s.trim()).filter(Boolean);
+      const b = await api.updateBot(bot!.id, { name, title, instructions, model, look, computerNetwork: network, allowedHosts, readAloud, voice });
       upsertBot(b);
       toast("Saved");
       setSaved(true);
@@ -68,8 +73,8 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
           <TextArea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder={`e.g. "You help me plan my week. Keep answers short and bubbly."`} />
         </div>
         <div>
-          <Label>Model</Label>
-          <ModelSelect value={model} onChange={setModel} allowDefault="Account default" />
+          <Label hint="Account default follows Settings → Models">Model</Label>
+          <ModelSelect value={model} onChange={setModel} allowDefault="Account default" fallback={me?.defaultModel} />
         </div>
         <div className="rounded-2xl border border-line divide-y divide-line">
           <div className="flex items-center gap-3 p-3">
@@ -80,6 +85,13 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
             </div>
             <Toggle on={network} onChange={setNetwork} label="Internet access" />
           </div>
+          {network && (
+            <div className="p-3">
+              <Label hint="One per site; all its subdomains are included">Only these sites</Label>
+              <TextArea rows={3} value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder={"linkedin.com\nindeed.com"} />
+              <p className="text-[12px] text-ink-3 mt-1.5">Empty allows the whole internet. This checks the pages it visits, not the ads, CDNs or assets a page loads. Shell commands still use the network.</p>
+            </div>
+          )}
           <div className="flex items-center gap-3 p-3">
             <span className="text-ink-2"><Icon.speaker /></span>
             <div className="flex-1">
@@ -112,6 +124,31 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
             <Icon.pin /> {bot.pinned ? "Unpin" : "Pin"}
           </Button>
         </div>}
+        <div className="border-t border-line pt-4">
+          {clearing ? (
+            <div className="space-y-3 rounded-2xl bg-surface p-4">
+              <p className="text-[14px]">
+                <span className="font-medium">Clear your chat with {bot.name}?</span>{" "}
+                Every message goes, and {bot.name} starts fresh: it won't remember this conversation. Anything running stops. This can't be undone.
+              </p>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="text-[14px]">Also forget what it learned</div>
+                  <div className="text-[12.5px] text-ink-3">Preferences and facts it remembers about you</div>
+                </div>
+                <Toggle on={forgetToo} onChange={setForgetToo} label="Also forget what it learned" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setClearing(false)}>Cancel</Button>
+                <Button variant="danger" onClick={async () => {
+                  if (await attempt(() => api.clearChat(bot.id, forgetToo), "Chat cleared") !== undefined) { clearChat(bot.id); setClearing(false); }
+                }}>Clear</Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="soft" onClick={() => { setForgetToo(false); setClearing(true); }}><Icon.trash /> Clear chat history</Button>
+          )}
+        </div>
         {role === "owner" && <div className="border-t border-line pt-4">
           {confirm ? (
             <div className="flex items-center gap-2">

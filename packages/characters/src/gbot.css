@@ -4,6 +4,8 @@
    opacity only. */
 .gbot { display: block; overflow: visible; }
 .gbot * { transform-box: fill-box; }
+/* A small avatar is most of the roster; keep its paint work cheap. */
+.gbot[data-small] { contain: layout style; }
 .gbot-body { transform-origin: 50% 100%; transform: rotate(var(--tilt, 0deg)); transition: transform .5s cubic-bezier(.3,1.3,.5,1); }
 .gbot-eyes { transform-origin: center; transition: transform .08s ease-in; }
 .gbot-eyes.is-blink { transform: scaleY(.1); }
@@ -11,9 +13,15 @@
 .gbot-face { transition: transform .45s cubic-bezier(.3,1.3,.5,1); }
 
 .gbot[data-mood="idle"] .gbot-body { animation: gbot-breathe 4.2s ease-in-out infinite; }
+/* The creation preview: a gentle sway instead of the quiet breathe. */
+.gbot[data-lively][data-mood="idle"] .gbot-body { animation: gbot-lively 3.1s ease-in-out infinite; }
+@keyframes gbot-lively {
+  0%,100% { transform: rotate(calc(var(--tilt, 0deg) - 1.4deg)) translateY(0) scale(1,1); }
+  50% { transform: rotate(calc(var(--tilt, 0deg) + 1.4deg)) translateY(-1.6%) scale(1.012,.988); }
+}
 .gbot[data-mood="thinking"] .gbot-body { animation: gbot-ponder 3s ease-in-out infinite; }
 .gbot[data-mood="thinking"] .gbot-eyes { animation: gbot-scan 3s ease-in-out infinite; }
-.gbot[data-mood="working"] .gbot-body { animation: gbot-work .7s cubic-bezier(.45,0,.55,1) infinite; }
+.gbot[data-mood="working"] .gbot-body { animation: gbot-work 1.15s cubic-bezier(.45,0,.55,1) infinite; }
 .gbot[data-mood="waiting"] .gbot-body { animation: gbot-lean 2.4s ease-in-out infinite; }
 .gbot[data-mood="blocked"] .gbot-body { animation: gbot-shake 2.6s ease-in-out infinite; }
 .gbot[data-mood="done"] .gbot-body, .gbot[data-mood="happy"] .gbot-body { animation: gbot-hop .7s cubic-bezier(.3,1.4,.5,1) 1; }
@@ -28,8 +36,8 @@
 @keyframes gbot-ponder { 0%,100% { transform: rotate(-4deg) } 50% { transform: rotate(4deg) } }
 @keyframes gbot-scan { 0%,100% { transform: translateX(-2px) } 50% { transform: translateX(2px) } }
 @keyframes gbot-work {
-  0%,100% { transform: translateY(0) scale(1.03,.97) }
-  45% { transform: translateY(-5%) scale(.98,1.02) }
+  0%,100% { transform: translateY(0) scale(1.018,.986) }
+  45% { transform: translateY(-3.5%) scale(.99,1.012) }
 }
 @keyframes gbot-lean { 0%,100% { transform: rotate(-7deg) } 50% { transform: rotate(-4deg) } }
 @keyframes gbot-shake {

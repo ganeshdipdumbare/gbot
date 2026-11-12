@@ -8,6 +8,13 @@ packages/*/dist/
 /bin/
 .DS_Store
 .expo/
-apps/mobile/ios/
-apps/mobile/android/
-apps/mobile/expo-env.d.ts
+.download/
+.deepsec/
+
+# Vendored clones for reference, each its own git repo (and far past
+# GitHub's 100 MB file limit).
+/third_party/
+# Local run artifacts.
+/gbot.apk
+.gbot.pid
+__pycache__/

@@ -5,6 +5,8 @@
 set -u
 export DISPLAY=:1 HOME=/home/gbot LANG=C.UTF-8 LC_ALL=C.UTF-8 XCURSOR_THEME=Adwaita XCURSOR_SIZE=24
 mkdir -p /tmp/gbot "$HOME/.fluxbox" "$HOME/.config/gtk-3.0"
+# python-xlib (pyautogui) insists on an Xauthority file, even with no auth.
+touch "$HOME/.Xauthority"
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
 touch /tmp/gbot/activity.log
 printf '[Settings]\ngtk-application-prefer-dark-theme=1\ngtk-font-name=Inter 10\ngtk-cursor-theme-name=Adwaita\n' > "$HOME/.config/gtk-3.0/settings.ini"

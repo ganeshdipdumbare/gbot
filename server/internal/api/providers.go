@@ -9,22 +9,24 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gbot/internal/codex"
 	"gbot/internal/models"
 	"gbot/internal/runs"
 	"gbot/internal/store"
 )
 
 type providerView struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
-	BaseURL   string    `json:"baseUrl"`
-	HasKey    bool      `json:"hasKey"`
-	Local     bool      `json:"local"`
-	Models    []string  `json:"models"`
-	Enabled   bool      `json:"enabled"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID        string              `json:"id"`
+	Name      string              `json:"name"`
+	Kind      string              `json:"kind"`
+	BaseURL   string              `json:"baseUrl"`
+	HasKey    bool                `json:"hasKey"`
+	Local     bool                `json:"local"`
+	Models    []string            `json:"models"`
+	Caps      map[string][]string `json:"caps"`
+	Enabled   bool                `json:"enabled"`
+	Status    string              `json:"status"`
+	CreatedAt time.Time           `json:"createdAt"`
 }
 
 type providerBody struct {
@@ -49,7 +51,19 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 	for _, p := range list {
 		out = append(out, s.providerView(p))
 	}
-	writeJSON(w, 200, map[string]any{"providers": out})
+	writeJSON(w, 200, map[string]any{"providers": out, "codex": map[string]bool{
+		"available": codex.Available(), "allowed": codex.Allowed(userFrom(r).Email),
+	}})
+}
+
+// codexDenied refuses the Codex kind to accounts the operator hasn't
+// allowed: it spends the machine owner's ChatGPT subscription.
+func codexDenied(w http.ResponseWriter, r *http.Request, kind string) bool {
+	if kind != "codex" || codex.Allowed(userFrom(r).Email) {
+		return false
+	}
+	writeErr(w, 403, "this account can't use the server's Codex login")
+	return true
 }
 
 func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +85,9 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := validProviderFields(name, kind, &base); msg != "" {
 		writeErr(w, 400, msg)
+		return
+	}
+	if codexDenied(w, r, kind) {
 		return
 	}
 	manual := []string{}
@@ -137,6 +154,9 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, msg)
 		return
 	}
+	if codexDenied(w, r, kind) {
+		return
+	}
 	manual := cur.Manual
 	if b.Models != nil {
 		manual = cleanModelList(*b.Models)
@@ -199,7 +219,14 @@ func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "couldn't list models: "+err.Error())
 		return
 	}
-	p, err := s.Store.UpdateProvider(r.Context(), u.ID, cur.ID, store.ProviderPatch{Discovered: &list})
+	// Drop non-chat leftovers from earlier discovers so the picker stays usable.
+	manual := make([]string, 0, len(cur.Manual))
+	for _, m := range cur.Manual {
+		if models.IsChat(m) {
+			manual = append(manual, m)
+		}
+	}
+	p, err := s.Store.UpdateProvider(r.Context(), u.ID, cur.ID, store.ProviderPatch{Discovered: &list, Manual: &manual})
 	if err != nil {
 		writeErr(w, 500, "could not save")
 		return
@@ -258,12 +285,15 @@ func (s *Server) discoverProvider(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, msg)
 		return
 	}
+	if codexDenied(w, r, kind) {
+		return
+	}
 	list, err := models.Discover(r.Context(), kind, base, key)
 	if err != nil {
 		writeErr(w, 400, "couldn't list models: "+err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"models": list})
+	writeJSON(w, 200, map[string]any{"models": list, "caps": models.ModelCaps(list)})
 }
 
 func (s *Server) providerView(p *store.Provider) providerView {
@@ -275,7 +305,7 @@ func (s *Server) providerView(p *store.Provider) providerView {
 	}
 	return providerView{
 		ID: p.ID, Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, HasKey: p.HasKey,
-		Local: p.Local, Models: p.Models(), Enabled: p.Enabled, Status: status, CreatedAt: p.CreatedAt,
+		Local: p.Local, Models: p.Models(), Caps: models.ModelCaps(p.Models()), Enabled: p.Enabled, Status: status, CreatedAt: p.CreatedAt,
 	}
 }
 
@@ -323,8 +353,14 @@ func validProviderFields(name, kind string, base *string) string {
 	if name == "" || utf8.RuneCountInString(name) > 40 {
 		return "give it a name of up to 40 characters"
 	}
-	if kind != "openai" && kind != "anthropic" && kind != "gemini" {
-		return "kind must be openai, anthropic or gemini"
+	switch kind {
+	case "openai", "anthropic", "gemini":
+	case "codex":
+		// Always Codex's own endpoint; the login decides what's reachable.
+		*base = codex.BaseURL
+		return ""
+	default:
+		return "kind must be openai, anthropic, gemini or codex"
 	}
 	*base = strings.TrimRight(strings.TrimSpace(*base), "/")
 	if *base == "" {

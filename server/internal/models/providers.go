@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gbot/internal/codex"
 )
 
 // Provider is an account's model provider, without its key. Prefix is the
@@ -16,7 +18,7 @@ import (
 type Provider struct {
 	ID      string
 	Name    string
-	Kind    string // openai | anthropic | gemini
+	Kind    string // openai | anthropic | gemini | codex
 	Prefix  string
 	BaseURL string
 	Local   bool
@@ -31,6 +33,8 @@ func DefaultBaseURL(kind string) string {
 		return "https://api.anthropic.com"
 	case "gemini":
 		return "https://generativelanguage.googleapis.com/v1beta"
+	case "codex":
+		return codex.BaseURL
 	default:
 		return "https://api.openai.com/v1"
 	}
@@ -69,6 +73,9 @@ func ValidProviderURL(raw string) error {
 // Discover lists the models a provider offers. The caller decides whether
 // an empty or failed result falls back to a manual list.
 func Discover(ctx context.Context, kind, baseURL, apiKey string) ([]string, error) {
+	if kind == "codex" {
+		return codex.Models()
+	}
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
 		base = DefaultBaseURL(kind)
@@ -219,7 +226,7 @@ func cleanModels(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, m := range in {
 		m = strings.TrimSpace(m)
-		if m == "" || seen[m] {
+		if m == "" || seen[m] || !IsChat(m) {
 			continue
 		}
 		seen[m] = true

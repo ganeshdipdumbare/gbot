@@ -15,7 +15,7 @@ type Provider struct {
 	ID         string    `json:"id"`
 	UserID     string    `json:"-"`
 	Name       string    `json:"name"`
-	Kind       string    `json:"kind"` // openai | anthropic | gemini
+	Kind       string    `json:"kind"` // openai | anthropic | gemini | codex
 	Prefix     string    `json:"-"`
 	BaseURL    string    `json:"baseUrl"`
 	HasKey     bool      `json:"hasKey"`

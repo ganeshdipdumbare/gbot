@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { motion } from "motion/react";
 import { Gbot, randomSeed, type Look, type Mood } from "@gbot/characters";
 import { api } from "../lib/api";
@@ -31,12 +31,18 @@ export function Hatch({ open, onClose, onCreated }: { open: boolean; onClose: ()
     setError("");
   }, [open]);
 
-  // A small happy hop whenever the look changes.
+  // A short happy reaction, shared by look changes, hovering and typing.
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const react = (l: Look) => {
     setLook(l);
-    setMood("happy");
-    setTimeout(() => setMood("idle"), 700);
+    poke();
   };
+  const poke = () => {
+    clearTimeout(timer.current);
+    setMood("happy");
+    timer.current = setTimeout(() => setMood("idle"), 700);
+  };
+  useEffect(() => () => clearTimeout(timer.current), []);
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -58,8 +64,9 @@ export function Hatch({ open, onClose, onCreated }: { open: boolean; onClose: ()
     <Modal open={open} onClose={onClose} title="New bot" width={520}>
       <form onSubmit={create} className="px-5 pb-5">
         <div ref={ref} className="relative grid place-items-center pt-2 pb-5">
-          <motion.div key={seed} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={bouncy}>
-            <Gbot look={look} seed={seed} size={128} mood={mood} lookAt={gaze} />
+          <motion.div key={seed} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={bouncy}
+            onPointerEnter={poke} onPointerDown={poke} className="cursor-pointer">
+            <Gbot look={look} seed={seed} size={128} mood={mood} lookAt={gaze} lively />
           </motion.div>
           <div className="absolute right-0 top-0">
             <SurpriseButton onPick={react} />
@@ -68,11 +75,11 @@ export function Hatch({ open, onClose, onCreated }: { open: boolean; onClose: ()
         <div className="grid sm:grid-cols-2 gap-3 mb-5">
           <div>
             <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required />
+            <Input value={name} onChange={(e) => { setName(e.target.value); poke(); }} maxLength={40} required />
           </div>
           <div>
             <Label hint="optional">Job</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} placeholder={jobs[name.length % jobs.length]} />
+            <Input value={title} onChange={(e) => { setTitle(e.target.value); poke(); }} maxLength={80} placeholder={jobs[name.length % jobs.length]} />
           </div>
         </div>
         <LookPicker look={look} seed={seed} onChange={react} />

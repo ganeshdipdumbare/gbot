@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/net/publicsuffix"
 
 	"gbot/internal/runs"
 	"gbot/internal/store"
@@ -73,6 +76,48 @@ func (s *Server) getBot(w http.ResponseWriter, r *http.Request) {
 	if b := s.bot(w, r); b != nil {
 		writeJSON(w, 200, b)
 	}
+}
+
+var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+
+// cleanHosts normalizes a browser allowlist. Accepting "https://x/y" is
+// friendly, but only the host survives; subdomains are covered by the
+// suffix match in the browser.
+func cleanHosts(in []string) ([]string, string) {
+	if len(in) > 50 {
+		return nil, "keep the allowlist to 50 sites"
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, raw := range in {
+		h := strings.ToLower(strings.TrimSpace(raw))
+		if i := strings.Index(h, "://"); i >= 0 {
+			h = h[i+3:]
+		}
+		if i := strings.IndexAny(h, "/?#"); i >= 0 {
+			h = h[:i]
+		}
+		h = strings.TrimPrefix(h, "*.")
+		h = strings.TrimSuffix(h, ".")
+		if h == "" {
+			continue
+		}
+		if !hostPattern.MatchString(h) || (!strings.Contains(h, ".") && h != "localhost") {
+			return nil, fmt.Sprintf("%q isn't a domain like linkedin.com", raw)
+		}
+		if h != "localhost" {
+			base, err := publicsuffix.EffectiveTLDPlusOne(h)
+			if err != nil {
+				return nil, fmt.Sprintf("%q isn't a domain like linkedin.com", raw)
+			}
+			h = base
+		}
+		if !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	return out, ""
 }
 
 func validBotFields(name, title, instructions *string, look *store.Look) string {
@@ -140,6 +185,14 @@ func (s *Server) updateBot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, msg)
 		return
 	}
+	if p.AllowedHosts != nil {
+		hosts, msg := cleanHosts(*p.AllowedHosts)
+		if msg != "" {
+			writeErr(w, 400, msg)
+			return
+		}
+		p.AllowedHosts = &hosts
+	}
 	if p.Model != nil && *p.Model != "" && s.Models.PickFor(r.Context(), s.userProviders(r.Context(), userFrom(r).ID), *p.Model) != *p.Model {
 		writeErr(w, 400, "that model isn't available")
 		return
@@ -178,6 +231,23 @@ func (s *Server) archiveBot(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Hub.Publish(b.SpaceID, audience, runs.Event{Type: "bot_removed", BotID: b.ID})
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// clearChat deletes the caller's own chat with a bot; other people's chats
+// with a shared bot are untouched. ?memory=1 also forgets what the bot
+// learned in it.
+func (s *Server) clearChat(w http.ResponseWriter, r *http.Request) {
+	b := s.bot(w, r)
+	if b == nil {
+		return
+	}
+	memory := r.URL.Query().Get("memory") == "1"
+	if err := s.Runtime.ClearChat(r.Context(), b, userFrom(r).ID, memory); err != nil {
+		s.Log.Error("clear chat", "err", err)
+		writeErr(w, 500, "could not clear the chat")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"cleared": true, "memory": memory})
 }
 
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {

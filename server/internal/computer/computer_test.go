@@ -49,6 +49,32 @@ func testComputer(t *testing.T, backend string) {
 	if err != nil || !bytes.HasPrefix(img, []byte{0xFF, 0xD8}) {
 		t.Fatalf("screenshot: %d bytes, %v", len(img), err)
 	}
+	// Sleep keeps the guest; tools must wait for a resume.
+	if err := m.Sleep(ctx, bot); err != nil {
+		t.Fatalf("sleep: %v", err)
+	}
+	if st := m.Status(ctx, bot); st.State != "asleep" {
+		t.Fatalf("status after sleep: %q", st.State)
+	}
+	if _, err := m.Exec(ctx, bot, "true", time.Second); err != ErrAsleep {
+		t.Fatalf("exec while asleep: %v", err)
+	}
+	// A run that needs the computer wakes it on its own.
+	if err := m.Ensure(ctx, bot, false); err != nil {
+		t.Fatalf("ensure after sleep: %v", err)
+	}
+	if st := m.Status(ctx, bot); st.State != "on" {
+		t.Fatalf("status after ensure: %q", st.State)
+	}
+	if err := m.Sleep(ctx, bot); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Wake(ctx, bot); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	if st := m.Status(ctx, bot); st.State != "on" {
+		t.Fatalf("status after wake: %q", st.State)
+	}
 	if err := m.Send(ctx, bot, Input{Type: "click", X: .5, Y: .5}); err == nil {
 		t.Fatal("input allowed without taking control")
 	}
@@ -80,5 +106,18 @@ func TestOwnerKey(t *testing.T) {
 	}
 	if !safeID.MatchString(alice.Key()) {
 		t.Fatalf("key %q is not accepted by the backends", alice.Key())
+	}
+}
+
+func TestTransientAgent(t *testing.T) {
+	for _, s := range []string{"agent client error: handshake: early eof", "handshake failed"} {
+		if !transientAgent(s) {
+			t.Errorf("%q should be retried", s)
+		}
+	}
+	for _, s := range []string{"exit 1", "permission denied", ""} {
+		if transientAgent(s) {
+			t.Errorf("%q should not be retried", s)
+		}
 	}
 }

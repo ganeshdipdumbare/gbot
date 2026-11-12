@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"gbot/internal/api"
+	"gbot/internal/crypto"
 	"gbot/internal/models"
 	"gbot/internal/runs"
 	"gbot/internal/store"
@@ -95,7 +98,11 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rt.Close()
-	srv := httptest.NewServer((&api.Server{Store: st, Runtime: rt, Hub: hub, Models: cat, Log: log, AllowSignup: true}).Handler())
+	sealer, err := crypto.Load(filepath.Join(t.TempDir(), "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&api.Server{Store: st, Runtime: rt, Hub: hub, Models: cat, Log: log, Sealer: sealer, AllowSignup: true}).Handler())
 	defer srv.Close()
 
 	alice := newClient(t, srv.URL)
@@ -109,6 +116,43 @@ func TestEndToEnd(t *testing.T) {
 		alice.do("GET", "/api/bots", nil, &res)
 		if len(res.Bots) != 1 || res.Bots[0].Name == "" {
 			t.Fatalf("want one starter bot, got %+v", res.Bots)
+		}
+	})
+
+	t.Run("vault values are sealed and never returned", func(t *testing.T) {
+		var v map[string]any
+		if code := alice.do("POST", "/api/vault", map[string]any{
+			"name": "LinkedIn", "value": "s3cret-value", "origins": []string{"linkedin.com"},
+		}, &v); code != 201 {
+			t.Fatalf("create vault secret: %d", code)
+		}
+		if id, _ := v["id"].(string); id == "" {
+			t.Fatalf("no id: %+v", v)
+		}
+		if strings.Contains(fmt.Sprint(v), "s3cret-value") {
+			t.Fatal("the create response echoed the value")
+		}
+		var list struct{ Secrets []map[string]any }
+		alice.do("GET", "/api/vault", nil, &list)
+		if len(list.Secrets) != 1 || list.Secrets[0]["name"] != "LinkedIn" {
+			t.Fatalf("vault list: %+v", list.Secrets)
+		}
+		if strings.Contains(fmt.Sprint(list), "s3cret-value") {
+			t.Fatal("the list echoed the value")
+		}
+		var sealed []byte
+		if err := st.DB.QueryRow(ctx, `SELECT value FROM vault_secrets WHERE name='LinkedIn'`).Scan(&sealed); err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(sealed, []byte("s3cret-value")) {
+			t.Fatal("the value is stored in plain text")
+		}
+		id, _ := v["id"].(string)
+		if code := alice.do("PATCH", "/api/vault/"+id, map[string]any{"origins": []string{"indeed.com"}}, &v); code != 200 {
+			t.Fatalf("update vault secret: %d", code)
+		}
+		if code := alice.do("DELETE", "/api/vault/"+id, nil, nil); code != 200 {
+			t.Fatalf("delete vault secret: %d", code)
 		}
 	})
 

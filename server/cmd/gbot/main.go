@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,6 +32,30 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+func envInt(k string, def int) int {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
+func envDuration(k string, def time.Duration) time.Duration {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }
 
 func main() {
@@ -74,7 +99,13 @@ func run(cmd string, log *slog.Logger) error {
 
 	cat := models.NewCatalog(env("OLLAMA_HOST", "http://127.0.0.1:11434"))
 	hub := runs.NewHub()
-	rt, err := runs.New(runs.Config{DatabaseURL: dsn, OllamaHost: cat.OllamaHost, MaxSteps: 12}, st, hub, cat, log)
+	rt, err := runs.New(runs.Config{
+		DatabaseURL:   dsn,
+		OllamaHost:    cat.OllamaHost,
+		MaxSteps:      envInt("GBOT_MAX_STEPS", 40),
+		RunTimeout:    envDuration("GBOT_RUN_TIMEOUT", 30*time.Minute),
+		ContextTokens: envInt("GBOT_CONTEXT_TOKENS", 24_000),
+	}, st, hub, cat, log)
 	if err != nil {
 		return fmt.Errorf("agent runtime: %w", err)
 	}
@@ -85,6 +116,7 @@ func run(cmd string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	rt.SetSealer(sealer)
 	rt.SyncProviders(ctx, sealer)
 
 	var comp *computer.Manager
@@ -103,6 +135,11 @@ func run(cmd string, log *slog.Logger) error {
 		}
 	}
 	rs := &routines.Service{Store: st, Log: log}
+	rs.OnChange = func(botID, userID string) {
+		if b, err := st.GetBotAnySpace(context.Background(), botID); err == nil {
+			hub.Publish(b.SpaceID, []string{userID}, runs.Event{Type: "routine", BotID: botID})
+		}
+	}
 	rs.Fire = func(ctx context.Context, bot *store.Bot, r *store.Routine, input string) {
 		prompt := "Routine \"" + r.Name + "\": " + r.Prompt
 		trigger := "routine"
@@ -119,6 +156,8 @@ func run(cmd string, log *slog.Logger) error {
 		rt.Enqueue(runs.Job{Bot: bot, For: r.UserID, Prompt: prompt, Trigger: trigger, Untrusted: input != ""})
 	}
 	rt.Use(comp, rs)
+	// Resume the messages a restart left queued.
+	rt.Recover(ctx)
 	if comp != nil { // computers adopted from a previous run are still on
 		for _, o := range comp.Running() {
 			if b, err := st.GetBotAnySpace(ctx, o.Bot); err == nil {
@@ -128,12 +167,32 @@ func run(cmd string, log *slog.Logger) error {
 	}
 	go rs.Run(ctx)
 	go rt.SyncMCP(ctx, sealer)
+	// Access tokens expire; refresh them well before a run would use one.
+	go func() {
+		t := time.NewTicker(10 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				rt.SyncMCP(ctx, sealer)
+			}
+		}
+	}()
 
 	addr := env("GBOT_ADDR", "127.0.0.1:8080")
+	// The public URL usually implies HTTPS, but a phone on the LAN may
+	// reach the same server over http; let that deployment opt out.
+	secureCookies := strings.HasPrefix(env("GBOT_PUBLIC_URL", ""), "https://")
+	if v := env("GBOT_COOKIE_SECURE", ""); v != "" {
+		secureCookies = v == "true"
+	}
 	srv := &api.Server{
 		Store: st, Runtime: rt, Hub: hub, Models: cat, Log: log,
 		Computer: comp, Routines: rs, Sealer: sealer, Voice: api.VoiceFromEnv(),
-		SecureCookies: strings.HasPrefix(env("GBOT_PUBLIC_URL", ""), "https://"),
+		SecureCookies: secureCookies,
+		PublicURL:     strings.TrimRight(env("GBOT_PUBLIC_URL", ""), "/"),
 		AllowSignup:   env("GBOT_SIGNUP", "open") == "open",
 	}
 	hs := &http.Server{
@@ -146,6 +205,7 @@ func run(cmd string, log *slog.Logger) error {
 		t := time.NewTicker(time.Hour)
 		for range t.C {
 			_ = st.PurgeExpiredSessions(context.Background())
+			_ = st.PruneQueue(context.Background())
 		}
 	}()
 	go func() {

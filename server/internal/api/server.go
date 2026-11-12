@@ -36,6 +36,10 @@ type Server struct {
 	Voice    VoiceConfig
 	// SecureCookies is set when served over HTTPS.
 	SecureCookies bool
+	// PublicURL is the address people open in a browser, when this server
+	// sits behind a proxy. OAuth callbacks must use it, not the internal
+	// host the proxy connects to.
+	PublicURL string
 	// AllowSignup lets new accounts register; the first account can
 	// always register so a fresh install is usable.
 	AllowSignup bool
@@ -48,6 +52,17 @@ type Server struct {
 	// so adding or removing a server never waits on a slow one.
 	mcpOnce sync.Once
 	mcpWake chan struct{}
+
+	// oauthPending holds sign-ins that have not come back yet, keyed by
+	// state. Only the callback touches it concurrently.
+	oauthMu      sync.Mutex
+	oauthPending map[string]*mcpPending
+
+	// slackWait holds where each in-flight Slack reply belongs, and
+	// slackSubs which spaces already have a relay watching for them.
+	slackMu   sync.Mutex
+	slackWait map[string]slackTarget
+	slackSubs map[string]bool
 }
 
 const sessionCookie = "gbot_session"
@@ -76,9 +91,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/bots/{id}", s.authed(s.archiveBot))
 	mux.Handle("GET /api/bots/{id}/messages", s.authed(s.listMessages))
 	mux.Handle("POST /api/bots/{id}/messages", s.authed(s.sendMessage))
+	mux.Handle("DELETE /api/bots/{id}/messages", s.authed(s.clearChat))
 	mux.Handle("POST /api/bots/{id}/stop", s.authed(s.stopBot))
 	mux.Handle("GET /api/events", s.authed(s.events))
 	mux.Handle("GET /api/events/poll", s.authed(s.pollEvents))
+	mux.HandleFunc("POST /slack/events", s.slackEvents)
+	mux.Handle("GET /api/slack", s.authed(s.listSlack))
+	mux.Handle("POST /api/slack", s.authed(s.connectSlack))
+	mux.Handle("DELETE /api/slack/{id}", s.authed(s.disconnectSlack))
+	mux.Handle("PUT /api/slack/{id}/links", s.authed(s.linkSlack))
+	mux.Handle("DELETE /api/slack/{id}/links/{channel}", s.authed(s.unlinkSlack))
 	mux.Handle("GET /api/bots/{id}/sharing", s.authed(s.sharing))
 	mux.Handle("PUT /api/bots/{id}/sharing", s.authed(s.setVisibility))
 	mux.Handle("POST /api/bots/{id}/sharing/members", s.authed(s.addBotMember))
@@ -93,6 +115,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 	}))
+	// The phone's BB sign-in ends here: behind the BB login, but not the
+	// web app. The app closes the WebView when this URL loads.
+	mux.HandleFunc("GET /bb-ready", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BB connected</title><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#FFF9F3;color:#2b2b2b;font:16px system-ui,sans-serif"><div style="text-align:center"><div style="width:44px;height:44px;border-radius:22px;background:#8B5CF6;margin:0 auto 14px"></div><strong>BB connected</strong><p style="color:#777;font-size:14px">Return to gbot.</p></div>`))
+	})
 	mux.Handle("/", web.Handler())
 	return s.secure(mux)
 }

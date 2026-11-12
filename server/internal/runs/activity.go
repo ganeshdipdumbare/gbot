@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ganeshdipdumbare/kiln/sdk"
+	"github.com/ganeshdipdumbare/kritrim"
 )
 
 // A step is one thing a bot did with a tool, said plainly, for the
@@ -42,7 +42,7 @@ func hostPath(raw string) string {
 // tools that don't exist are the model correcting itself). connector
 // names the MCP server behind a tool prefix, so its tools read apart
 // from built-in ones.
-func describeStep(call *sdk.ToolCall, result string, connector func(prefix string) string) (step, bool) {
+func describeStep(call *kritrim.ToolCall, result string, connector func(prefix string) string) (step, bool) {
 	if call == nil || strings.HasPrefix(result, "error: unknown tool ") {
 		return step{}, false
 	}
@@ -63,10 +63,6 @@ func describeStep(call *sdk.ToolCall, result string, connector func(prefix strin
 		st.Label, st.Detail = "Wrote", short(str("path"), 60)
 	case "computer_read_file":
 		st.Label, st.Detail = "Read", short(str("path"), 60)
-	case "browser_open":
-		st.Label, st.Detail = "Opened", hostPath(str("url"))
-	case "browser_read":
-		st.Label, st.Detail = "Read", hostPath(str("url"))
 	case "browser_navigate":
 		st.Label, st.Detail = "Opened", hostPath(str("url"))
 	case "browser_snapshot":
@@ -82,7 +78,7 @@ func describeStep(call *sdk.ToolCall, result string, connector func(prefix strin
 	case "browser_press":
 		st.Label, st.Detail = "Pressed", str("key")
 	case "remember":
-		st.Label, st.Detail = "Remembered", short(str("text"), 60)
+		st.Label, st.Detail = "Remembered", short(str("value"), 60)
 	case "recall":
 		st.Label, st.Detail = "Checked memory", short(str("query"), 60)
 	case "current_time":

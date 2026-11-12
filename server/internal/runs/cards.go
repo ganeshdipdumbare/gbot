@@ -5,8 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ganeshdipdumbare/kiln"
-	"github.com/ganeshdipdumbare/kiln/sdk"
+	"github.com/ganeshdipdumbare/kritrim"
 
 	"gbot/internal/computer"
 	"gbot/internal/store"
@@ -19,18 +18,27 @@ import (
 // Only the person a card belongs to can answer it: the owner of their
 // private chat with the bot, or the creator of a group.
 
-func (r *Runtime) addCard(ctx context.Context, c convo, b *store.Bot, runID string, in sdk.Interrupt) {
-	data := map[string]any{"kind": in.Kind, "interruptId": in.ID, "status": "pending", "botId": b.ID}
-	if in.ToolCall != nil {
-		data["tool"] = in.ToolCall.Name
-		if in.Kind == "approval" {
-			data["args"] = in.ToolCall.Args
+func (r *Runtime) addCard(ctx context.Context, c convo, b *store.Bot, runID, thread string, in kritrim.Interrupt, kind string) {
+	data := map[string]any{"kind": kind, "interruptId": in.ID, "status": "pending", "botId": b.ID, "tool": in.Tool}
+	if c.GroupID != "" {
+		// A group's paused session lives under its own thread; a second
+		// pause on the same chain must find it again.
+		data["thread"] = thread
+	}
+	msg := in.Message
+	switch kind {
+	case "approval":
+		data["args"] = in.Args
+		msg = describeCall(in.Tool, in.Args)
+	case "question":
+		msg, _ = in.Args["question"].(string)
+		if opts, ok := in.Args["options"].([]any); ok && len(opts) > 0 {
+			data["options"] = opts
 		}
+	case "takeover":
+		msg, _ = in.Args["reason"].(string)
 	}
-	if opts, ok := in.Payload["options"].([]any); ok && len(opts) > 0 {
-		data["options"] = opts
-	}
-	m := &store.Message{BotID: b.ID, GroupID: c.GroupID, ChatUser: c.User, Role: "card", Content: in.Message, Data: data, RunID: &runID}
+	m := &store.Message{BotID: b.ID, GroupID: c.GroupID, ChatUser: c.User, Role: "card", Content: msg, Data: data, RunID: &runID}
 	if err := r.store.AddMessage(ctx, m, nil); err != nil {
 		r.log.Error("add card", "err", err)
 		return
@@ -64,36 +72,34 @@ func (r *Runtime) Answer(ctx context.Context, caller *store.User, card *store.Me
 	}
 	id, _ := card.Data["interruptId"].(string)
 	kind, _ := card.Data["kind"].(string)
-	var d sdk.Decision
-	status := ""
+	var typ, message, status string
 	switch {
 	case kind == "approval" && decision == "approve":
-		d, status = kiln.Approve(id), "approved"
+		typ, status = "approve", "approved"
 		if tool, _ := card.Data["tool"].(string); always && tool != "" {
 			_ = r.store.SetToolRule(ctx, caller.ID, tool, "allow")
 		}
 	case kind == "approval" && decision == "reject":
-		msg := "The person declined."
+		message = "The person declined."
 		if text != "" {
-			msg += " They said: " + text
+			message += " They said: " + text
 		}
-		d, status = kiln.Reject(id, msg), "denied"
+		typ, status = "reject", "denied"
 	case kind == "question" && decision == "answer" && text != "":
-		d, status = kiln.Respond(id, text), "answered"
+		typ, message, status = "respond", text, "answered"
 	case kind == "takeover" && decision == "answer":
 		if text == "" {
 			text = "I'm done. The computer is yours again."
 		}
-		d, status = kiln.Respond(id, text), "done"
+		typ, message, status = "respond", text, "done"
 		if r.computer != nil {
-			_ = r.computer.TakeControl(computer.Owner{Bot: bot.ID, User: caller.ID}, false)
+			_ = r.computer.TakeControl(computer.Owner{Bot: bot.ID, User: caller.ID, Hosts: bot.AllowedHosts}, false)
 		}
 	default:
 		return nil, fmt.Errorf("can't %s a %s card", decision, kind)
 	}
-	d.By = caller.ID
 	upd, err := r.store.MergeMessageData(ctx, card.ID, map[string]any{"status": status, "answer": text,
-		"decision": map[string]any{"interruptId": d.InterruptID, "type": d.Type, "message": d.Message}})
+		"decision": map[string]any{"interruptId": id, "type": typ, "message": message}})
 	if err != nil {
 		return nil, err
 	}
@@ -110,19 +116,20 @@ func (r *Runtime) Answer(ctx context.Context, caller *store.User, card *store.Me
 		}
 	}
 	decisions := r.runDecisions(ctx, card, c)
-	r.Enqueue(Job{Bot: bot, Group: group, For: c.User, Trigger: "resume", Decisions: decisions, ResumeRun: *card.RunID})
+	thread, _ := card.Data["thread"].(string)
+	r.Enqueue(Job{Bot: bot, Group: group, For: c.User, Trigger: "resume", Decisions: decisions, Thread: thread})
 	return upd, nil
 }
 
 // runDecisions collects the recorded answers of every card in a run.
-func (r *Runtime) runDecisions(ctx context.Context, card *store.Message, c convo) []sdk.Decision {
+func (r *Runtime) runDecisions(ctx context.Context, card *store.Message, c convo) map[string]kritrim.Decision {
 	var msgs []*store.Message
 	if c.GroupID != "" {
 		msgs, _ = r.store.ListGroupMessages(ctx, c.GroupID, nil, 200)
 	} else {
 		msgs, _ = r.store.ListMessages(ctx, c.BotID, c.User, nil, 200)
 	}
-	var out []sdk.Decision
+	out := map[string]kritrim.Decision{}
 	for _, m := range msgs {
 		if m.Role != "card" || m.RunID == nil || *m.RunID != *card.RunID {
 			continue
@@ -131,30 +138,36 @@ func (r *Runtime) runDecisions(ctx context.Context, card *store.Message, c convo
 		if raw == nil {
 			continue
 		}
-		d := sdk.Decision{}
-		d.InterruptID, _ = raw["interruptId"].(string)
-		d.Type, _ = raw["type"].(string)
-		d.Message, _ = raw["message"].(string)
-		out = append(out, d)
+		id, _ := raw["interruptId"].(string)
+		typ, _ := raw["type"].(string)
+		message, _ := raw["message"].(string)
+		switch typ {
+		case "approve":
+			out[id] = kritrim.Approve()
+		case "reject":
+			out[id] = kritrim.Reject(message)
+		case "respond":
+			out[id] = kritrim.Respond(message)
+		}
 	}
 	return out
 }
 
 // skipPending answers a thread's open cards with the person's new
 // message, so the chat moves on instead of waiting.
-func (r *Runtime) skipPending(ctx context.Context, c convo, pending []sdk.Interrupt, prompt string) []sdk.Decision {
+func (r *Runtime) skipPending(ctx context.Context, c convo, pending []kritrim.Interrupt, prompt string) map[string]kritrim.Decision {
 	cards, _ := r.store.PendingCards(ctx, c.BotID, c.User, c.GroupID)
 	for _, card := range cards {
 		if upd, err := r.store.MergeMessageData(ctx, card.ID, map[string]any{"status": "skipped"}); err == nil {
 			r.chat(c, Event{Type: "message_update", BotID: card.BotID, GroupID: card.GroupID, Data: upd})
 		}
 	}
-	out := make([]sdk.Decision, 0, len(pending))
+	out := map[string]kritrim.Decision{}
 	for _, in := range pending {
-		if in.Kind == "approval" {
-			out = append(out, kiln.Reject(in.ID, "Not approved. The person wrote instead: "+prompt))
+		if in.Tool == "ask_user" || in.Tool == "request_takeover" {
+			out[in.ID] = kritrim.Respond("The person didn't answer that and wrote instead: " + prompt)
 		} else {
-			out = append(out, kiln.Respond(in.ID, "The person didn't answer that and wrote instead: "+prompt))
+			out[in.ID] = kritrim.Reject("Not approved. The person wrote instead: " + prompt)
 		}
 	}
 	return out
@@ -167,10 +180,26 @@ func (r *Runtime) expireCards(ctx context.Context, c convo) {
 		if upd, err := r.store.MergeMessageData(ctx, card.ID, map[string]any{"status": "skipped"}); err == nil {
 			r.chat(c, Event{Type: "message_update", BotID: card.BotID, GroupID: card.GroupID, Data: upd})
 		}
-		if card.RunID != nil {
-			r.mu.Lock()
-			delete(r.groupPending, *card.RunID)
-			r.mu.Unlock()
+	}
+}
+
+// autoDecisions adds approvals for paused calls the approval policy would
+// have let through without a card. They were only paused because they sat
+// in the same model step as a call that did need one.
+func autoDecisions(rc *runCtx, sess *kritrim.Session, decisions map[string]kritrim.Decision) map[string]kritrim.Decision {
+	if decisions == nil {
+		decisions = map[string]kritrim.Decision{}
+	}
+	if sess == nil {
+		return decisions
+	}
+	for _, in := range sess.Pending {
+		if _, ok := decisions[in.ID]; ok {
+			continue
+		}
+		if cardKind(rc, in) == "" {
+			decisions[in.ID] = kritrim.Approve()
 		}
 	}
+	return decisions
 }

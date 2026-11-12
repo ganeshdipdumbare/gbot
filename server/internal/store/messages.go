@@ -138,6 +138,46 @@ func (s *Store) page(ctx context.Context, where string, args []any, before *time
 	return out, err
 }
 
+// SearchMessages finds what was said in one chat, newest first. It backs
+// the bot's history_search tool: context trimming hides old turns from the
+// model, this lets it look them up. A group is named by groupID; otherwise
+// the chat is the bot's own with userID.
+func (s *Store) SearchMessages(ctx context.Context, botID, userID, groupID, query string, since time.Time, limit int) ([]*Message, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	where, args := `bot_id=$1 AND chat_user_id=$2 AND group_id IS NULL`, []any{botID, userID}
+	if groupID != "" {
+		where, args = `group_id=$1`, []any{groupID}
+	}
+	args = append(args, since)
+	sinceIdx := len(args)
+	args = append(args, limit)
+	limitIdx := len(args)
+	q := `SELECT ` + msgCols + ` FROM messages WHERE ` + where + `
+		AND role IN ('user','bot') AND created_at >= $` + strconv.Itoa(sinceIdx)
+	if query != "" {
+		pattern := "%" + escapeLike(query) + "%"
+		args = append(args, pattern)
+		q += ` AND content ILIKE $` + strconv.Itoa(len(args)) + ` ESCAPE '\'`
+	}
+	q += ` ORDER BY created_at DESC, id DESC LIMIT $` + strconv.Itoa(limitIdx)
+	rows, err := s.DB.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Message
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // StartRun records a run and the person it was for.
 func (s *Store) StartRun(ctx context.Context, botID, userID, trigger, model string) (id string, err error) {
 	err = s.DB.QueryRow(ctx, `INSERT INTO runs(bot_id,user_id,trigger,model) VALUES($1,$2,$3,$4) RETURNING id`,
@@ -154,4 +194,77 @@ func (s *Store) FinishRun(ctx context.Context, id, status, errText string, token
 func (s *Store) FailInterruptedRuns(ctx context.Context) error {
 	_, err := s.DB.Exec(ctx, `UPDATE runs SET status='error', error='server restarted', finished_at=now() WHERE status='running'`)
 	return err
+}
+
+// Bot-to-bot exchange cards. Both cards of one message share its data;
+// see docs/protocol/bot-asks.md.
+
+const botmsgWhere = `role='event' AND data->>'kind'='botmsg'`
+
+// RoundCards returns every exchange card of one round, oldest first.
+func (s *Store) RoundCards(ctx context.Context, round string) ([]*Message, error) {
+	return s.listMessages(ctx, `SELECT `+msgCols+` FROM messages WHERE `+botmsgWhere+` AND data->>'round'=$1 ORDER BY created_at`, round)
+}
+
+// AskCards returns the two cards of one message.
+func (s *Store) AskCards(ctx context.Context, ask string) ([]*Message, error) {
+	return s.listMessages(ctx, `SELECT `+msgCols+` FROM messages WHERE `+botmsgWhere+` AND data->>'ask'=$1 ORDER BY created_at`, ask)
+}
+
+// OpenAsks returns the receivers' cards of messages that were never
+// answered, from the last two days: what a restart has to pick up again.
+func (s *Store) OpenAsks(ctx context.Context) ([]*Message, error) {
+	return s.listMessages(ctx, `SELECT `+msgCols+` FROM messages WHERE `+botmsgWhere+`
+		AND data->>'status' IN ('sent','working') AND data ? 'ask' AND bot_id::text = data->>'to'
+		AND created_at > now() - interval '2 days' ORDER BY created_at`)
+}
+
+// UnjoinedRounds returns the rounds whose answers never went back to the
+// bot that asked, from the last two days.
+func (s *Store) UnjoinedRounds(ctx context.Context) ([]string, error) {
+	rows, err := s.DB.Query(ctx, `SELECT DISTINCT data->>'round' FROM messages WHERE `+botmsgWhere+`
+		AND data ? 'round' AND bot_id::text = data->>'from' AND coalesce(data->>'joined','') <> 'true'
+		AND created_at > now() - interval '2 days'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ClearChat deletes one person's chat with a bot: its messages (cards and
+// exchange cards included), and the model thread and rolling summary
+// behind it, so the bot starts fresh rather than remembering the old
+// conversation unseen. Long-term memory goes too only when memory is set.
+// thread is the chat's agent thread, which also names its memory.
+func (s *Store) ClearChat(ctx context.Context, botID, userID, thread string, memory bool) (int64, error) {
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `DELETE FROM messages WHERE bot_id=$1 AND chat_user_id=$2 AND group_id IS NULL`, botID, userID)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_sessions WHERE id=$1`, thread); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM summaries WHERE thread_id=$1`, thread); err != nil {
+		return 0, err
+	}
+	if memory {
+		if _, err := tx.Exec(ctx, `DELETE FROM agent_memory WHERE ns=$1`, thread); err != nil {
+			return 0, err
+		}
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
 }

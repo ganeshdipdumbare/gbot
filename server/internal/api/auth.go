@@ -163,5 +163,5 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []models.Model{}
 	}
-	writeJSON(w, 200, map[string]any{"models": list, "ollamaHost": s.Models.OllamaHost})
+	writeJSON(w, 200, map[string]any{"models": models.MarkBest(list), "ollamaHost": s.Models.OllamaHost})
 }

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { askToNotify, notify } from "./notify";
-import { api, type Bot, type ComputerStatus, type Group, type Message, type Model, type Presence, type User } from "./api";
+import { api, type Bot, type ComputerStatus, type Group, type Message, type Model, type Presence, type QueueItem, type User } from "./api";
 
 // A chat key is a bot id (its own chat) or "g:<group id>".
 export type ChatKey = string;
@@ -20,13 +20,14 @@ export interface State {
   loaded: boolean;                       // first roster load finished
   unread: Record<ChatKey, number>;       // new replies in chats you're not looking at
   hasMore: Record<ChatKey, boolean>;     // older messages exist on the server
+  queue: Record<ChatKey, QueueItem[]>;   // messages waiting for a bot
 }
 
 function savedActive() {
   try { return localStorage.getItem("gbot.active"); } catch { return null; }
 }
 
-let state: State = { me: null, bots: [], groups: [], presence: {}, computers: {}, messages: {}, activeId: savedActive(), models: null, connected: false, loaded: false, unread: {}, hasMore: {} };
+let state: State = { me: null, bots: [], groups: [], presence: {}, computers: {}, messages: {}, activeId: savedActive(), models: null, connected: false, loaded: false, unread: {}, hasMore: {}, queue: {} };
 const listeners = new Set<() => void>();
 
 export function set(fn: (s: State) => Partial<State>) {
@@ -98,11 +99,27 @@ export function patchMessage(k: ChatKey, id: string, fn: (m: Message) => Message
   });
 }
 
+// When each bot's status last changed through a live event. A bot list
+// fetched before that moment carries an older status and must not replace
+// it, or a bot that has finished looks busy until its next change.
+const presenceAt: Record<string, number> = {};
+
+function freshPresence(snapshot: Record<string, Presence>, current: Record<string, Presence>, since: number) {
+  const out = { ...snapshot };
+  for (const id of Object.keys(presenceAt)) {
+    if (presenceAt[id] < since) continue;
+    if (current[id]) out[id] = current[id];
+    else delete out[id];
+  }
+  return out;
+}
+
 export async function loadAll() {
+  const since = Date.now();
   const [{ bots, presence }, { groups }] = await Promise.all([api.bots(), api.groups()]);
   set((s) => {
     const keys = new Set([...bots.map((b) => b.id), ...groups.map((g) => groupKey(g.id))]);
-    return { bots: sortBots(bots), groups: sortGroups(groups), presence, loaded: true, activeId: s.activeId && keys.has(s.activeId) ? s.activeId : bots[0]?.id ?? null };
+    return { bots: sortBots(bots), groups: sortGroups(groups), presence: freshPresence(presence, s.presence, since), loaded: true, activeId: s.activeId && keys.has(s.activeId) ? s.activeId : bots[0]?.id ?? null };
   });
 }
 
@@ -127,6 +144,36 @@ export async function loadOlder(k: ChatKey): Promise<number> {
   return messages.length;
 }
 
+export async function loadQueue(k: ChatKey) {
+  const { items } = isGroupKey(k) ? await api.groupQueue(k.slice(2)) : await api.queue(k);
+  set((s) => ({ queue: { ...s.queue, [k]: items } }));
+}
+
+function setQueue(k: ChatKey, items: QueueItem[]) {
+  set((s) => ({ queue: { ...s.queue, [k]: items } }));
+}
+
+export async function queueAction(k: ChatKey, qid: string, action: "pause" | "resume" | "cancel") {
+  const { items } = await api.queueAction(qid, action);
+  setQueue(k, items);
+}
+
+/** Stops the current reply and drops everything waiting. */
+// A bot's chat was cleared, here or on another device: show it empty.
+export function clearChat(botId: string) {
+  set((s) => ({
+    messages: { ...s.messages, [botId]: [] },
+    queue: { ...s.queue, [botId]: [] },
+    hasMore: { ...s.hasMore, [botId]: false },
+    bots: s.bots.map((b) => (b.id === botId ? { ...b, lastMessage: undefined } : b)),
+  }));
+}
+
+export async function clearQueue(k: ChatKey) {
+  const { items } = isGroupKey(k) ? await api.clearGroupQueue(k.slice(2)) : await api.clearQueue(k);
+  setQueue(k, items);
+}
+
 /** Resends a message that failed to send. */
 export function retry(k: ChatKey, m: Message) {
   set((s) => ({ messages: { ...s.messages, [k]: (s.messages[k] ?? []).filter((x) => x.id !== m.id) } }));
@@ -147,6 +194,7 @@ export async function sendMessage(k: ChatKey, text: string) {
       const has = list.some((m) => m.id === real.id);
       return { messages: { ...s.messages, [k]: has ? list.filter((m) => m.id !== tmp.id) : list.map((m) => (m.id === tmp.id ? real : m)) } };
     });
+    loadQueue(k).catch(() => {});
   } catch (e) {
     patchMessage(k, tmp.id, (m) => ({ ...m, pending: false, data: { failed: true, error: (e as Error).message } }));
     if (!group) set((s) => ({ presence: { ...s.presence, [k]: { state: "idle" } } }));
@@ -159,8 +207,11 @@ type LiveEvent =
   | { type: "delta"; botId: string; groupId?: string; data: { id: string; text: string } }
   | { type: "bot"; botId: string; data: Bot }
   | { type: "bot_removed"; botId: string }
+  | { type: "cleared"; botId: string }
   | { type: "group"; groupId: string; data: Group }
   | { type: "group_removed"; groupId: string }
+  | { type: "queue"; botId?: string; groupId?: string; data: QueueItem[] }
+  | { type: "routine"; botId: string }
   | { type: "computer"; botId: string; data: ComputerStatus };
 
 type Listener = (e: LiveEvent) => void;
@@ -172,6 +223,7 @@ function handle(e: LiveEvent) {
   switch (e.type) {
     case "presence": {
       const prev = get().presence[e.botId]?.state;
+      presenceAt[e.botId] = Date.now();
       set((s) => ({ presence: { ...s.presence, [e.botId]: e.data } }));
       const b = get().bots.find((x) => x.id === e.botId);
       const open = () => set(() => ({ activeId: e.botId }));
@@ -203,11 +255,17 @@ function handle(e: LiveEvent) {
         return { bots, activeId: s.activeId === e.botId ? bots[0]?.id ?? null : s.activeId };
       });
       break;
+    case "cleared":
+      clearChat(e.botId);
+      break;
     case "group":
       upsertGroup(e.data);
       break;
     case "group_removed":
       set((s) => ({ groups: s.groups.filter((g) => g.id !== e.groupId), activeId: s.activeId === groupKey(e.groupId) ? s.bots[0]?.id ?? null : s.activeId }));
+      break;
+    case "queue":
+      set((s) => ({ queue: { ...s.queue, [e.groupId ? groupKey(e.groupId) : e.botId!]: e.data } }));
       break;
     case "computer":
       set((s) => ({ computers: { ...s.computers, [e.botId]: e.data } }));
@@ -217,7 +275,10 @@ function handle(e: LiveEvent) {
 function catchUp() {
   loadAll().catch(() => {});
   const id = get().activeId;
-  if (id) loadMessages(id).catch(() => {});
+  if (id) {
+    loadMessages(id).catch(() => {});
+    loadQueue(id).catch(() => {});
+  }
 }
 
 // Live updates use a server-sent event stream. Some proxies and tunnels

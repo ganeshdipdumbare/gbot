@@ -40,6 +40,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
 }
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 
@@ -55,7 +56,11 @@ body {
 .hairline-r { border-right: 0.5px solid var(--line); }
 .hairline-l { border-left: 0.5px solid var(--line); }
 
-.scroll-soft { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.scroll-soft { scrollbar-width: thin; scrollbar-color: var(--line) transparent; overscroll-behavior: contain; }
+
+/* Menus and hover cards. Keep it quick; the eye should not wait. */
+@keyframes pop-in { from { opacity: 0; transform: translateY(-2px) scale(0.97); } to { opacity: 1; transform: none; } }
+.pop-in { animation: pop-in 0.14s cubic-bezier(0.22, 1, 0.36, 1) both; transform-origin: 50% 0; }
 
 /* New chat entries pop in: 280ms, a touch of overshoot. */
 @keyframes entry-in { from { opacity: 0; transform: translateY(8px) scale(0.97); } to { opacity: 1; transform: none; } }

@@ -3,7 +3,7 @@ import { Gbot, type Look, type Mood } from "@gbot/characters";
 import { api } from "../lib/api";
 import { set } from "../lib/store";
 import { useGaze } from "../lib/hooks";
-import { Button, Input, Label } from "./ui";
+import { Button, Input, Label, PasswordInput } from "./ui";
 
 const crew: { look: Look; seed: string }[] = [
   { look: { shape: "triangle", hue: "coral", eyes: "dot" }, seed: "a" },
@@ -70,7 +70,7 @@ export function Welcome() {
           </div>
           <div>
             <Label hint={signup ? "10+ characters" : undefined}>Password</Label>
-            <Input type="password" required minLength={signup ? 10 : 1} value={password} onChange={(e) => setPassword(e.target.value)}
+            <PasswordInput required minLength={signup ? 10 : 1} value={password} onChange={(e) => setPassword(e.target.value)}
               autoComplete={signup ? "new-password" : "current-password"} className="h-10!" />
           </div>
           {error && <p className="text-[13px] text-danger" role="alert">{error}</p>}

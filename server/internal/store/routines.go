@@ -75,6 +75,16 @@ func (s *Store) UpdateRoutine(ctx context.Context, botID, userID, id string, act
 		WHERE id=$1 AND bot_id=$2 AND user_id=$5 RETURNING `+routineCols, id, botID, active, next, userID))
 }
 
+// UpdateRoutineFields changes the text and schedule of a routine. An
+// empty value keeps the current one.
+func (s *Store) UpdateRoutineFields(ctx context.Context, botID, userID, id, name, prompt, schedule string, next *time.Time) (*Routine, error) {
+	return scanRoutine(s.DB.QueryRow(ctx, `UPDATE routines SET
+		name=COALESCE(NULLIF($4,''),name), prompt=COALESCE(NULLIF($5,''),prompt),
+		schedule=COALESCE(NULLIF($6,''),schedule), next_run_at=COALESCE($7,next_run_at)
+		WHERE id=$1 AND bot_id=$2 AND user_id=$3 RETURNING `+routineCols,
+		id, botID, userID, name, prompt, schedule, next))
+}
+
 func (s *Store) DeleteRoutine(ctx context.Context, botID, userID, id string) error {
 	t, err := s.DB.Exec(ctx, `DELETE FROM routines WHERE id=$1 AND bot_id=$2 AND user_id=$3`, id, botID, userID)
 	if err == nil && t.RowsAffected() == 0 {

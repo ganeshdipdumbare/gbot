@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,11 @@ import (
 )
 
 func (s *Server) routesV2(mux *http.ServeMux) {
+	mux.Handle("GET /api/vault", s.authed(s.listVault))
+	mux.Handle("POST /api/vault", s.authed(s.createVault))
+	mux.Handle("PATCH /api/vault/{id}", s.authed(s.updateVault))
+	mux.Handle("DELETE /api/vault/{id}", s.authed(s.deleteVault))
+
 	mux.Handle("GET /api/settings/rules", s.authed(s.listRules))
 	mux.Handle("PUT /api/settings/rules", s.authed(s.setRule))
 	mux.Handle("POST /api/cards/{id}", s.authed(s.answerCard))
@@ -45,11 +51,19 @@ func (s *Server) routesV2(mux *http.ServeMux) {
 
 	mux.Handle("GET /api/mcp", s.authed(s.listMCP))
 	mux.Handle("POST /api/mcp", s.authed(s.createMCP))
+	mux.Handle("POST /api/mcp/oauth/start", s.authed(s.startMCPOAuth))
+	mux.HandleFunc("GET /api/mcp/oauth/callback", s.mcpOAuthCallback)
 	mux.Handle("PATCH /api/mcp/{id}", s.authed(s.toggleMCP))
 	mux.Handle("DELETE /api/mcp/{id}", s.authed(s.deleteMCP))
 	mux.Handle("GET /api/skills", s.authed(s.listSkills))
 	mux.Handle("POST /api/skills", s.authed(s.saveSkill))
 	mux.Handle("DELETE /api/skills/{id}", s.authed(s.deleteSkill))
+
+	mux.Handle("GET /api/bots/{id}/queue", s.authed(s.botQueue))
+	mux.Handle("POST /api/bots/{id}/queue/clear", s.authed(s.clearBotQueue))
+	mux.Handle("GET /api/groups/{id}/queue", s.authed(s.groupQueue))
+	mux.Handle("POST /api/groups/{id}/queue/clear", s.authed(s.clearGroupQueue))
+	mux.Handle("POST /api/queue/{qid}", s.authed(s.queueAction))
 
 	mux.Handle("GET /api/groups", s.authed(s.listGroups))
 	mux.Handle("POST /api/groups", s.authed(s.createGroup))
@@ -161,15 +175,18 @@ func (s *Server) computerOf(w http.ResponseWriter, r *http.Request) (*store.Bot,
 	if b == nil || !s.needComputer(w) {
 		return nil, computer.Owner{}, false
 	}
-	return b, computer.Owner{Bot: b.ID, User: userFrom(r).ID}, true
+	return b, computer.Owner{Bot: b.ID, User: userFrom(r).ID, Hosts: b.AllowedHosts}, true
 }
 
 func (s *Server) computerStatus(w http.ResponseWriter, r *http.Request) {
-	_, o, ok := s.computerOf(w, r)
+	b, o, ok := s.computerOf(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, 200, s.Computer.Status(r.Context(), o))
+	st := s.Computer.Status(r.Context(), o)
+	// Status repairs an adopted box's owner; refresh after it.
+	s.Runtime.RefreshLive(b.SpaceID, b.ID)
+	writeJSON(w, 200, st)
 }
 
 func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +200,20 @@ func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
 		err = s.Computer.Ensure(r.Context(), o, b.Network)
 	case "stop":
 		s.Computer.Stop(r.Context(), o)
+	case "sleep":
+		// Freeze the screen only once the turn using it has stopped, so
+		// no tool call is left mid-step on a sleeping guest.
+		s.Runtime.Stop(runs.ChatKey(b.ID, userFrom(r).ID))
+		err = s.Computer.Sleep(r.Context(), o)
+		if err == nil {
+			s.Runtime.MarkIdle(b.SpaceID, b.ID)
+		}
+	case "wake":
+		err = s.Computer.Wake(r.Context(), o)
+		if errors.Is(err, computer.ErrNotRunning) {
+			// It was stopped, not asleep; start it fresh.
+			err = s.Computer.Ensure(r.Context(), o, b.Network)
+		}
 	case "control":
 		var body struct {
 			User bool `json:"user"`
@@ -191,6 +222,9 @@ func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if body.User {
+			// A person taking the screen stops the bot's turn, including a
+			// computer-use task that would otherwise fight them for the mouse.
+			s.Runtime.Stop(runs.ChatKey(b.ID, userFrom(r).ID))
 			if err = s.Computer.Ensure(r.Context(), o, b.Network); err == nil {
 				err = s.Computer.TakeControl(o, true)
 			}
@@ -259,21 +293,40 @@ func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=gbotframe")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	// About 6 frames a second: smooth enough to watch and click on,
-	// and each frame is one capture inside the computer.
-	const interval = 160 * time.Millisecond
-	fails := 0
+	// Each frame costs one exec inside the computer, so don't also wait a
+	// long fixed interval; let the capture set the pace. A still screen
+	// sends nothing: the browser keeps the last frame.
+	// Native 1280x800 frames: sharp text matters more than the last few
+	// frames a second. Input batching is what made it feel fast.
+	const interval = 60 * time.Millisecond
+	fails, sent := 0, 0
+	var last []byte
+	lastSent := time.Time{}
 	for {
 		img, err := s.Computer.Screenshot(r.Context(), o)
 		if err == nil {
 			fails = 0
-			if _, err = fmt.Fprintf(w, "--gbotframe\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(img)); err == nil {
-				_, err = w.Write(append(img, '\r', '\n'))
+			same := last != nil && bytes.Equal(last, img)
+			// Send the first two frames even when identical: a multipart
+			// client/proxy needs the next boundary to finish the part.
+			// After that, a still screen gets a 1s heartbeat so a proxy
+			// never holds a lone frame forever.
+			if same && sent >= 2 && time.Since(lastSent) < time.Second {
+				// nothing changed and the heartbeat isn't due
+			} else {
+				if !same {
+					last = append(last[:0], img...)
+				}
+				if _, err = fmt.Fprintf(w, "--gbotframe\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(last)); err == nil {
+					_, err = w.Write(append(last, '\r', '\n'))
+				}
+				if err != nil {
+					return
+				}
+				flusher.Flush()
+				sent++
+				lastSent = time.Now()
 			}
-			if err != nil {
-				return
-			}
-			flusher.Flush()
 		} else if fails++; fails > 30 {
 			return // the computer went away; let the browser stop asking
 		}
@@ -377,6 +430,7 @@ func (s *Server) updateRoutine(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "routine not found")
 		return
 	}
+	s.Routines.Changed(b.ID, userFrom(r).ID)
 	writeJSON(w, 200, viewRoutine(rt, r))
 }
 
@@ -389,6 +443,7 @@ func (s *Server) deleteRoutine(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "routine not found")
 		return
 	}
+	s.Routines.Changed(b.ID, userFrom(r).ID)
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -439,10 +494,11 @@ type mcpView struct {
 	*store.MCPServer
 	Status string   `json:"status"`
 	Tools  []string `json:"tools"`
+	OAuth  bool     `json:"oauth"`
 }
 
 func (s *Server) mcpView(m *store.MCPServer) mcpView {
-	v := mcpView{MCPServer: m, Status: s.Runtime.MCPStatus(m.ID), Tools: s.Runtime.MCPTools(m.ID)}
+	v := mcpView{MCPServer: m, Status: s.Runtime.MCPStatus(m.ID), Tools: s.Runtime.MCPToolLabels(m.ID), OAuth: len(m.OAuth) > 0}
 	if v.Tools == nil {
 		v.Tools = []string{}
 	}

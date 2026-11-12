@@ -16,18 +16,19 @@ type MCPServer struct {
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"createdAt"`
 	Sealed    []byte    `json:"-"` // encrypted headers
+	OAuth     []byte    `json:"-"` // encrypted OAuth tokens
 }
 
 func scanMCP(row pgx.Row) (*MCPServer, error) {
 	m := &MCPServer{}
-	if err := row.Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Sealed, &m.Enabled, &m.CreatedAt); err != nil {
+	if err := row.Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Sealed, &m.OAuth, &m.Enabled, &m.CreatedAt); err != nil {
 		return nil, notFound(err)
 	}
-	m.HasAuth = len(m.Sealed) > 0
+	m.HasAuth = len(m.Sealed) > 0 || len(m.OAuth) > 0
 	return m, nil
 }
 
-const mcpCols = `id, user_id, name, url, headers, enabled, created_at`
+const mcpCols = `id, user_id, name, url, headers, oauth, enabled, created_at`
 
 func (s *Store) collectMCP(ctx context.Context, q string, args ...any) ([]*MCPServer, error) {
 	rows, err := s.DB.Query(ctx, q, args...)
@@ -60,6 +61,11 @@ func (s *Store) CreateMCP(ctx context.Context, userID, name, url string, sealed 
 
 func (s *Store) SetMCPEnabled(ctx context.Context, userID, id string, on bool) (*MCPServer, error) {
 	return scanMCP(s.DB.QueryRow(ctx, `UPDATE mcp_servers SET enabled=$3 WHERE id=$1 AND user_id=$2 RETURNING `+mcpCols, id, userID, on))
+}
+
+// SetMCPOAuth stores sealed tokens after a sign-in or a refresh.
+func (s *Store) SetMCPOAuth(ctx context.Context, userID, id string, sealed []byte) (*MCPServer, error) {
+	return scanMCP(s.DB.QueryRow(ctx, `UPDATE mcp_servers SET oauth=$3 WHERE id=$1 AND user_id=$2 RETURNING `+mcpCols, id, userID, sealed))
 }
 
 func (s *Store) DeleteMCP(ctx context.Context, userID, id string) error {

@@ -15,12 +15,14 @@ import (
 )
 
 type Model struct {
-	ID       string   `json:"id"` // kiln model string, e.g. "ollama:qwen3.5:4b"
+	ID       string   `json:"id"` // model string, e.g. "ollama:lfm3-omni"
 	Label    string   `json:"label"`
 	Provider string   `json:"provider"`
 	Local    bool     `json:"local"`
 	Tools    bool     `json:"tools"`
 	Caps     []string `json:"caps,omitempty"`
+	// Best marks what "best available" picks right now.
+	Best bool `json:"best,omitempty"`
 }
 
 type Catalog struct {
@@ -51,17 +53,6 @@ var paid = []struct {
 	{"openrouter", "OPENROUTER_API_KEY", []string{"openrouter/auto"}},
 }
 
-// PaidProviders returns the paid providers with a key configured.
-func PaidProviders() []string {
-	var out []string
-	for _, p := range paid {
-		if os.Getenv(p.env) != "" {
-			out = append(out, p.provider)
-		}
-	}
-	return out
-}
-
 // List returns available models, local first. Results are cached briefly
 // so the roster and settings stay snappy.
 func (c *Catalog) List(ctx context.Context) []Model {
@@ -76,7 +67,8 @@ func (c *Catalog) List(ctx context.Context) []Model {
 			continue
 		}
 		for _, m := range p.models {
-			out = append(out, Model{ID: p.provider + ":" + m, Label: m, Provider: p.provider, Tools: true})
+			caps := Capabilities(m)
+			out = append(out, Model{ID: p.provider + ":" + m, Label: m, Provider: p.provider, Tools: hasCap(caps, "tools"), Caps: caps})
 		}
 	}
 	c.cached, c.fetched = out, time.Now()
@@ -106,14 +98,21 @@ func (c *Catalog) ollama(ctx context.Context) []Model {
 		name := strings.TrimSuffix(m.Name, ":latest")
 		tools := false
 		chat := len(m.Capabilities) == 0
+		var caps []string
 		for _, cap := range m.Capabilities {
 			tools = tools || cap == "tools"
 			chat = chat || cap == "completion"
+			switch cap {
+			case "tools", "vision":
+				caps = append(caps, cap)
+			case "thinking":
+				caps = append(caps, "reasoning")
+			}
 		}
 		if !chat { // embedding-only models can't chat
 			continue
 		}
-		out = append(out, Model{ID: "ollama:" + name, Label: name, Provider: "ollama", Local: true, Tools: tools, Caps: m.Capabilities})
+		out = append(out, Model{ID: "ollama:" + name, Label: name, Provider: "ollama", Local: true, Tools: tools, Caps: caps})
 	}
 	// Tool-capable models first: they can use memory and other tools.
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Tools && !out[j].Tools })
@@ -129,8 +128,23 @@ func (c *Catalog) ListFor(ctx context.Context, providers []Provider) []Model {
 	out = append(out, base...)
 	for _, p := range providers {
 		for _, m := range p.Models {
-			out = append(out, Model{ID: p.Prefix + ":" + m, Label: m, Provider: p.Name, Local: p.Local, Tools: true})
+			if !IsChat(m) {
+				continue
+			}
+			caps := Capabilities(m)
+			out = append(out, Model{ID: p.Prefix + ":" + m, Label: m, Provider: p.Name, Local: p.Local, Tools: hasCap(caps, "tools"), Caps: caps})
 		}
+	}
+	return out
+}
+
+// MarkBest flags the model "best available" resolves to.
+func MarkBest(list []Model) []Model {
+	best := pick(list, nil)
+	out := make([]Model, len(list))
+	for i, m := range list {
+		m.Best = m.ID == best
+		out[i] = m
 	}
 	return out
 }
@@ -146,12 +160,29 @@ func (c *Catalog) PickFor(ctx context.Context, providers []Provider, want ...str
 	return pick(c.ListFor(ctx, providers), want)
 }
 
+// preferredLocal is the small, image-capable model gbot expects on a
+// machine. Other local models can be far larger than a laptop can hold,
+// so an explicit choice still wins, but "best available" lands here.
+var preferredLocal = []string{"ollama:lfm3-omni", "ollama:lfm-omni"}
+
 func pick(list []Model, want []string) string {
 	for _, w := range want {
 		for _, m := range list {
 			if w != "" && m.ID == w {
 				return w
 			}
+		}
+	}
+	for _, p := range preferredLocal {
+		for _, m := range list {
+			if m.ID == p {
+				return p
+			}
+		}
+	}
+	for _, m := range list {
+		if strings.Contains(m.ID, "lfm") && strings.Contains(m.ID, "omni") {
+			return m.ID
 		}
 	}
 	if len(list) > 0 {
