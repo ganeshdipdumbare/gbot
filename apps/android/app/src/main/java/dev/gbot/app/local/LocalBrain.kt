@@ -305,11 +305,12 @@ class LocalBrain(
                 else -> text
             }
             log("reply ${content.length} chars")
-            // Never show the sentinel itself: it means "nothing to send
-            // back", so say that in words.
-            reply(bot, group, if (isNoReply(content)) "Nothing to add — no reply needed." else content)
-            if (group == null && from != null) passAnswer(bot, from, content, depth)
-            if (group != null && depth < 3) handoff(group, bot, content, depth)
+            // The sentinel is for the machinery, not the chat: a bot with
+            // nothing to say says nothing at all.
+            val said = cleanReply(content)
+            if (said.isNotEmpty()) reply(bot, group, said)
+            if (group == null && from != null) passAnswer(bot, from, said, depth)
+            if (group != null && depth < 3) handoff(group, bot, said, depth)
         } finally {
             browsing.remove(bot.id)
             emitComputer(bot.id, false)
@@ -583,9 +584,9 @@ class LocalBrain(
      * MAX_HOPS.
      */
     private fun passAnswer(bot: Bot, fromId: String, answer: String, depth: Int) {
-        if (!carriesAnswer(answer) || depth >= MAX_HOPS) return
+        if (answer.isEmpty() || depth >= MAX_HOPS) return
         val sender = db.bot(fromId) ?: return
-        deliver(bot, sender, answer.trim(), depth)
+        deliver(bot, sender, answer, depth)
     }
 
     /** A quiet line in the transcript: something happened, no reply needed. */
@@ -687,9 +688,21 @@ class LocalBrain(
 /** What a bot replies when it has nothing to send back. */
 const val NO_REPLY = "NO_REPLY"
 
-/** Whether a bot's answer is the "nothing to say" sentinel rather than a reply. */
-fun isNoReply(reply: String): Boolean =
-    reply.trim().trim(' ', '.', '`', '*').equals(NO_REPLY, ignoreCase = true)
+/**
+ * A reply with the sentinel taken out, so it never reaches the chat. The
+ * marker arrives alone, wrapped in punctuation, or trailing a real answer
+ * ("Here's the joke. NO_REPLY"); all three end up as just the answer, or
+ * as nothing at all.
+ */
+fun cleanReply(reply: String): String {
+    val out = reply
+        .replace(Regex("""(?i)[(\["'`*]*\bNO[ _-]?REPLY\b[)\]"'`*.,:;!]*"""), " ")
+        .replace(Regex("[ \\t]+\\n"), "\n")
+        .replace(Regex("\\n{3,}"), "\n\n")
+        .replace(Regex("[ \\t]{2,}"), " ")
+        .trim()
+    return if (out == "(no answer)") "" else out
+}
 
 /**
  * The data for one bot-to-bot message. The chat UI reads exactly these keys
@@ -703,12 +716,6 @@ fun exchangeData(from: String, to: String, message: String): JsonObject = buildJ
     put("to", to)
     put("message", message)
     put("status", "sent")
-}
-
-/** Whether a bot's reply is worth carrying back to the bot that wrote first. */
-fun carriesAnswer(reply: String): Boolean {
-    val body = reply.trim()
-    return body.isNotEmpty() && body != "(no answer)" && !isNoReply(body)
 }
 
 sealed class BrainModel {

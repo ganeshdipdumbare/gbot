@@ -207,20 +207,16 @@ class LocalTest {
     // ---- A bot answering a bot: what is worth carrying back ----
 
     @Test
-    fun `only a real answer is carried back to the sender`() {
-        assertTrue(dev.gbot.app.local.carriesAnswer("The report is ready."))
-        assertFalse(dev.gbot.app.local.carriesAnswer("NO_REPLY"))
-        assertFalse(dev.gbot.app.local.carriesAnswer(" `NO_REPLY`. "))
-        assertFalse(dev.gbot.app.local.carriesAnswer("(no answer)"))
-        assertFalse(dev.gbot.app.local.carriesAnswer("   "))
-    }
-
-    @Test
-    fun `the sentinel is recognised, so it is never shown as a reply`() {
-        assertTrue(dev.gbot.app.local.isNoReply("NO_REPLY"))
-        assertTrue(dev.gbot.app.local.isNoReply(" `NO_REPLY`. "))
-        assertTrue(dev.gbot.app.local.isNoReply("no_reply"))
-        assertFalse(dev.gbot.app.local.isNoReply("Here is the joke."))
+    fun `the sentinel never reaches the chat`() {
+        assertEquals("", dev.gbot.app.local.cleanReply("NO_REPLY"))
+        assertEquals("", dev.gbot.app.local.cleanReply(" (NO_REPLY) "))
+        assertEquals("", dev.gbot.app.local.cleanReply("`NO_REPLY`."))
+        assertEquals("", dev.gbot.app.local.cleanReply("(no answer)"))
+        assertEquals("", dev.gbot.app.local.cleanReply("   "))
+        // A real answer that trails the marker keeps the answer, loses the marker.
+        assertEquals("Here is the joke.", dev.gbot.app.local.cleanReply("Here is the joke. NO_REPLY"))
+        assertEquals("Done.", dev.gbot.app.local.cleanReply("Done.\n\nNO_REPLY\n"))
+        assertEquals("Nothing to add.", dev.gbot.app.local.cleanReply("Nothing to add. (no_reply)"))
     }
 
     // ---- The exchange card is what the chat UI opens on tap ----
