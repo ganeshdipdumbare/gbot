@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import dev.gbot.app.live.Alerts
+import dev.gbot.app.net.Bot
 import dev.gbot.app.net.Skill
 import dev.gbot.app.net.VaultSecret
 import kotlinx.serialization.json.JsonObject
@@ -35,6 +36,9 @@ class LocalTools(
     private val skills: List<Skill> = emptyList(),
     private val secret: (String) -> Pair<VaultSecret, String>? = { null },
     private val schedule: suspend (String, String, String) -> String = { _, _, _ -> "Scheduling isn't available." },
+    /** The person's other bots, which this one may message. */
+    private val peers: List<Bot> = emptyList(),
+    private val messageBot: suspend (Bot, String) -> String = { _, _ -> "Messaging isn't available." },
 ) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -109,6 +113,17 @@ class LocalTools(
                 "submit", "boolean", "true to press Enter after typing", required = listOf("name", "id"),
             ),
         ),
+    ) + if (peers.isEmpty()) emptyList() else listOf(
+        ToolSchema(
+            "message_bot",
+            "Send a message to another of the person's bots: " + peers.joinToString(", ") { it.name } +
+                ". It does not wait for an answer; they reply in their own chat. " +
+                "Use it when the person asks you to tell, ask or work with another bot.",
+            params(
+                "to", "string", "The bot's name",
+                "message", "string", "What to tell or ask them, written to them", required = listOf("to", "message"),
+            ),
+        ),
     )
 
     /** Tools that change something out in the world, so they ask first. */
@@ -124,6 +139,7 @@ class LocalTools(
         "use_skill" -> "Load the ${args.str("name")} skill"
         "vault_type" -> "Type the ${args.str("name")} secret into “${lastSnapshotLabel(args.int("id"))}”"
         "routine_create" -> "Schedule “${args.str("name")}”: ${args.str("schedule")} — ${args.str("prompt").take(120)}"
+        "message_bot" -> "Message ${args.str("to")}: ${args.str("message").take(120)}"
         else -> name.replace('_', ' ')
     }
 
@@ -133,6 +149,15 @@ class LocalTools(
     private fun lastSnapshotLabel(id: Int): String = lastLabels[id] ?: "#$id"
 
     suspend fun run(name: String, args: JsonObject): String = when (name) {
+        "message_bot" -> {
+            val want = args.str("to").removePrefix("@").trim()
+            val target = peers.find { it.name.equals(want, ignoreCase = true) }
+            when {
+                target != null -> messageBot(target, args.str("message"))
+                peers.isEmpty() -> "There are no other bots to message."
+                else -> "No bot named “$want”. You can message " + peers.joinToString(", ") { it.name } + "."
+            }
+        }
         "browser_open" -> {
             val out = browser.open(args.str("url"))
             noteLabels(out)

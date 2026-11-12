@@ -154,7 +154,7 @@ class LocalApi(
     // Bots
 
     override suspend fun bots(): BotsResp = withContext(Dispatchers.IO) {
-        BotsResp(bots = db.bots().map { it.copy(lastMessage = db.lastMessage(it.id)) }, presence = emptyMap())
+        BotsResp(bots = db.bots().map { it.copy(lastMessage = db.lastMessage(it.id)) }, presence = brain.presenceSnapshot())
     }
 
     override suspend fun createBot(name: String, title: String, look: Look): Bot = withContext(Dispatchers.IO) {

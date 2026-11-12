@@ -125,7 +125,7 @@ class LocalBrain(
         emitQueue(chat)
     }
 
-    private fun start(bot: Bot, prompt: String, group: Group?, depth: Int) {
+    private fun start(bot: Bot, prompt: String, group: Group?, depth: Int, from: String? = null) {
         // A new message keeps the model warm.
         idleJob?.cancel()
         idleJob = null
@@ -138,7 +138,7 @@ class LocalBrain(
             runLock.withLock {
                 while (qid in paused && isActive) delay(300)
                 doneQueued(chat, qid)
-                runCatching { run(bot, prompt, group, depth) }
+                runCatching { run(bot, prompt, group, depth, from) }
                     .onFailure {
                         if (it is CancellationException) {
                             // Stop is silent; any other cancellation is a fault.
@@ -245,18 +245,25 @@ class LocalBrain(
 
     fun cancelGroup(groupId: String) = cancel("g:$groupId")
 
-    private suspend fun run(bot: Bot, prompt: String, group: Group?, depth: Int) {
+    private suspend fun run(bot: Bot, prompt: String, group: Group?, depth: Int, from: String? = null) {
         val model = api.resolveModel(bot.model)
         log("run bot=${bot.name} model=${bot.model.ifBlank { "default" }} group=${group?.id ?: "-"}")
         emitPresence(bot.id, group, "thinking")
         try {
             fun stage(detail: String) = emitPresence(bot.id, group, "working", detail)
 
+            // In a group the teammates are @mentioned instead, and a bot
+            // answering a message can't message the sender back: that would
+            // start a second exchange rather than answer the first.
+            val peers = if (group != null || depth >= MAX_HOPS) emptyList()
+            else db.bots().filter { it.id != bot.id && it.id != from }
             val tools = LocalTools(
                 ctx, db, browser, bot.id,
                 skills = api.localSkills(),
                 secret = { name -> api.secret(name) },
                 schedule = { name, p, cron -> api.scheduleFromChat(bot.id, name, p, cron) },
+                peers = peers,
+                messageBot = { target, text -> messageBot(bot, group, target, text, depth) },
             )
             val mcpTools = withTimeoutOrNull(MCP_TIMEOUT_MS) { api.mcpSchemas() }.orEmpty()
             val history = historyFor(bot, group, prompt)
@@ -529,6 +536,35 @@ class LocalBrain(
         }
     }
 
+    /**
+     * One bot messaging another, without waiting. The person sees that it
+     * happened in this chat; the message lands in the other bot's own chat
+     * and starts its run, which queues behind this one.
+     */
+    private fun messageBot(from: Bot, group: Group?, to: Bot, text: String, depth: Int): String {
+        val body = text.trim()
+        if (body.isEmpty()) return "Write something to send."
+        event(from, group, "Messaged **${to.name}**")
+        val m = GMessage(
+            id = "m_" + UUID.randomUUID().toString().take(8), botId = to.id, role = "user",
+            content = "${from.name}: $body", createdAt = now(),
+        )
+        runCatching { db.putMessage(m) }.onFailure { log("could not save the message", it) }
+        runCatching { emit("message", to.id, json.encodeToJsonElement(m)) }
+        start(to, "${from.name} asks: $body", null, depth + 1, from = from.id)
+        return "Sent to ${to.name}. They reply in their own chat, so don't wait for an answer here."
+    }
+
+    /** A quiet line in the transcript: something happened, no reply needed. */
+    private fun event(bot: Bot, group: Group?, content: String) {
+        val m = GMessage(
+            id = "m_" + UUID.randomUUID().toString().take(8), botId = bot.id, groupId = group?.id, role = "event",
+            content = content, createdAt = now(),
+        )
+        runCatching { db.putMessage(m) }.onFailure { log("could not save the event", it) }
+        runCatching { emit("message", bot.id, json.encodeToJsonElement(m), group?.id) }
+    }
+
     private fun report(bot: Bot, group: Group?, e: Throwable) {
         log("run failed", e)
         reply(bot, group, "I couldn't finish: ${e.message ?: e::class.simpleName}")
@@ -547,8 +583,18 @@ class LocalBrain(
         }.onFailure { log("could not show the reply", it) }
     }
 
-    private fun emitPresence(botId: String, group: Group?, state: String, detail: String? = null) =
-        emit("presence", botId, json.encodeToJsonElement(Presence(state = state, detail = detail)), group?.id)
+    // What each busy bot is doing. Without this a reload has nothing to
+    // report and every bot looks idle, however hard it is working.
+    private val presence = java.util.concurrent.ConcurrentHashMap<String, Presence>()
+
+    /** The busy bots, for a fresh bot list. */
+    fun presenceSnapshot(): Map<String, Presence> = presence.toMap()
+
+    private fun emitPresence(botId: String, group: Group?, state: String, detail: String? = null) {
+        val p = Presence(state = state, detail = detail)
+        if (state == "idle") presence.remove(botId) else presence[botId] = p
+        emit("presence", botId, json.encodeToJsonElement(p), group?.id)
+    }
 
     private fun emitComputer(botId: String, on: Boolean) {
         events.handle(buildJsonObject {
@@ -596,6 +642,9 @@ class LocalBrain(
         const val TAG = "gbot-local"
         const val MAX_STEPS = 8
         const val RUN_TIMEOUT_MS = 5 * 60 * 1000L
+
+        /** How far a chain of bots messaging each other may go. */
+        const val MAX_HOPS = 3
         const val PROVIDER_TIMEOUT_MS = 120_000L
         const val MCP_TIMEOUT_MS = 8_000L
     }

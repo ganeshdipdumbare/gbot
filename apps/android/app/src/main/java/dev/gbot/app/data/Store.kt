@@ -147,12 +147,7 @@ class Store(private var api: Api, context: Context) {
         val b = api.bots()
         val g = api.groups()
         set { s ->
-            val fresh = b.presence.toMutableMap()
-            for ((id, at) in presenceAt) {
-                if (at < since) continue
-                val cur = s.presence[id]
-                if (cur != null) fresh[id] = cur else fresh.remove(id)
-            }
+            val fresh = mergePresence(b.presence, s.presence, presenceAt, since)
             s.copy(bots = sortBots(b.bots), groups = sortGroups(g.groups), presence = fresh, loaded = true)
         }
     }
@@ -212,7 +207,7 @@ class Store(private var api: Api, context: Context) {
             role = "user", content = text, createdAt = Instant.now().toString(), pending = true,
         )
         set { s -> s.copy(messages = s.messages + (k to (s.messages[k].orEmpty() + tmp))) }
-        if (group == null) set { s -> s.copy(presence = s.presence + (k to (s.presence[k] ?: Presence()).copy(state = "thinking"))) }
+        if (group == null) setPresence(k, (now.presence[k] ?: Presence()).copy(state = "thinking"))
         touchLast(tmp)
         try {
             val real = if (group != null) api.sendGroup(group, text) else api.send(k, text)
@@ -226,9 +221,44 @@ class Store(private var api: Api, context: Context) {
             patchMessage(k, tmp.id) {
                 it.copy(pending = false, data = buildJsonObject { put("failed", true); put("error", JsonPrimitive(e.message ?: "Couldn't send")) })
             }
-            if (group == null) set { s -> s.copy(presence = s.presence + (k to Presence("idle"))) }
+            if (group == null) setPresence(k, Presence("idle"))
         }
     }
 
     companion object { const val PAGE = 100 }
+}
+
+/** How long a busy status stands on its own before a bot list that does
+ *  not mention the bot is allowed to clear it. */
+const val PRESENCE_GRACE = 90_000L
+
+/**
+ * What a freshly fetched bot list should leave on screen.
+ *
+ * The list is authoritative about bots it mentions, but silence in it is
+ * not the same as "idle": a run that is still queued has no status yet,
+ * and the on-device brain answers with whatever it is doing right now.
+ * Dropping a busy bot on every refresh is what made "Thinking…" vanish
+ * part-way through an answer.
+ */
+fun mergePresence(
+    server: Map<String, Presence>,
+    local: Map<String, Presence>,
+    changedAt: Map<String, Long>,
+    since: Long,
+): Map<String, Presence> {
+    val out = server.toMutableMap()
+    for ((id, at) in changedAt) {
+        val cur = local[id]
+        if (at >= since) {
+            // It changed while the list was in flight, so what we already
+            // hold is newer than what came back.
+            if (cur != null) out[id] = cur else out.remove(id)
+            continue
+        }
+        if (cur != null && cur.state != "idle" && !server.containsKey(id) && since - at < PRESENCE_GRACE) {
+            out[id] = cur
+        }
+    }
+    return out
 }

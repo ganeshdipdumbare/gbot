@@ -97,4 +97,71 @@ class LocalTest {
         assertTrue(q.startsWith("\""))
         assertFalse(q.contains("\n"))
     }
+
+    // ---- A refresh must not make a busy bot look idle ----
+
+    private fun busy(detail: String? = null) = dev.gbot.app.net.Presence(state = "working", detail = detail)
+
+    @Test
+    fun `a bot list that omits a busy bot leaves it alone`() {
+        // The on-device brain reports no presence at all, and a queued
+        // run has none on the server yet.
+        val now = 1_000_000L
+        val out = dev.gbot.app.data.mergePresence(
+            server = emptyMap(),
+            local = mapOf("b1" to busy("Reading the diff")),
+            changedAt = mapOf("b1" to now - 5_000),
+            since = now,
+        )
+        assertEquals("working", out["b1"]?.state)
+        assertEquals("Reading the diff", out["b1"]?.detail)
+    }
+
+    @Test
+    fun `the list wins for a bot it does mention`() {
+        val now = 1_000_000L
+        val out = dev.gbot.app.data.mergePresence(
+            server = mapOf("b1" to dev.gbot.app.net.Presence(state = "idle")),
+            local = mapOf("b1" to busy()),
+            changedAt = mapOf("b1" to now - 5_000),
+            since = now,
+        )
+        assertEquals("idle", out["b1"]?.state)
+    }
+
+    @Test
+    fun `a status that changed mid-fetch survives`() {
+        val now = 1_000_000L
+        val out = dev.gbot.app.data.mergePresence(
+            server = mapOf("b1" to dev.gbot.app.net.Presence(state = "idle")),
+            local = mapOf("b1" to busy()),
+            changedAt = mapOf("b1" to now + 10),
+            since = now,
+        )
+        assertEquals("working", out["b1"]?.state)
+    }
+
+    @Test
+    fun `a stale busy status is eventually let go`() {
+        val now = 1_000_000L
+        val out = dev.gbot.app.data.mergePresence(
+            server = emptyMap(),
+            local = mapOf("b1" to busy()),
+            changedAt = mapOf("b1" to now - dev.gbot.app.data.PRESENCE_GRACE - 1),
+            since = now,
+        )
+        assertEquals(null, out["b1"])
+    }
+
+    @Test
+    fun `going idle locally clears it even if the list still says busy`() {
+        val now = 1_000_000L
+        val out = dev.gbot.app.data.mergePresence(
+            server = mapOf("b1" to busy()),
+            local = emptyMap(),
+            changedAt = mapOf("b1" to now + 10),
+            since = now,
+        )
+        assertEquals(null, out["b1"])
+    }
 }
