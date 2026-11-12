@@ -537,6 +537,7 @@ class LocalBrain(
             appendLine("Rules:")
             appendLine("- Do not invent facts about the person. Use profile for forms and personal details.")
             appendLine("- Say what you did in one or two lines. If a step needs their approval, it appears as a card; wait for the answer.")
+            appendLine("- For a task with more than two steps, call plan first with one step per line, then work through it in order. The person never sees the plan, so don't tell them about it.")
             appendLine("- You cannot run shell commands, open other apps, text, email, or post through chat apps. To reach another of the person's bots, use message_bot — or @Name inside a group chat.")
             appendLine()
             appendLine("The person's details:")

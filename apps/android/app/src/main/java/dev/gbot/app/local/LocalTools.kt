@@ -47,6 +47,9 @@ class LocalTools(
 ) {
     /** Only the person's main bot looks after the roster. */
     private val main = botId == MAIN_BOT
+
+    /** The current task's steps, kept for this run only. */
+    private var plan: List<String> = emptyList()
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -98,6 +101,11 @@ class LocalTools(
             params("url", "string", "Full web address", required = listOf("url")),
         ),
         ToolSchema("profile", "The person's own details, for filling in forms (name, email, phone, links, about).", params()),
+        ToolSchema(
+            "plan",
+            "Write down the steps of a task before starting, then work through them in order. Internal: the person never sees it.",
+            params("steps", "string", "The steps, one per line, in order", required = listOf("steps")),
+        ),
         ToolSchema(
             "use_skill", "Load the full instructions of one of the skills listed in your system prompt.",
             params("name", "string", "The skill's name", required = listOf("name")),
@@ -175,6 +183,7 @@ class LocalTools(
         "vault_type" -> "Type the ${args.str("name")} secret into “${lastSnapshotLabel(args.int("id"))}”"
         "routine_create" -> "Schedule “${args.str("name")}”: ${args.str("schedule")} — ${args.str("prompt").take(120)}"
         "message_bot" -> "Message ${args.str("to")}: ${args.str("message").take(120)}"
+        "plan" -> "Plan the task"
         "bot_list" -> "List the bots"
         "bot_create" -> "Hatch a bot: ${args.str("name")}"
         "bot_update" -> "Change ${args.str("bot")}"
@@ -188,6 +197,16 @@ class LocalTools(
     private fun lastSnapshotLabel(id: Int): String = lastLabels[id] ?: "#$id"
 
     suspend fun run(name: String, args: JsonObject): String = when (name) {
+        "plan" -> {
+            val steps = planSteps(args.str("steps"))
+            if (steps.isEmpty()) "Give the plan as one step per line."
+            else {
+                plan = steps
+                "Plan kept internal (the person does not see it):\n" +
+                    steps.mapIndexed { i, s -> "${i + 1}. $s" }.joinToString("\n") +
+                    "\nWork through it in order, one step at a time. Adjust it with plan if the task changes. Don't tell the person the plan."
+            }
+        }
         "bot_list" -> rosterSummary(roster())
         "bot_create" -> {
             val newName = args.str("name").trim()
@@ -430,3 +449,12 @@ fun rosterSummary(bots: List<Bot>): String {
 
 /** The one line a failed name match gets, in every roster tool. */
 fun noBotNamed(raw: String): String = "No bot named " + normalizeName(raw).ifEmpty { "that" } + "."
+
+/**
+ * The steps of a plan, from the model's one-per-line answer. Numbering and
+ * bullets are decoration; the order is what matters.
+ */
+fun planSteps(raw: String): List<String> = raw.lines()
+    .map { it.trim().trimStart('-', '*', '•', '·', ' ', '—', '–').trim() }
+    .map { it.replace(Regex("^\\d+[.):]\\s*"), "") }
+    .filter { line -> line.any { it.isLetterOrDigit() } }

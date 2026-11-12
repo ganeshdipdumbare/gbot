@@ -222,6 +222,15 @@ class LocalTest {
     // ---- The exchange card is what the chat UI opens on tap ----
 
     @Test
+    fun `a plan is read one step per line`() {
+        assertEquals(
+            listOf("Find the flights", "Compare prices", "Book the cheapest"),
+            dev.gbot.app.local.planSteps("1. Find the flights\n2) Compare prices\n- Book the cheapest"),
+        )
+        assertEquals(emptyList<String>(), dev.gbot.app.local.planSteps("  \n — \n"))
+    }
+
+    @Test
     fun `the main bot wears the app mark`() {
         val t = dev.gbot.app.ui.resolveLook(dev.gbot.app.local.MAIN_LOOK, "any-seed")
         assertEquals("circle", t.shape)
