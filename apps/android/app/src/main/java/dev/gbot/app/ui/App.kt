@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -124,10 +125,12 @@ fun AppRoot(activity: MainActivity) {
     Box(Modifier.fillMaxSize().background(g.bg)) {
         NavHost(
             nav, start,
-            enterTransition = { slideInHorizontally(tween(220)) { it / 8 } + fadeIn(tween(220)) },
-            exitTransition = { fadeOut(tween(160)) },
-            popEnterTransition = { fadeIn(tween(200)) },
-            popExitTransition = { slideOutHorizontally(tween(200)) { it / 8 } + fadeOut(tween(180)) },
+            // Short and decisive: the screen is there before the motion
+            // has finished explaining itself.
+            enterTransition = { slideInHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeIn(tween(140)) },
+            exitTransition = { fadeOut(tween(110)) },
+            popEnterTransition = { fadeIn(tween(140)) },
+            popExitTransition = { slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeOut(tween(150)) },
         ) {
             composable(R.SERVER) { ServerScreen(
                 onDone = {

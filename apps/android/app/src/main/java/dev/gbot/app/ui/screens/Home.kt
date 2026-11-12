@@ -1,5 +1,10 @@
 package dev.gbot.app.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -158,13 +163,19 @@ fun HomeScreen(nav: NavHostController) {
                     Text("Nothing matches “$q”.", style = T.small, color = g.ink2, modifier = Modifier.fillMaxWidth().padding(top = 32.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
                 items(bots, key = { it.id }) { b ->
-                    BotRow(b, s.presence[b.id], s.computers[b.id]?.state == "on", s.unread[b.id] ?: 0, onClick = { open(b.id) }, onLong = { menu = b })
+                    // A bot that starts working moves up the roster; let it
+                    // travel instead of jumping.
+                    Box(Modifier.animateItem()) {
+                        BotRow(b, s.presence[b.id], s.computers[b.id]?.state == "on", s.unread[b.id] ?: 0, onClick = { open(b.id) }, onLong = { menu = b })
+                    }
                 }
                 if (groups.isNotEmpty()) item("h:groups") {
                     Text("Groups", style = T.tiny, color = g.ink3, modifier = Modifier.padding(start = 10.dp, top = 16.dp, bottom = 4.dp))
                 }
                 items(groups, key = { "g:" + it.id }) { gr ->
-                    GroupRow(gr, s.bots, s.presence, s.unread[groupKey(gr.id)] ?: 0, onClick = { open(groupKey(gr.id)) }, onLong = { nav.navigate(R.group(gr.id)) })
+                    Box(Modifier.animateItem()) {
+                        GroupRow(gr, s.bots, s.presence, s.unread[groupKey(gr.id)] ?: 0, onClick = { open(groupKey(gr.id)) }, onLong = { nav.navigate(R.group(gr.id)) })
+                    }
                 }
             }
         }
@@ -292,7 +303,14 @@ private fun RowShell(onClick: () -> Unit, onLong: () -> Unit, avatar: @Composabl
             }
             Spacer(Modifier.height(1.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(line, style = T.small.copy(fontSize = 13.5.sp, fontWeight = if (bold) FontWeight.Medium else null), color = lineColor, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                AnimatedContent(
+                    line,
+                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    label = "status",
+                    modifier = Modifier.weight(1f),
+                ) { text ->
+                    Text(text, style = T.small.copy(fontSize = 13.5.sp, fontWeight = if (bold) FontWeight.Medium else null), color = lineColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 if (unread > 0) { Spacer(Modifier.width(8.dp)); Badge(unread) }
             }
         }
