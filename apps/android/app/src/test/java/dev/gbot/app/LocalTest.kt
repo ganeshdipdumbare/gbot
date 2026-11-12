@@ -256,6 +256,17 @@ class LocalTest {
     }
 
     @Test
+    fun `a plan is trimmed and kept out of the chat`() {
+        val raw = "\n WANT: the flights\n\nCONTEXT: none\nSTEPS: 1) search\n2) compare\n3) book\n4) confirm\n"
+        val out = dev.gbot.app.local.cleanPlan(raw)
+        assertEquals(6, out.lines().size)
+        assertTrue(out.startsWith("WANT: the flights"))
+        assertEquals("", dev.gbot.app.local.cleanPlan("  \n\n"))
+        assertEquals("", dev.gbot.app.local.planBlock(""))
+        assertTrue(dev.gbot.app.local.planBlock(out).contains(out))
+    }
+
+    @Test
     fun `a plan is read one step per line`() {
         assertEquals(
             listOf("Find the flights", "Compare prices", "Book the cheapest"),

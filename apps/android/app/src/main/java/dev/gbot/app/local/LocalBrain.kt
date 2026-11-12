@@ -271,7 +271,22 @@ class LocalBrain(
             )
             val mcpTools = withTimeoutOrNull(MCP_TIMEOUT_MS) { api.mcpSchemas() }.orEmpty()
             val history = historyFor(bot, group, prompt)
-            val system = systemPrompt(bot, group, peers)
+
+            // Every message, from the person or from another bot, starts
+            // with an internal reading of it: what is being asked and how
+            // to go about it. Time-boxed, and skipped quietly if the model
+            // will not produce one.
+            stage("Planning")
+            val plan = withTimeoutOrNull(PLAN_TIMEOUT_MS) {
+                when (model) {
+                    is BrainModel.Local -> planLocal(model.file, bot, group, prompt, history)
+                    is BrainModel.Remote -> planRemote(model, bot, group, prompt, history)
+                    null -> null
+                }
+            }.let { cleanPlan(it.orEmpty()) }
+            if (plan.isNotEmpty()) log("plan ${plan.length} chars")
+
+            val system = systemPrompt(bot, group, peers) + planBlock(plan)
 
             val text = withTimeoutOrNull(RUN_TIMEOUT_MS) {
                 when (model) {
@@ -329,6 +344,77 @@ class LocalBrain(
             }
         }
     }
+
+    /** What the bot is about to be asked, read before it answers. */
+    private fun planSystem(bot: Bot, group: Group?): String = buildString {
+        append("You are ${bot.name}.")
+        if (group != null) append(" You are in the group chat “${group.name}”.")
+        append(
+            " One message is about to arrive. Read it in context and decide how you will handle it, " +
+                "but do not answer it yet.",
+        )
+    }
+
+    /** The one message plus just enough of what came before it. */
+    private fun planAsk(prompt: String, history: List<GMessage>, group: Group?, bot: Bot): String = buildString {
+        val before = history.takeLast(4)
+        if (before.isNotEmpty()) {
+            appendLine("Just before this:")
+            for (m in before) {
+                val who = when {
+                    m.role == "user" -> "The person"
+                    group != null && m.botId != null && m.botId != bot.id -> db.bot(m.botId)?.name ?: "A teammate"
+                    else -> "You"
+                }
+                appendLine("- $who: ${m.content.take(220)}")
+            }
+            appendLine()
+        }
+        appendLine("The message to handle:")
+        appendLine(prompt.take(2000))
+        appendLine()
+        appendLine("Write only the plan, at most 5 short lines, in this shape:")
+        appendLine("WANT: what they actually want, in one line")
+        appendLine("CONTEXT: what matters from before, or nothing")
+        appendLine("STEPS: 1) ... 2) ...")
+        append("Do not answer the message, do not greet, and add no other lines.")
+    }
+
+    private suspend fun planLocal(
+        file: File,
+        bot: Bot,
+        group: Group?,
+        prompt: String,
+        history: List<GMessage>,
+    ): String = withContext(Dispatchers.IO) {
+        val e = engine(file)
+        val config = ConversationConfig(
+            systemInstruction = Contents.of(planSystem(bot, group)),
+            initialMessages = emptyList(),
+            tools = emptyList(),
+            automaticToolCalling = false,
+            samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.3, seed = 0),
+            maxOutputToken = 220,
+        )
+        e.createConversation(config).use { conv ->
+            val sb = StringBuilder()
+            conv.sendMessageAsync(Message.user(planAsk(prompt, history, group, bot))).collect { sb.append(textOf(it)) }
+            sb.toString()
+        }
+    }
+
+    private suspend fun planRemote(
+        model: BrainModel.Remote,
+        bot: Bot,
+        group: Group?,
+        prompt: String,
+        history: List<GMessage>,
+    ): String = api.providers.run(
+        model.provider, model.name, planSystem(bot, group), emptyList(),
+        planAsk(prompt, history, group, bot), emptyList(),
+        onText = {},
+        execute = { "" },
+    )
 
     private suspend fun runLocal(
         file: File,
@@ -539,7 +625,7 @@ class LocalBrain(
             appendLine("Rules:")
             appendLine("- Do not invent facts about the person. Use profile for forms and personal details.")
             appendLine("- Say what you did in one or two lines. If a step needs their approval, it appears as a card; wait for the answer.")
-            appendLine("- For a task with more than two steps, call plan first with one step per line, then work through it in order. The person never sees the plan, so don't tell them about it.")
+            appendLine("- Every message arrives with an internal plan. Follow it. If none came, or the task turns out different, call plan first with one step per line. The person never sees a plan, so don't tell them about it.")
             appendLine("- Use remember for durable facts about the person: preferences, names, decisions, how they like things. Use forget when they correct you or ask you to.")
             appendLine("- You cannot run shell commands, open other apps, text, email, or post through chat apps. To reach another of the person's bots, use message_bot — or @Name inside a group chat.")
             appendLine()
@@ -686,11 +772,29 @@ class LocalBrain(
         const val MAX_HOPS = 3
         const val PROVIDER_TIMEOUT_MS = 120_000L
         const val MCP_TIMEOUT_MS = 8_000L
+
+        /** A plan that takes longer than this is not worth blocking the answer. */
+        const val PLAN_TIMEOUT_MS = 45_000L
     }
 }
 
 /** What a bot replies when it has nothing to send back. */
 const val NO_REPLY = "NO_REPLY"
+
+/** The plan with blank lines dropped and its length bounded. */
+fun cleanPlan(raw: String): String = raw.lines()
+    .map { it.trim() }
+    .filter { it.isNotEmpty() }
+    .take(6)
+    .joinToString("\n")
+    .take(700)
+
+/** How the plan reaches the run: in the system prompt, never the chat. */
+fun planBlock(plan: String): String = if (plan.isEmpty()) "" else buildString {
+    append("\n\nYour plan for this message (internal; never show it or mention it):\n")
+    append(plan)
+    append("\nFollow it, one step at a time, and use the plan tool if it has to change.")
+}
 
 /**
  * A reply with the sentinel taken out, so it never reaches the chat. The
