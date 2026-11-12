@@ -326,7 +326,7 @@ function Providers() {
 }
 
 type Category = "Work" | "Design" | "Data" | "Developer" | "Finance";
-type CatalogApp = { name: string; blurb: string; url: string; tint: string; category: Category; token?: boolean };
+type CatalogApp = { name: string; blurb: string; url: string; tint: string; category: Category; token?: boolean; open?: boolean };
 
 const categories: Category[] = ["Work", "Design", "Data", "Developer", "Finance"];
 const filters: (Category | "All")[] = ["All", ...categories];
@@ -352,6 +352,7 @@ const catalog: CatalogApp[] = [
   { name: "Wix", blurb: "Manage your Wix site", url: "https://mcp.wix.com/mcp", tint: "#0C6EFC", category: "Design" },
   { name: "Gamma", blurb: "Generate presentations", url: "https://mcp.gamma.app/mcp", tint: "#6C3BF2", category: "Design" },
   { name: "HeyGen", blurb: "Create AI videos", url: "https://mcp.heygen.com/mcp", tint: "#6D5DF6", category: "Design" },
+  { name: "Excalidraw", blurb: "Sketch diagrams", url: "https://mcp.excalidraw.com/mcp", tint: "#6965DB", category: "Design", open: true },
   { name: "Supabase", blurb: "Projects, tables and SQL", url: "https://mcp.supabase.com/mcp", tint: "#1F9D6B", category: "Data" },
   { name: "Amplitude", blurb: "Events, charts and cohorts", url: "https://mcp.amplitude.com/mcp", tint: "#1E61F0", category: "Data" },
   { name: "Mixpanel", blurb: "Query product analytics", url: "https://mcp.mixpanel.com/mcp", tint: "#7856FF", category: "Data" },
@@ -472,6 +473,11 @@ function Integrations() {
     setError("");
     if (app.token) {
       setName(app.name); setUrl(app.url); setToken(""); setAdding(true);
+      return;
+    }
+    if (app.open) {
+      try { await api.addMcp({ name: app.name, url: app.url }); toast(`${app.name} connected`); load(); }
+      catch (e) { setError((e as Error).message); }
       return;
     }
     setConnecting(app.name);

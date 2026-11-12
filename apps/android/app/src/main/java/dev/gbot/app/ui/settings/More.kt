@@ -135,7 +135,7 @@ fun Team(back: () -> Unit) {
 
 // ---- Integrations -------------------------------------------------------
 
-private data class CatalogApp(val name: String, val blurb: String, val url: String, val tint: Long, val category: String, val token: Boolean = false)
+private data class CatalogApp(val name: String, val blurb: String, val url: String, val tint: Long, val category: String, val token: Boolean = false, val open: Boolean = false)
 private val categories = listOf("Work", "Design", "Data", "Developer", "Finance")
 private val catalog = listOf(
     CatalogApp("Notion", "Pages, databases and notes", "https://mcp.notion.com/mcp", 0xFF1F1F1F, "Work"),
@@ -155,6 +155,7 @@ private val catalog = listOf(
     CatalogApp("Wix", "Manage your Wix site", "https://mcp.wix.com/mcp", 0xFF0C6EFC, "Design"),
     CatalogApp("Gamma", "Generate presentations", "https://mcp.gamma.app/mcp", 0xFF6C3BF2, "Design"),
     CatalogApp("HeyGen", "Create AI videos", "https://mcp.heygen.com/mcp", 0xFF6D5DF6, "Design"),
+    CatalogApp("Excalidraw", "Sketch diagrams", "https://mcp.excalidraw.com/mcp", 0xFF6965DB, "Design", open = true),
     CatalogApp("Supabase", "Projects, tables and SQL", "https://mcp.supabase.com/mcp", 0xFF1F9D6B, "Data"),
     CatalogApp("Amplitude", "Events, charts and cohorts", "https://mcp.amplitude.com/mcp", 0xFF1E61F0, "Data"),
     CatalogApp("Mixpanel", "Query product analytics", "https://mcp.mixpanel.com/mcp", 0xFF7856FF, "Data"),
@@ -205,6 +206,13 @@ fun Integrations(back: () -> Unit) {
     fun connect(a: CatalogApp) {
         error = ""
         if (a.token) { adding = Triple(a.name, a.url, true); token = ""; return }
+        if (a.open) {
+            scope.launch {
+                try { app.api.addMcp(a.name, a.url, null); app.toast("${a.name} connected"); load() }
+                catch (e: Exception) { error = e.message ?: "Couldn't connect" }
+            }
+            return
+        }
         connecting = a
         scope.launch {
             try { val r = app.api.startMcpOAuth(a.name, a.url); authUrl = r.url; openAuth(r.url) }
