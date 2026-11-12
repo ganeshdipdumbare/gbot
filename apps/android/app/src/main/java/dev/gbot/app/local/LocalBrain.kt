@@ -302,6 +302,7 @@ class LocalBrain(
             }
             log("reply ${content.length} chars")
             reply(bot, group, content)
+            if (group == null && from != null) passAnswer(bot, from, content, depth)
             if (group != null && depth < 3) handoff(group, bot, content, depth)
         } finally {
             browsing.remove(bot.id)
@@ -513,7 +514,7 @@ class LocalBrain(
             if (peers.isNotEmpty()) {
                 appendLine()
                 appendLine("The person's other bots, which you can reach with message_bot: " + peers.joinToString(", ") { it.name } + ".")
-                appendLine("It doesn't wait for an answer: the message lands in their own chat and they answer there, where the person can read it. You won't see their reply here, so don't wait for one. The person sees that you sent it, so don't announce it. @Name does nothing outside a group chat — use message_bot.")
+                appendLine("It doesn't wait for an answer: the message lands in their own chat and their answer comes back here when they finish. Send it yourself when the task needs another bot — don't ask the person to relay it. The person sees that you sent it, so don't announce it. @Name does nothing outside a group chat — use message_bot.")
             }
             appendLine()
             appendLine("Your tools:")
@@ -522,7 +523,7 @@ class LocalBrain(
             appendLine("- vault_type: type a saved secret into a field on a site it was saved for; you never see the value.")
             appendLine("- use_skill: load the full instructions of a skill.")
             appendLine("- notify, remember, recall, web_fetch, profile.")
-            if (peers.isNotEmpty()) appendLine("- message_bot: send another of the person's bots a message; it's delivered to their own chat and they answer there.")
+            if (peers.isNotEmpty()) appendLine("- message_bot: send another of the person's bots a message; their answer comes back to this chat.")
             if (api.localMcp().any { it.enabled && it.status == "ok" }) appendLine("- Tools starting with mc… come from connected integrations; they work like the others.")
             appendLine()
             appendLine("Rules:")
@@ -543,9 +544,10 @@ class LocalBrain(
     }
 
     /**
-     * One bot messaging another, without waiting. The person sees that it
-     * happened in this chat; the message lands in the other bot's own chat
-     * and starts its run, which queues behind this one.
+     * One bot messaging another, without waiting and without the person in
+     * the middle. The message lands in the other bot's own chat and starts
+     * its run, which queues behind this one; its answer comes back to this
+     * chat when it finishes (see passAnswer).
      */
     private fun messageBot(from: Bot, group: Group?, to: Bot, text: String, depth: Int): String {
         val body = text.trim()
@@ -557,8 +559,31 @@ class LocalBrain(
         )
         runCatching { db.putMessage(m) }.onFailure { log("could not save the message", it) }
         runCatching { emit("message", to.id, json.encodeToJsonElement(m)) }
-        start(to, "${from.name} asks: $body", null, depth + 1, from = from.id)
-        return "Sent to ${to.name}. They reply in their own chat, so don't wait for an answer here."
+        start(
+            to,
+            "Message from ${from.name}, another of the person's bots. Answer ${from.name} directly: " +
+                "your reply is sent back to them. If nothing needs to go back, reply with exactly $NO_REPLY.\n\n$body",
+            null, depth + 1, from = from.id,
+        )
+        return "Sent to ${to.name}. Their answer comes back here, so don't wait for it in this reply."
+    }
+
+    /**
+     * A bot answered a message from another bot: carry the answer back, so
+     * the person doesn't have to read it in one chat and repeat it in the
+     * other. The chain stops after MAX_HOPS.
+     */
+    private fun passAnswer(bot: Bot, fromId: String, answer: String, depth: Int) {
+        if (depth >= MAX_HOPS || !carriesAnswer(answer)) return
+        val sender = db.bot(fromId) ?: return
+        val body = answer.trim()
+        val m = GMessage(
+            id = "m_" + UUID.randomUUID().toString().take(8), botId = sender.id, role = "user",
+            content = "${bot.name}: $body", createdAt = now(),
+        )
+        runCatching { db.putMessage(m) }.onFailure { log("could not save the answer", it) }
+        runCatching { emit("message", sender.id, json.encodeToJsonElement(m)) }
+        start(sender, "Reply from ${bot.name}, another of the person's bots:\n\n$body", null, depth + 1)
     }
 
     /** A quiet line in the transcript: something happened, no reply needed. */
@@ -654,6 +679,15 @@ class LocalBrain(
         const val PROVIDER_TIMEOUT_MS = 120_000L
         const val MCP_TIMEOUT_MS = 8_000L
     }
+}
+
+/** What a bot replies when it has nothing to send back. */
+const val NO_REPLY = "NO_REPLY"
+
+/** Whether a bot's reply is worth carrying back to the bot that wrote first. */
+fun carriesAnswer(reply: String): Boolean {
+    val body = reply.trim()
+    return body.isNotEmpty() && body != "(no answer)" && !body.trim(' ', '.', '`', '*').equals(NO_REPLY, ignoreCase = true)
 }
 
 sealed class BrainModel {

@@ -201,4 +201,15 @@ class LocalTest {
         assertEquals(null, pickPeer("", roster))
         assertEquals(null, pickPeer("Taro", emptyList()))
     }
+
+    // ---- A bot answering a bot: what is worth carrying back ----
+
+    @Test
+    fun `only a real answer is carried back to the sender`() {
+        assertTrue(dev.gbot.app.local.carriesAnswer("The report is ready."))
+        assertFalse(dev.gbot.app.local.carriesAnswer("NO_REPLY"))
+        assertFalse(dev.gbot.app.local.carriesAnswer(" `NO_REPLY`. "))
+        assertFalse(dev.gbot.app.local.carriesAnswer("(no answer)"))
+        assertFalse(dev.gbot.app.local.carriesAnswer("   "))
+    }
 }

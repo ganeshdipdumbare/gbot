@@ -117,8 +117,8 @@ class LocalTools(
         ToolSchema(
             "message_bot",
             "Send a message to another of the person's bots: " + peers.joinToString(", ") { it.name } +
-                ". It does not wait for an answer; they reply in their own chat. " +
-                "Use it when the person asks you to tell, ask or work with another bot.",
+                ". It doesn't wait for an answer: their answer arrives in this chat when they finish. " +
+                "Use it when the person asks you to tell, ask or work with another bot, or when their request clearly needs one.",
             params(
                 "to", "string", "The bot's name",
                 "message", "string", "What to tell or ask them, written to them", required = listOf("to", "message"),
