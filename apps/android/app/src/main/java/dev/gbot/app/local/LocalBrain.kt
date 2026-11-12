@@ -267,7 +267,7 @@ class LocalBrain(
             )
             val mcpTools = withTimeoutOrNull(MCP_TIMEOUT_MS) { api.mcpSchemas() }.orEmpty()
             val history = historyFor(bot, group, prompt)
-            val system = systemPrompt(bot, group)
+            val system = systemPrompt(bot, group, peers)
 
             val text = withTimeoutOrNull(RUN_TIMEOUT_MS) {
                 when (model) {
@@ -494,7 +494,7 @@ class LocalBrain(
         e
     }
 
-    private fun systemPrompt(bot: Bot, group: Group?): String {
+    private fun systemPrompt(bot: Bot, group: Group?, peers: List<Bot>): String {
         val profile = db.get("profile").orEmpty().take(1200).ifBlank { "Nothing yet." }
         val notes = db.notes(bot.id).joinToString("\n") { "- " + it.take(500) }.ifBlank { "Nothing yet." }
         val skills = api.localSkills().joinToString("\n") { "- ${it.name}: ${it.description.take(160)}" }.ifBlank { "None yet." }
@@ -508,7 +508,12 @@ class LocalBrain(
                 val others = group.botIds.mapNotNull { db.bot(it)?.name }.filter { it != bot.name }
                 appendLine()
                 appendLine("You are in the group chat “${group.name}” with ${others.joinToString(", ").ifBlank { "no one else" }}.")
-                appendLine("Messages from teammates appear as “Name: …”. Answer as yourself, briefly. Mention a teammate as @Name to hand the work to them.")
+                appendLine("Messages from teammates appear as “Name: …”. Answer as yourself, briefly. Mention a teammate as @Name to hand the work to them; they answer here, in this chat, not in a private one. Don't speak for them.")
+            }
+            if (peers.isNotEmpty()) {
+                appendLine()
+                appendLine("The person's other bots, which you can reach with message_bot: " + peers.joinToString(", ") { it.name } + ".")
+                appendLine("It doesn't wait for an answer: the message lands in their own chat and they answer there, where the person can read it. You won't see their reply here, so don't wait for one. The person sees that you sent it, so don't announce it. @Name does nothing outside a group chat — use message_bot.")
             }
             appendLine()
             appendLine("Your tools:")
@@ -517,12 +522,13 @@ class LocalBrain(
             appendLine("- vault_type: type a saved secret into a field on a site it was saved for; you never see the value.")
             appendLine("- use_skill: load the full instructions of a skill.")
             appendLine("- notify, remember, recall, web_fetch, profile.")
+            if (peers.isNotEmpty()) appendLine("- message_bot: send another of the person's bots a message; it's delivered to their own chat and they answer there.")
             if (api.localMcp().any { it.enabled && it.status == "ok" }) appendLine("- Tools starting with mc… come from connected integrations; they work like the others.")
             appendLine()
             appendLine("Rules:")
             appendLine("- Do not invent facts about the person. Use profile for forms and personal details.")
             appendLine("- Say what you did in one or two lines. If a step needs their approval, it appears as a card; wait for the answer.")
-            appendLine("- You cannot run shell commands, open other apps, or send messages by yourself.")
+            appendLine("- You cannot run shell commands, open other apps, text, email, or post through chat apps. To reach another of the person's bots, use message_bot — or @Name inside a group chat.")
             appendLine()
             appendLine("The person's details:")
             appendLine(profile)
