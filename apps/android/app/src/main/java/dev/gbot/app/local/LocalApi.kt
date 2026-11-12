@@ -158,7 +158,19 @@ class LocalApi(
      * and the only one that may hatch, change or archive the others.
      */
     override suspend fun bots(): BotsResp = withContext(Dispatchers.IO) {
-        val all = db.bots().let { list -> if (list.any { it.id == MAIN_BOT }) list else list + hatchMainBot() }
+        val all = db.bots().let { list ->
+            val existing = list.find { it.id == MAIN_BOT }
+            when {
+                existing == null -> list + hatchMainBot()
+                // Older installs seeded it without the mark: fix it once.
+                existing.look != MAIN_LOOK -> {
+                    val fixed = existing.copy(look = MAIN_LOOK)
+                    db.putBot(fixed)
+                    list.map { if (it.id == MAIN_BOT) fixed else it }
+                }
+                else -> list
+            }
+        }
         BotsResp(
             bots = all.sortedBy { if (it.id == MAIN_BOT) 0 else 1 }.map { it.copy(lastMessage = db.lastMessage(it.id)) },
             presence = brain.presenceSnapshot(),
@@ -167,7 +179,7 @@ class LocalApi(
 
     private fun hatchMainBot(): Bot {
         val b = Bot(
-            id = MAIN_BOT, name = "gbot", title = "Your main bot",
+            id = MAIN_BOT, name = "gbot", title = "Your main bot", look = MAIN_LOOK,
             instructions = MAIN_PURPOSE, model = defaultModelId(), pinned = true,
             createdAt = Instant.now().toString(),
         )
@@ -197,7 +209,7 @@ class LocalApi(
             pinned = if (b.containsKey("pinned")) b.flag("pinned") else old.pinned,
             readAloud = if (b.containsKey("readAloud")) b.flag("readAloud") else old.readAloud,
             voice = if (b.containsKey("voice")) b.str("voice") else old.voice,
-            look = (b["look"] as? JsonObject)?.let { l ->
+            look = if (id == MAIN_BOT) old.look else (b["look"] as? JsonObject)?.let { l ->
                 old.look.copy(
                     shape = l["shape"]?.jsonPrimitive?.contentOrNull ?: old.look.shape,
                     hue = l["hue"]?.jsonPrimitive?.contentOrNull ?: old.look.hue,
@@ -642,3 +654,6 @@ const val MAIN_PURPOSE =
         "clearly needs one, you can list them (bot_list), hatch a new one (bot_create), change a " +
         "title, instructions or model (bot_update), or archive one (bot_archive). Every change " +
         "shows the person an approval card first, so ask for nothing extra."
+
+/** The main bot always wears the app's mark, never a seeded look. */
+val MAIN_LOOK = Look(shape = "circle", hue = "white", eyes = "pill")

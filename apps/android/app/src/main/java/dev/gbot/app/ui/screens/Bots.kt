@@ -181,7 +181,7 @@ fun BotSettingsScreen(nav: NavHostController, id: String) {
                 GButton("Try", { scope.launch { runCatching { app.voice.speak("Hi, I'm $name.", voice) } } }, variant = Variant.Soft, small = true, icon = "play")
             }
         }
-        if (canManage) Column {
+        if (canManage && bot.id != MAIN_BOT) Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Look", style = T.label, color = g.ink, modifier = Modifier.weight(1f))
                 GButton("Surprise me", { look = surpriseLook() }, variant = Variant.Ghost, small = true, icon = "dice")

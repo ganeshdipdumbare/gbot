@@ -226,6 +226,16 @@ class LocalTest {
     // ---- The exchange card is what the chat UI opens on tap ----
 
     @Test
+    fun `the main bot wears the app mark`() {
+        val t = dev.gbot.app.ui.resolveLook(dev.gbot.app.local.MAIN_LOOK, "any-seed")
+        assertEquals("circle", t.shape)
+        assertEquals("white", t.hue)
+        assertEquals("pill", t.eyes)
+        // White is the mark's colour only: it must never be seeded onto a bot.
+        assertFalse(dev.gbot.app.ui.hueNames.contains("white"))
+    }
+
+    @Test
     fun `the roster reads as one line per bot`() {
         val bots = listOf(
             dev.gbot.app.net.Bot(id = "1", name = "Taro", title = "Jokes", model = "local:x"),
