@@ -1,17 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The gbot character, white on black. Sized inside the adaptive safe zone. -->
+<!-- The gbot mark's eyes; the coral field fills the whole adaptive icon. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#F7F7F4"
-        android:pathData="M54,23a31,31 0 1,1 0,62a31,31 0 1,1 0,-62Z" />
+        android:fillColor="#16131C"
+        android:pathData="M36.72,44.28A5.4,5.4 0 0,1 47.52,44.28V55.08A5.4,5.4 0 0,1 36.72,55.08Z" />
     <path
         android:fillColor="#16131C"
-        android:pathData="M40.96,48.52A3.97,3.97 0 0,1 48.9,48.52V56.46A3.97,3.97 0 0,1 40.96,56.46Z" />
-    <path
-        android:fillColor="#16131C"
-        android:pathData="M59.1,48.52A3.97,3.97 0 0,1 67.04,48.52V56.46A3.97,3.97 0 0,1 59.1,56.46Z" />
+        android:pathData="M60.48,44.28A5.4,5.4 0 0,1 71.28,44.28V55.08A5.4,5.4 0 0,1 60.48,55.08Z" />
 </vector>
