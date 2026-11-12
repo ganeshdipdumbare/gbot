@@ -357,6 +357,7 @@ const catalog: CatalogApp[] = [
   { name: "Amplitude", blurb: "Events, charts and cohorts", url: "https://mcp.amplitude.com/mcp", tint: "#1E61F0", category: "Data" },
   { name: "Mixpanel", blurb: "Query product analytics", url: "https://mcp.mixpanel.com/mcp", tint: "#7856FF", category: "Data" },
   { name: "Metricool", blurb: "Track social and ad analytics", url: "https://ai.metricool.com/mcp", tint: "#6F4EF2", category: "Data" },
+  { name: "Parallel", blurb: "Web search and research", url: "https://mcp.parallel.ai/mcp", tint: "#1F2937", category: "Data", open: true },
   { name: "GitHub", blurb: "Repos, issues and pull requests", url: "https://api.githubcopilot.com/mcp/", tint: "#24292F", category: "Developer", token: true },
   { name: "Sentry", blurb: "Errors, projects and releases", url: "https://mcp.sentry.dev/mcp", tint: "#362D59", category: "Developer" },
   { name: "Postman", blurb: "Collections, APIs and environments", url: "https://mcp.postman.com/mcp", tint: "#FF6C37", category: "Developer" },
@@ -372,6 +373,21 @@ const catalog: CatalogApp[] = [
 ];
 
 const sameUrl = (a: string, b: string) => a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
+
+const iconUrls = import.meta.glob("../assets/integrations/*.png", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
+const iconSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/** The app's own logo on a white rounded tile, or its first letter. */
+function AppIcon({ app, size = 36 }: { app: CatalogApp; size?: number }) {
+  const src = iconUrls[`../assets/integrations/${iconSlug(app.name)}.png`];
+  return (
+    <span className="grid shrink-0 place-items-center overflow-hidden rounded-xl bg-white shadow-sm" style={{ width: size, height: size }} aria-hidden>
+      {src
+        ? <img src={src} alt="" className="size-[68%] object-contain" />
+        : <span className="font-bold" style={{ color: app.tint, fontSize: size * 0.42 }}>{app.name[0]}</span>}
+    </span>
+  );
+}
 
 function Integrations() {
   const [list, setList] = useState<MCPServer[] | null>(null);
@@ -520,7 +536,7 @@ function Integrations() {
     return (
       <button key={a.name} type="button" onClick={() => connect(a)} disabled={on || waiting || !!connecting}
         className={`group flex items-center gap-2.5 rounded-2xl border border-line p-2.5 text-left transition-colors duration-[120ms] cursor-pointer disabled:cursor-default ${on ? "bg-surface-2/60" : "hover:bg-hover"}`}>
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl text-[15px] font-bold text-white shadow-sm" style={{ background: a.tint }} aria-hidden>{a.name[0]}</span>
+        <AppIcon app={a} />
         <span className="min-w-0 flex-1">
           <span className="block font-semibold text-[13.5px] leading-5 truncate">{a.name}</span>
           <span className="block text-[12px] leading-4 text-ink-2 truncate">{a.blurb}</span>
@@ -543,8 +559,7 @@ function Integrations() {
           <div role="dialog" aria-modal="true" aria-label={`Signing in to ${connecting}`}
             className="relative w-full max-w-[420px] rounded-2xl bg-bg p-4 shadow-pop hairline pop-in space-y-4">
             <div className="flex items-center gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl text-[16px] font-bold text-white shadow-sm" aria-hidden
-                style={{ background: catalog.find((a) => a.name === connecting)?.tint ?? "#888" }}>{connecting[0]}</span>
+              <AppIcon app={catalog.find((a) => a.name === connecting) ?? { name: connecting, blurb: "", url: "", tint: "#888", category: "Work" }} size={40} />
               <div className="min-w-0 flex-1">
                 <div className="text-[15px] font-semibold">Signing in to {connecting}</div>
                 <div className="flex items-center gap-1.5 text-[12.5px] leading-4 text-ink-2">

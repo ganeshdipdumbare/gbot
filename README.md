@@ -38,7 +38,7 @@ needs you, stuck, done), and keep working while you keep chatting.
   access does not mean the whole internet.
 - **Routines.** Prompts a bot runs on a schedule or when a webhook fires.
   Ask for one in chat, or set it up in the bot's panel.
-- **Integrations.** One-click sign-in to 34 apps that publish an MCP server
+- **Integrations.** One-click sign-in to 35 apps that publish an MCP server
   (Notion, Linear, Jira, Stripe, Figma, Datadog and more), custom MCP servers
   with tokens, and skills you write once and use anywhere with `/`. Tokens are
   encrypted at rest and scoped to your account.
