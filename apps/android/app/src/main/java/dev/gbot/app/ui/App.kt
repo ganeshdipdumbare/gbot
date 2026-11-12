@@ -6,6 +6,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -23,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +78,7 @@ object R {
 
 fun NavHostController.home() = navigate(R.HOME) { popUpTo(0) { inclusive = true } }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun AppRoot(activity: MainActivity) {
     val app = GbotApp.instance
@@ -123,6 +127,8 @@ fun AppRoot(activity: MainActivity) {
     val g = LocalG.current
     NowTicker {
     Box(Modifier.fillMaxSize().background(g.bg)) {
+        SharedTransitionLayout {
+        val sharedScope = this
         NavHost(
             nav, start,
             // Short and decisive: the screen is there before the motion
@@ -140,16 +146,22 @@ fun AppRoot(activity: MainActivity) {
                 onBack = if (nav.previousBackStackEntry != null) ({ nav.popBackStack() }) else null,
             ) }
             composable(R.LOGIN) { LoginScreen(onSignedIn = { nav.home() }, onChangeServer = { nav.navigate(R.SERVER) }) }
-            composable(R.HOME) { HomeScreen(nav) }
+            composable(R.HOME) {
+                CompositionLocalProvider(LocalSharedScope provides sharedScope, LocalAnimScope provides this) {
+                    HomeScreen(nav)
+                }
+            }
             composable(
                 "chat/{key}?prefill={prefill}",
                 arguments = listOf(navArgument("prefill") { type = NavType.StringType; defaultValue = "" }),
             ) { e ->
-                ChatScreen(
-                    nav,
-                    Uri.decode(e.arguments?.getString("key").orEmpty()),
-                    prefill = e.arguments?.getString("prefill").orEmpty(),
-                )
+                CompositionLocalProvider(LocalSharedScope provides sharedScope, LocalAnimScope provides this) {
+                    ChatScreen(
+                        nav,
+                        Uri.decode(e.arguments?.getString("key").orEmpty()),
+                        prefill = e.arguments?.getString("prefill").orEmpty(),
+                    )
+                }
             }
             composable("bot/{id}") { e -> BotSettingsScreen(nav, e.arguments?.getString("id").orEmpty()) }
             composable("group/{id}") { e -> GroupSettingsScreen(nav, e.arguments?.getString("id").orEmpty()) }
@@ -158,6 +170,7 @@ fun AppRoot(activity: MainActivity) {
             composable(R.NEW_GROUP) { NewGroupScreen(nav) }
             composable(R.SETTINGS) { SettingsHome(nav) }
             composable("settings/{tab}") { e -> SettingsTab(nav, e.arguments?.getString("tab").orEmpty()) }
+        }
         }
         Toasts(Modifier.align(Alignment.BottomCenter))
     }

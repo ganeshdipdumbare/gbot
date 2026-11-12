@@ -10,9 +10,13 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,10 +64,21 @@ private fun keys(p: Float, vararg k: Pair<Float, Float>): Float {
  * of its feelings are carried by its eyes and the way its body moves,
  * exactly like the web character.
  */
+/**
+ * The scopes a shared element needs, carried in context so every Gbot on
+ * the way to a chat does not have to take them as parameters. Null outside
+ * a SharedTransitionLayout -- in tests, for instance -- where [Gbot] simply
+ * draws itself.
+ */
+val LocalSharedScope = compositionLocalOf<SharedTransitionScope?> { null }
+val LocalAnimScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
+
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun Gbot(
     look: Look?, seed: String, size: Int, modifier: Modifier = Modifier,
     mood: String = "idle", live: Boolean = false, lively: Boolean = false,
+    sharedKey: String? = null,
 ) {
     val t = remember(look, seed) { resolveLook(look, seed) }
     val hue = hues.getValue(t.hue)
@@ -164,7 +179,16 @@ fun Gbot(
     val s = body.eyeScale
     val w = ew * s; val h = eh * s; val gap = 12 * s
 
-    Canvas(modifier.size(size.dp).semantics { contentDescription = "bot" }) {
+    // The same bot in the roster and in the chat header is one element
+    // that moves and resizes, not two that cross-fade.
+    val shared = LocalSharedScope.current
+    val anim = LocalAnimScope.current
+    val shaped = if (sharedKey != null && shared != null && anim != null) {
+        with(shared) { modifier.sharedElement(rememberSharedContentState(sharedKey), anim) }
+    } else {
+        modifier
+    }
+    Canvas(shaped.size(size.dp).semantics { contentDescription = "bot" }) {
         val unit = this.size.minDimension / 106f
         withTransform({ scale(unit, unit, Offset.Zero); translate(3f, 3f) }) {
             // Contact shadow.

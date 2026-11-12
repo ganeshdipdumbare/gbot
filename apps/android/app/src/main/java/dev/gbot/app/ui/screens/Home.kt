@@ -323,7 +323,7 @@ fun BotRow(b: Bot, p: Presence?, computerOn: Boolean, unread: Int, onClick: () -
     val busy = isBusy(p)
     val blocked = p?.state == "blocked"
     RowShell(
-        onClick, onLong, { Gbot(b.look, b.id, 42, mood = moodOf(p, b), live = p?.live == true || computerOn) },
+        onClick, onLong, { Gbot(b.look, b.id, 42, mood = moodOf(p, b), live = p?.live == true || computerOn, sharedKey = "bot:${b.id}") },
         b.name, b.pinned, timeAgoLive(b.lastMessage?.createdAt),
         if (busy) statusOf(p!!) else preview(b.lastMessage?.content).ifEmpty { b.title.ifEmpty { "General-purpose bot" } },
         if (busy) (if (blocked) g.danger else g.live) else if (unread > 0) g.ink else g.ink2, busy || unread > 0, unread,

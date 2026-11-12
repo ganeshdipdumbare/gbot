@@ -147,7 +147,7 @@ fun ChatScreen(nav: NavHostController, key: ChatKey, prefill: String = "") {
             bot?.name ?: group!!.name, { nav.popBackStack() }, subtitle = job,
             lead = {
                 Box(Modifier.clip(CircleShape).tap { nav.navigate(if (bot != null) R.bot(bot.id) else R.group(group!!.id)) }) {
-                    if (bot != null) Gbot(bot.look, bot.id, 34, mood = moodOf(p, bot)) else Stack(members, 24, presence)
+                    if (bot != null) Gbot(bot.look, bot.id, 34, mood = moodOf(p, bot), sharedKey = "bot:${bot.id}") else Stack(members, 24, presence)
                 }
             },
         ) {
