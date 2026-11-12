@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type CompositionEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type CompositionEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type TouchEvent as RTouchEvent, type WheelEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
-import { set, useStore } from "../lib/store";
+import { onLive, set, useStore } from "../lib/store";
 import { attempt, toastError } from "../lib/toast";
 import { bouncy, Button, fade, Icon, IconButton, Input, Label, leave, spring, TextArea } from "./ui";
 
@@ -26,7 +26,7 @@ export function SidePanel({ bot, onClose, takeover, setTakeover }: {
         <IconButton label="Close panel" onClick={onClose}><Icon.close /></IconButton>
       </div>
       <div className="flex-1 overflow-y-auto scroll-soft">
-        <ComputerTab bot={bot} onOpen={() => setWatch(true)} paused={watch || takeover} />
+        <ComputerTab bot={bot} onOpen={() => setWatch(true)} viewing={watch || takeover} />
         <RoutinesTab bot={bot} />
       </div>
       <ComputerView bot={bot} open={watch || takeover} control={takeover} onClose={closeView} />
@@ -77,32 +77,37 @@ function ComputerActions({ bot, onWatch, onTakeover }: { bot: Bot; onWatch: () =
   const [status, update] = useComputer(bot);
   const [busy, setBusy] = useState(false);
   const on = status?.state === "on";
+  const asleep = status?.state === "asleep";
 
-  async function act(a: "start" | "stop") {
+  async function act(a: "start" | "sleep" | "wake") {
     setBusy(true);
     try { update(await api.computerAction(bot.id, a)); }
-    catch (e) { toastError(e, a === "start" ? "Couldn't wake the computer" : "Couldn't put it to sleep"); }
-    finally { setBusy(false); }
+    catch (e) {
+      toastError(e, a === "start" ? "Couldn't wake the computer"
+        : a === "sleep" ? "Couldn't put it to sleep"
+        : "Couldn't wake the computer");
+    } finally { setBusy(false); }
   }
 
   if (on) return (
     <>
       <IconButton label="Watch full screen" onClick={onWatch}><Icon.expand /></IconButton>
       <IconButton label="Take control" onClick={onTakeover}><Icon.control /></IconButton>
-      <IconButton label="Sleep" disabled={busy} onClick={() => act("stop")}><Icon.moon /></IconButton>
+      <IconButton label="Sleep (keeps its windows and state)" disabled={busy} onClick={() => act("sleep")}><Icon.moon /></IconButton>
     </>
   );
   return (
     <IconButton label="Wake" disabled={busy || status?.state === "starting" || status?.available === false}
-      onClick={() => act("start")} className="disabled:opacity-40"><Icon.power /></IconButton>
+      onClick={() => act(asleep ? "wake" : "start")} className="disabled:opacity-40"><Icon.power /></IconButton>
   );
 }
 
-function ComputerTab({ bot, onOpen, paused }: { bot: Bot; onOpen: () => void; paused: boolean }) {
+function ComputerTab({ bot, onOpen, viewing }: { bot: Bot; onOpen: () => void; viewing: boolean }) {
   const [status] = useComputer(bot);
   const on = status?.state === "on";
+  const sleeping = status?.state === "asleep";
   // The full-screen stream replaces the thumbnail while it is open.
-  const src = useScreen(bot.id, on && !paused);
+  const src = useScreen(bot.id, on && !viewing);
   const where = `${status?.backend === "microsandbox" ? "Its own microVM on this machine." : "A container on this machine."}${bot.computerNetwork ? " Online." : " Offline until you allow internet in its settings."}`;
 
   return (
@@ -118,7 +123,10 @@ function ComputerTab({ bot, onOpen, paused }: { bot: Bot; onOpen: () => void; pa
                 <Gbot look={bot.look} seed={bot.id} size={36} mood={status?.state === "starting" ? "working" : "sleepy"} className="mx-auto" />
                 <p className="text-[13px] mt-1.5 text-ink-2">
                   {status?.available === false ? "The computer image isn't built yet. Run make computer." :
-                    status?.state === "starting" ? "Waking up…" : "Wakes up when it needs it"}
+                    status?.state === "starting" ? "Waking up…" :
+                    sleeping ? "Asleep — wake it from the header to keep going" :
+                    viewing ? "Open in the full-screen view" :
+                    on ? "Connecting to the screen…" : "Wakes up when it needs it"}
                 </p>
               </div>
             </motion.div>
@@ -177,9 +185,10 @@ function ComputerView({ bot, open, control, onClose }: {
 
   async function release() {
     flush();
-    // Let the last typed batch land before handing control back, or the
-    // server may reject it as "take control first".
-    await inflight.current.catch(() => {});
+    flushScroll();
+    // Let the last input land before handing control back, or the server
+    // may reject it as "take control first".
+    await chain.current.catch(() => {});
     if (holding) {
       try { update(await api.computerAction(bot.id, "control", { user: false })); } catch { /* closing anyway */ }
     }
@@ -187,11 +196,12 @@ function ComputerView({ bot, open, control, onClose }: {
     onClose();
   }
 
-  const inflight = useRef<Promise<unknown>>(Promise.resolve());
+  // Inputs go one at a time, in order. Firing every scroll tick at once
+  // queues dozens of execs inside the computer and makes it feel stuck.
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
   const send = (body: Record<string, unknown>) => {
-    const p = api.computerAction(bot.id, "input", body)
-      .catch((e) => setError(e instanceof Error ? e.message : "Input failed"));
-    inflight.current = p;
+    const p = chain.current.then(() => api.computerAction(bot.id, "input", body));
+    chain.current = p.catch((e) => setError(e instanceof Error ? e.message : "Input failed"));
     return p;
   };
 
@@ -210,12 +220,42 @@ function ComputerView({ bot, open, control, onClose }: {
     queued.current += text;
     if (timer.current === null) timer.current = window.setTimeout(flush, 35);
   };
-  useEffect(() => () => flush(), [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const pos = (e: MouseEvent | WheelEvent) => {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  // Trackpads emit dozens of wheel events. Sum them and send one scroll
+  // per 55ms with the right number of wheel clicks.
+  const scroll = useRef({ dy: 0, x: 0.5, y: 0.5, timer: null as number | null });
+  const scrollBusy = useRef(false);
+  const flushScroll = () => {
+    const s = scroll.current;
+    if (s.timer !== null) { window.clearTimeout(s.timer); s.timer = null; }
+    const dy = s.dy;
+    if (!dy || scrollBusy.current) return;
+    s.dy = 0;
+    scrollBusy.current = true;
+    send({ type: "scroll", deltaY: dy, x: s.x, y: s.y }).finally(() => {
+      scrollBusy.current = false;
+      // Everything the person scrolled while this one was in flight goes
+      // in the next request, so the queue cannot grow without bound.
+      if (scroll.current.dy) flushScroll();
+    });
   };
+  const queueScroll = (dy: number, x: number, y: number) => {
+    const s = scroll.current;
+    s.dy += dy;
+    s.x = x;
+    s.y = y;
+    if (s.timer === null) s.timer = window.setTimeout(flushScroll, 55);
+  };
+  useEffect(() => () => {
+    if (scroll.current.timer !== null) window.clearTimeout(scroll.current.timer);
+    flush();
+  }, [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const posAt = (el: HTMLElement, clientX: number, clientY: number) => {
+    const r = el.getBoundingClientRect();
+    return { x: (clientX - r.left) / r.width, y: (clientY - r.top) / r.height };
+  };
+  const pos = (e: MouseEvent | WheelEvent) => posAt(e.currentTarget as HTMLElement, e.clientX, e.clientY);
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Escape" && e.shiftKey) { e.preventDefault(); return release(); }
     if (!holding || e.nativeEvent.isComposing || e.key === "Process" || e.key === "Unidentified") return;
@@ -227,6 +267,7 @@ function ComputerView({ bot, open, control, onClose }: {
     }
     e.preventDefault();
     flush();
+    flushScroll();
     if (keyMap[e.key] || e.key.length === 1) send({ type: "key", key: [...mods, keyMap[e.key] ?? e.key].join("+") });
   };
   // The textarea is only a buffer: send what it received and clear it, so
@@ -246,10 +287,32 @@ function ComputerView({ bot, open, control, onClose }: {
     e.currentTarget.value = "";
     if (text) queueText(text);
   };
+  // Touch: a drag scrolls, a tap clicks. The browser also fires a click
+  // after a tap, so a drag must swallow the click that follows it.
+  const touch = useRef({ y: 0 });
+  const dragged = useRef(false);
+  const onTouchStart = (e: RTouchEvent<HTMLDivElement>) => {
+    if (!holding || !e.touches[0]) return;
+    touch.current.y = e.touches[0].clientY;
+    dragged.current = false;
+  };
+  const onTouchMove = (e: RTouchEvent<HTMLDivElement>) => {
+    if (!holding || !e.touches[0]) return;
+    const t = e.touches[0];
+    const dy = touch.current.y - t.clientY;
+    touch.current.y = t.clientY;
+    if (Math.abs(dy) < 1) return;
+    if (Math.abs(dy) > 4) dragged.current = true;
+    const p = posAt(e.currentTarget, t.clientX, t.clientY);
+    queueScroll(dy * 1.6, p.x, p.y);
+    e.preventDefault();
+  };
   const click = (type: string) => (e: MouseEvent) => {
     if (!holding) return;
+    if (dragged.current) { dragged.current = false; return; }
     keyboard.current?.focus({ preventScroll: true });
     flush();
+    flushScroll();
     send({ type, ...pos(e) });
   };
 
@@ -277,7 +340,14 @@ function ComputerView({ bot, open, control, onClose }: {
               onClick={click("click")}
               onDoubleClick={click("dblclick")}
               onContextMenu={(e) => { e.preventDefault(); if (holding) click("rightclick")(e); }}
-              onWheel={(e) => { if (holding) { flush(); send({ type: "scroll", deltaY: e.deltaY, ...pos(e) }); } }}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onWheel={(e) => {
+                if (!holding) return;
+                e.preventDefault();
+                const p = pos(e);
+                queueScroll(e.deltaY, p.x, p.y);
+              }}
               initial={{ scale: 0.98 }} animate={{ scale: 1 }} transition={spring}
               className={`relative touch-none w-[min(100%,1280px,calc((100dvh-88px)*1.6))] aspect-[16/10] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-[0_24px_80px_-16px_rgba(0,0,0,0.7)] outline-none bg-black ${holding ? "cursor-default" : "cursor-pointer"}`}
               aria-label={holding ? `${bot.name}'s screen. Click and type to control it.` : `${bot.name}'s screen. Take control to click and type.`}
@@ -293,7 +363,7 @@ function ComputerView({ bot, open, control, onClose }: {
                 autoComplete="off"
                 spellCheck={false}
                 aria-label={`Type into ${bot.name}'s computer`}
-                className={`absolute inset-0 size-full resize-none border-0 bg-transparent p-0 text-transparent caret-transparent opacity-0 outline-none text-[16px] ${holding ? "" : "pointer-events-none"}`}
+                className={`absolute inset-0 size-full resize-none border-0 bg-transparent p-0 text-transparent caret-transparent opacity-0 outline-none text-[16px] ${holding ? "cursor-crosshair" : "pointer-events-none"}`}
               />
               {src
                 ? <img key={src} src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />
@@ -329,6 +399,10 @@ function RoutinesTab({ bot }: { bot: Bot }) {
   const [secret, setSecret] = useState<Routine | null>(null);
   const load = () => api.routines(bot.id).then((r) => setList(r.routines)).catch(() => setList([]));
   useEffect(() => { load(); }, [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A routine made in chat (or on another device) shows here at once.
+  useEffect(() => onLive((e) => {
+    if (e.type === "routine" && e.botId === bot.id) load();
+  }), [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="px-4 pt-4 pb-6">

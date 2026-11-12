@@ -1,7 +1,7 @@
 # gbot: everything runs on your machine.
 COMPOSE := docker compose -f infra/compose/docker-compose.yml
 
-.PHONY: db web server computer run dev test desktop mobile clean
+.PHONY: db web server computer run dev test desktop android clean
 
 db:            ## start local Postgres
 	$(COMPOSE) up -d postgres
@@ -26,13 +26,13 @@ test: db       ## Go tests (offline mock model) and package tests
 	cd server && go test -race ./...
 	pnpm --filter @gbot/characters test
 	pnpm --filter @gbot/web typecheck
-	pnpm --filter @gbot/mobile typecheck
 
 desktop:       ## build the desktop app (Tauri)
 	pnpm --filter @gbot/desktop build
 
-mobile:        ## run the mobile app in the iOS simulator (Expo)
-	cd apps/mobile && npx expo start --ios
+android:       ## build the native Android app (Kotlin + Compose)
+	cd apps/android && ./gradlew assembleRelease
+	@echo apps/android/app/build/outputs/apk/release/app-release.apk
 
 clean:
 	rm -rf bin server/internal/web/dist/assets server/internal/web/dist/index.html*

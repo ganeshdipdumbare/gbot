@@ -26,10 +26,11 @@ const (
 )
 
 var ErrNotRunning = errors.New("the computer is not running")
+var ErrAsleep = errors.New("the computer is asleep; wake it first")
 var ErrUserControl = errors.New("the person has control of the computer right now; wait for them to hand it back")
 
 type Status struct {
-	State      string `json:"state"`      // off | starting | on
+	State      string `json:"state"`      // off | starting | asleep | on
 	Controller string `json:"controller"` // bot | user
 	Network    bool   `json:"network"`
 	Image      string `json:"image"`
@@ -40,7 +41,12 @@ type Status struct {
 // Owner is whose computer it is: one person's computer with one bot. A
 // shared bot gets a separate computer for each person who uses it, so
 // one person's files and sign-ins are never visible to another.
-type Owner struct{ Bot, User string }
+type Owner struct {
+	Bot, User string
+	// Hosts is the browser allowlist for this computer. Empty means any
+	// site. It never changes the owner's key.
+	Hosts []string
+}
 
 // Key names the computer in the backend. It's a UUID-shaped hash of the
 // pair, so the same person and bot always get the same computer.
@@ -55,6 +61,7 @@ type box struct {
 	id         string
 	network    bool
 	starting   bool
+	asleep     bool
 	controller string
 	lastUsed   time.Time
 }
@@ -96,9 +103,14 @@ func (m *Manager) Status(ctx context.Context, o Owner) Status {
 	b := m.boxes[k]
 	st := Status{State: "off", Controller: "bot", Image: m.Image, Backend: m.d.name(), Available: true}
 	if b != nil {
+		// Status is always asked for an owner; use it to repair a box
+		// adopted from a previous server process.
+		b.owner = o
 		st.State, st.Controller, st.Network = "on", b.controller, b.network
 		if b.starting {
 			st.State = "starting"
+		} else if b.asleep {
+			st.State = "asleep"
 		}
 	}
 	m.mu.Unlock()
@@ -122,10 +134,21 @@ func (m *Manager) Ensure(ctx context.Context, o Owner, network bool) error {
 		return errors.New("bad bot id")
 	}
 	m.mu.Lock()
+	if b := m.boxes[k]; b != nil && !b.starting && b.asleep {
+		m.mu.Unlock()
+		if err := m.Wake(ctx, o); err != nil {
+			return err
+		}
+		m.mu.Lock()
+	}
 	if b := m.boxes[k]; b != nil && !b.starting {
 		if b.network == network {
+			// An adopted computer has no owner until someone uses it;
+			// this call supplies it.
+			b.owner = o
 			b.lastUsed = time.Now()
 			m.mu.Unlock()
+			m.changed(o)
 			return nil
 		}
 		m.mu.Unlock()
@@ -175,15 +198,92 @@ func (m *Manager) start(ctx context.Context, k string, network bool) (string, er
 		return "", err
 	}
 	// Wait for the virtual screen.
+	ready := false
 	for i := 0; i < 100; i++ {
 		_, _, c, _ := m.d.exec(ctx, id, "gbot", []string{"DISPLAY=:1"}, nil, false, "xdpyinfo")
 		if c == 0 {
+			ready = true
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	if !ready {
+		m.d.stop(ctx, id)
+		return "", errors.New("the computer's screen didn't start")
+	}
 	m.log.Info("computer started", "computer", k, "backend", m.d.name(), "network", network, "took", time.Since(begin).Round(time.Millisecond))
 	return id, nil
+}
+
+// Sleep freezes the computer without closing its windows and processes.
+// It keeps using memory, but waking is instant. microsandbox cannot take
+// a full snapshot while the desktop's managed jobs run, so this suspend
+// is the state-preserving sleep.
+func (m *Manager) Sleep(ctx context.Context, o Owner) error {
+	m.mu.Lock()
+	if b := m.boxes[o.Key()]; b != nil {
+		b.owner = o
+	}
+	m.mu.Unlock()
+	return m.sleepKey(ctx, o.Key())
+}
+
+func (m *Manager) sleepKey(ctx context.Context, k string) error {
+	m.mu.Lock()
+	b := m.boxes[k]
+	if b == nil || b.starting {
+		m.mu.Unlock()
+		return ErrNotRunning
+	}
+	if b.asleep {
+		m.mu.Unlock()
+		return nil
+	}
+	b.asleep = true
+	id, owner := b.id, b.owner
+	m.mu.Unlock()
+	if err := m.d.pause(ctx, id); err != nil {
+		m.mu.Lock()
+		if b := m.boxes[k]; b != nil {
+			b.asleep = false
+		}
+		m.mu.Unlock()
+		return err
+	}
+	m.log.Info("computer asleep", "computer", k)
+	m.changed(owner)
+	return nil
+}
+
+// Wake unfreezes an asleep computer.
+func (m *Manager) Wake(ctx context.Context, o Owner) error {
+	k := o.Key()
+	m.mu.Lock()
+	b := m.boxes[k]
+	if b == nil || b.starting {
+		m.mu.Unlock()
+		return ErrNotRunning
+	}
+	if !b.asleep {
+		b.owner = o
+		m.mu.Unlock()
+		return nil
+	}
+	b.owner = o
+	id := b.id
+	m.mu.Unlock()
+	if err := m.d.resume(ctx, id); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if b := m.boxes[k]; b != nil {
+		b.asleep = false
+		b.lastUsed = time.Now()
+	}
+	m.mu.Unlock()
+	m.log.Info("computer woke", "computer", k)
+	m.changed(o)
+	return nil
 }
 
 // Stop turns one person's computer with a bot off.
@@ -228,6 +328,9 @@ func (m *Manager) container(o Owner, forAgent bool) (string, error) {
 	if b == nil || b.starting {
 		return "", ErrNotRunning
 	}
+	if b.asleep {
+		return "", ErrAsleep
+	}
 	if forAgent && b.controller == "user" {
 		return "", ErrUserControl
 	}
@@ -249,6 +352,19 @@ func (m *Manager) ActiveBot(botID string) bool {
 	defer m.mu.Unlock()
 	for _, b := range m.boxes {
 		if b.owner.Bot == botID {
+			return true
+		}
+	}
+	return false
+}
+
+// LiveBot is ActiveBot without asleep computers: an asleep bot is not
+// "working" on its name or avatar.
+func (m *Manager) LiveBot(botID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, b := range m.boxes {
+		if b.owner.Bot == botID && !b.starting && !b.asleep {
 			return true
 		}
 	}
@@ -353,37 +469,6 @@ func (m *Manager) Show(ctx context.Context, o Owner, app string) error {
 	return err
 }
 
-// OpenBrowser shows a page on the computer's screen, maximized.
-func (m *Manager) OpenBrowser(ctx context.Context, o Owner, url string) error {
-	id, err := m.container(o, true)
-	if err != nil {
-		return err
-	}
-	_, errOut, code, err := m.d.exec(ctx, id, "gbot", []string{"DISPLAY=:1"}, nil, true, "/usr/local/bin/gbot-browser", url)
-	if err == nil && code != 0 {
-		err = errors.New(strings.TrimSpace(errOut))
-	}
-	return err
-}
-
-// ReadPage fetches a page with headless Chromium and returns its text.
-func (m *Manager) ReadPage(ctx context.Context, o Owner, url string) (string, error) {
-	id, err := m.container(o, true)
-	if err != nil {
-		return "", err
-	}
-	m.note(ctx, id, "◍", "111", "Reading "+url)
-	c, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	out, _, _, err := m.d.exec(c, id, "gbot", []string{"GBOT_URL=" + url}, nil, false, "bash", "-c", `chromium --headless --no-sandbox --disable-gpu --dump-dom "$GBOT_URL" 2>/dev/null | python3 -c '
-import sys, html, re
-s = sys.stdin.read()
-s = re.sub(r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>", " ", s)
-s = re.sub(r"(?s)<[^>]+>", " ", s)
-print(re.sub(r"\s+", " ", html.unescape(s)).strip()[:12000])'`)
-	return out, err
-}
-
 // Screenshot returns the screen as a JPEG.
 func (m *Manager) Screenshot(ctx context.Context, o Owner) ([]byte, error) {
 	id, err := m.container(o, false)
@@ -407,6 +492,10 @@ func (m *Manager) TakeControl(o Owner, user bool) error {
 	if b == nil || b.starting {
 		m.mu.Unlock()
 		return ErrNotRunning
+	}
+	if b.asleep {
+		m.mu.Unlock()
+		return ErrAsleep
 	}
 	if user {
 		b.controller = "user"
@@ -445,6 +534,10 @@ func (m *Manager) Send(ctx context.Context, o Owner, in Input) error {
 		m.mu.Unlock()
 		return ErrNotRunning
 	}
+	if b.asleep {
+		m.mu.Unlock()
+		return ErrAsleep
+	}
 	if b.controller != "user" {
 		m.mu.Unlock()
 		return errors.New("take control first")
@@ -467,10 +560,17 @@ func (m *Manager) Send(ctx context.Context, o Owner, in Input) error {
 		args = []string{"mousemove", x, y}
 	case "scroll":
 		btn := "5"
-		if in.DeltaY < 0 {
-			btn = "4"
+		dy := in.DeltaY
+		if dy < 0 {
+			btn, dy = "4", -dy
 		}
-		args = []string{"mousemove", x, y, "click", "--repeat", "3", btn}
+		// The browser batches wheel events; turn their size into wheel
+		// clicks so one request can cover a trackpad flick.
+		steps := int(dy/40) + 1
+		if steps > 12 {
+			steps = 12
+		}
+		args = []string{"mousemove", x, y, "click", "--repeat", strconv.Itoa(steps), btn}
 	case "type":
 		if len(in.Text) > 2000 {
 			return errors.New("text too long")
@@ -497,24 +597,29 @@ func (m *Manager) Adopt(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, f := range fs {
+		// An asleep sandbox survives the server, but the flag does not.
+		// Wake adopted ones so "on" is true; a no-op otherwise.
+		_ = m.d.resume(ctx, f.id)
 		m.boxes[f.botID] = &box{id: f.id, controller: "bot", lastUsed: time.Now()}
 	}
 }
 
-// reap stops computers nobody has used for IdleTTL. Files stay in the
-// bot's home volume for next time.
+// reap sleeps computers nobody has used for IdleTTL. Their state stays
+// in the suspended guest; the next run wakes them.
 func (m *Manager) reap() {
 	for range time.Tick(time.Minute) {
 		m.mu.Lock()
 		var idle []string
 		for k, b := range m.boxes {
-			if !b.starting && b.controller == "bot" && time.Since(b.lastUsed) > m.IdleTTL {
+			if !b.starting && !b.asleep && b.controller == "bot" && time.Since(b.lastUsed) > m.IdleTTL {
 				idle = append(idle, k)
 			}
 		}
 		m.mu.Unlock()
 		for _, k := range idle {
-			m.stopKey(context.Background(), k)
+			if err := m.sleepKey(context.Background(), k); err != nil {
+				m.log.Warn("computer sleep", "computer", k, "err", err)
+			}
 		}
 	}
 }

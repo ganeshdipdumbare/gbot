@@ -32,6 +32,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import urlparse
 
 PORT = int(os.environ.get("GBOT_CDP_PORT", "9222"))
 CDP = f"http://127.0.0.1:{PORT}"
@@ -167,6 +168,40 @@ def fail(msg):
     sys.exit(1)
 
 
+def source_line(page):
+    """A citation hint gbot keeps for the answer's Sources section."""
+    title = re.sub(r"\s+", " ", page.title() or "").strip()[:120]
+    # No query string: it can hold tokens and breaks a Markdown link.
+    url = re.sub(r"[?#].*$", "", page.url)
+    return f"Source: {title} — {url}"
+
+
+# GBOT_ALLOWED_HOSTS is set by gbot for a bot whose owner chose a site
+# list. Empty means no restriction. A host also allows its subdomains.
+ALLOWED = tuple(h.strip().lower() for h in os.environ.get("GBOT_ALLOWED_HOSTS", "").split(",") if h.strip())
+
+
+def host_allowed(url):
+    if not ALLOWED:
+        return True
+    host = (urlparse(url).hostname or "").lower()
+    if not host:  # about:blank and data: pages have no site
+        return True
+    return any(host == a or host.endswith("." + a) for a in ALLOWED)
+
+
+def guard_page(page):
+    """Close a page that left the allowlist, by a click, redirect or script."""
+    if host_allowed(page.url):
+        return
+    host = urlparse(page.url).hostname or "another site"
+    try:
+        page.goto("about:blank", wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+    except Exception:
+        pass
+    fail(f"The page went to {host}, which isn't on this bot's allowed list. It was closed.")
+
+
 def port_open():
     try:
         with socket.create_connection(("127.0.0.1", PORT), timeout=0.5):
@@ -266,15 +301,22 @@ def cookie_overlay(loc):
     links and marketing promos don't qualify."""
     try:
         return bool(loc.evaluate("""el => {
-          let n = el;
-          while (n && n !== document.body && n !== document.documentElement) {
+          const overlay = (n) => {
             const s = getComputedStyle(n);
-            if (s.position === 'fixed' || s.position === 'sticky' ||
-                n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG') {
-              const t = (n.innerText || '').toLowerCase();
-              if (t.includes('cookie') || t.includes('consent') || t.includes('privacy')) return true;
-            }
-            n = n.parentElement;
+            return s.position === 'fixed' || s.position === 'sticky' ||
+              n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG';
+          };
+          const mentions = (n) => {
+            const t = (n.innerText || '').toLowerCase();
+            return t.includes('cookie') || t.includes('consent') || t.includes('privacy');
+          };
+          let n = el;
+          while (n) {
+            if (overlay(n) && mentions(n)) return true;
+            if (n.parentElement) { n = n.parentElement; continue; }
+            // Cross open shadow roots, where web-component banners live.
+            const root = n.getRootNode ? n.getRootNode() : null;
+            n = root && root.host ? root.host : null;
           }
           return false;
         }"""))
@@ -302,7 +344,7 @@ def consent_candidates(page):
                     label = re.sub(r"\s+", " ", loc.inner_text(timeout=500) or "").strip()
                 except Exception:
                     continue
-                if not label or len(label) > 40 or MARKETING.search(label):
+                if not label or len(label) > 80 or MARKETING.search(label):
                     continue
                 key = label.lower()
                 if key in seen:
@@ -320,7 +362,13 @@ def consent_candidates(page):
 def dismiss_consent(page):
     """Clicks the least-permissive cookie option, if a prompt is showing.
     Returns the label it clicked, or an empty string."""
-    candidates = consent_candidates(page)
+    candidates = []
+    # Consent scripts often run a moment after the page settles.
+    for _ in range(2):
+        candidates = consent_candidates(page)
+        if candidates:
+            break
+        time.sleep(0.25)
     if not candidates:
         return ""
     least = [c for c in candidates if LEAST.search(c[1])]
@@ -335,11 +383,13 @@ def dismiss_consent(page):
 
 
 def cmd_cookies(page):
+    guard_page(page)
     label = dismiss_consent(page)
     if label:
         print(f'Dismissed the cookie prompt by clicking "{label}". Now on {shown(page.url)} ({page.title()}).')
     else:
         print("No cookie or consent prompt is showing.")
+    print(source_line(page))
 
 
 def arm_dialog(page, accept):
@@ -408,10 +458,14 @@ def forget_snapshot():
 def cmd_navigate(page, url):
     if not re.match(r"^https?://[^/\s]+", url):
         fail("use a full http(s) URL")
+    if not host_allowed(url):
+        fail(f"{urlparse(url).hostname} isn't on this bot's allowed list")
     page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+    guard_page(page)
     page.bring_to_front()
     forget_snapshot()
     print(f"Opened {shown(page.url)}. Title: {page.title()}. Take a browser_snapshot to read it.")
+    print(source_line(page))
 
 
 def cmd_history(page, direction):
@@ -423,8 +477,10 @@ def cmd_history(page, direction):
     except Exception as e:
         fail(f"Couldn't go {direction}: {str(e).splitlines()[0]}")
     settle(page)
+    guard_page(page)
     forget_snapshot()
     print(f"Went {direction}. Now on {shown(page.url)} ({page.title()}). Take a browser_snapshot to see the page.")
+    print(source_line(page))
 
 
 def cmd_reload(page):
@@ -436,8 +492,10 @@ def cmd_reload(page):
     finally:
         disarm_dialog(page, handler)
     settle(page)
+    guard_page(page)
     forget_snapshot()
     print(f"Reloaded {shown(page.url)} ({page.title()}).{dialog_note(box)}")
+    print(source_line(page))
 
 
 def snapshot_all(page):
@@ -482,6 +540,7 @@ def read_page(page):
 
 def cmd_snapshot(page):
     settle(page)
+    guard_page(page)
     dismissed = dismiss_consent(page)
     data = read_page(page)
     seen = remember(data)
@@ -508,6 +567,7 @@ def cmd_snapshot(page):
         lines.append("(no clickable or typeable elements visible)")
     if data["text"].strip():
         lines += ["Page text:", data["text"]]
+    lines.append(source_line(page))
     print("\n".join(lines))
 
 
@@ -521,14 +581,41 @@ def cmd_click(page, ref, accept):
     finally:
         disarm_dialog(page, handler)
     settle(page)
+    guard_page(page)
     print(f"Clicked [{ref}]. Now on {shown(page.url)} ({page.title()}).{dialog_note(box)} Take a browser_snapshot to see the result.")
+    print(source_line(page))
 
 
-def cmd_type(page, ref, text, submit, accept):
+def origin_allowed(url, origins):
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == o or host.endswith("." + o) for o in origins)
+
+
+def cmd_type(page, ref, text, submit, accept, secret=False, allow_origins=""):
+    origins = [o.strip().lower() for o in (allow_origins or "").split(",") if o.strip()]
+    if secret:
+        # The value arrives on stdin, never in argv or the transcript.
+        text = sys.stdin.read()
+        if not text:
+            fail("the saved secret is empty")
+        if not origins or not origin_allowed(page.url, origins):
+            fail(f"This page ({shown(page.url)}) isn't allowed for that saved secret.")
+    elif text is None:
+        fail("text is required")
     el = element(page, ref)
+    if secret:
+        try:
+            kind = el.evaluate("e => e.tagName === 'INPUT' ? (e.type || '').toLowerCase() : ''")
+            frame_url = el.evaluate("e => e.ownerDocument.location.href")
+        except Exception:
+            kind, frame_url = "", page.url
+        if kind != "password":
+            fail("saved secrets can only be typed into password fields")
+        if not origin_allowed(frame_url, origins):
+            fail("saved secrets can only be typed into the sites they are saved for")
     box, handler = arm_dialog(page, accept)
     try:
-        if el.evaluate("e => e.tagName.toLowerCase()") == "select":
+        if not secret and el.evaluate("e => e.tagName.toLowerCase()") == "select":
             el.select_option(label=text, timeout=ACTION_TIMEOUT)
         else:
             el.fill(text, timeout=ACTION_TIMEOUT)
@@ -539,9 +626,12 @@ def cmd_type(page, ref, text, submit, accept):
     finally:
         disarm_dialog(page, handler)
     settle(page)
+    guard_page(page)
     done = " and submitted it" if submit else ""
-    # The text itself is not echoed: it may be a password.
-    print(f"Typed into [{ref}]{done}. Now on {shown(page.url)} ({page.title()}).{dialog_note(box)} Take a browser_snapshot to see the result.")
+    what = "the saved secret" if secret else "text"
+    # The value itself is never echoed.
+    print(f"Typed {what} into [{ref}]{done}. Now on {shown(page.url)} ({page.title()}).{dialog_note(box)} Take a browser_snapshot to see the result.")
+    print(source_line(page))
 
 
 def cmd_press(page, key, accept):
@@ -555,7 +645,9 @@ def cmd_press(page, key, accept):
     finally:
         disarm_dialog(page, handler)
     settle(page)
+    guard_page(page)
     print(f"Pressed {key}. Now on {shown(page.url)} ({page.title()}).{dialog_note(box)}")
+    print(source_line(page))
 
 
 def cmd_hover(page, ref):
@@ -645,9 +737,11 @@ def main():
     c.add_argument("--accept", action="store_true", help="accept a dialog the click raises")
     t = sub.add_parser("type")
     t.add_argument("ref", type=int)
-    t.add_argument("text")
+    t.add_argument("text", nargs="?")
     t.add_argument("--submit", action="store_true")
     t.add_argument("--accept", action="store_true", help="accept a dialog the typing raises")
+    t.add_argument("--secret", action="store_true", help="read the value from stdin; password fields only")
+    t.add_argument("--allow-origin", default="", help="comma-separated hosts where a secret may be typed")
     k = sub.add_parser("press")
     k.add_argument("key")
     k.add_argument("--accept", action="store_true", help="accept a dialog the key raises")
@@ -693,7 +787,7 @@ def main():
         elif args.cmd == "click":
             cmd_click(page, args.ref, args.accept)
         elif args.cmd == "type":
-            cmd_type(page, args.ref, args.text, args.submit, args.accept)
+            cmd_type(page, args.ref, args.text, args.submit, args.accept, args.secret, args.allow_origin)
         elif args.cmd == "press":
             cmd_press(page, args.key, args.accept)
         elif args.cmd == "hover":

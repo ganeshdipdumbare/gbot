@@ -24,6 +24,7 @@ type Bot struct {
 	Look         Look      `json:"look"`
 	Pinned       bool      `json:"pinned"`
 	Network      bool      `json:"computerNetwork"`
+	AllowedHosts []string  `json:"allowedHosts"`
 	Voice        string    `json:"voice"`
 	ReadAloud    bool      `json:"readAloud"`
 	Visibility   string    `json:"visibility"`     // private | team | invited
@@ -39,19 +40,20 @@ type NewBot struct {
 
 // botCols lists the bot columns in scanBot's order, with the bots table
 // aliased as b.
-const botCols = `b.id, b.space_id, b.owner_id, b.name, b.title, b.instructions, b.model, b.look, b.pinned, b.computer_network, b.voice, b.read_aloud, b.visibility, b.created_at`
+const botCols = `b.id, b.space_id, b.owner_id, b.name, b.title, b.instructions, b.model, b.look, b.pinned, b.computer_network, b.allowed_hosts, b.voice, b.read_aloud, b.visibility, b.created_at`
 
 // scanBot reads a bot row. extra columns (such as the viewer's membership
 // role) are scanned after the bot's own.
 func scanBot(row pgx.Row, extra ...any) (*Bot, error) {
 	b := &Bot{}
-	var look []byte
+	var look, hosts []byte
 	dest := append([]any{&b.ID, &b.SpaceID, &b.OwnerID, &b.Name, &b.Title, &b.Instructions, &b.Model, &look,
-		&b.Pinned, &b.Network, &b.Voice, &b.ReadAloud, &b.Visibility, &b.CreatedAt}, extra...)
+		&b.Pinned, &b.Network, &hosts, &b.Voice, &b.ReadAloud, &b.Visibility, &b.CreatedAt}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, notFound(err)
 	}
 	_ = json.Unmarshal(look, &b.Look)
+	_ = json.Unmarshal(hosts, &b.AllowedHosts)
 	return b, nil
 }
 
@@ -151,31 +153,37 @@ func (s *Store) CreateBot(ctx context.Context, spaceID, ownerID string, nb NewBo
 	return b.withRole(ownerID, nil), nil
 }
 
-const botColsBare = `id, space_id, owner_id, name, title, instructions, model, look, pinned, computer_network, voice, read_aloud, visibility, created_at`
+const botColsBare = `id, space_id, owner_id, name, title, instructions, model, look, pinned, computer_network, allowed_hosts, voice, read_aloud, visibility, created_at`
 
 type BotPatch struct {
-	Name         *string `json:"name"`
-	Title        *string `json:"title"`
-	Instructions *string `json:"instructions"`
-	Model        *string `json:"model"`
-	Look         *Look   `json:"look"`
-	Pinned       *bool   `json:"pinned"`
-	Network      *bool   `json:"computerNetwork"`
-	Voice        *string `json:"voice"`
-	ReadAloud    *bool   `json:"readAloud"`
+	Name         *string   `json:"name"`
+	Title        *string   `json:"title"`
+	Instructions *string   `json:"instructions"`
+	Model        *string   `json:"model"`
+	Look         *Look     `json:"look"`
+	Pinned       *bool     `json:"pinned"`
+	Network      *bool     `json:"computerNetwork"`
+	AllowedHosts *[]string `json:"allowedHosts"`
+	Voice        *string   `json:"voice"`
+	ReadAloud    *bool     `json:"readAloud"`
 }
 
 func (s *Store) UpdateBot(ctx context.Context, spaceID, id string, p BotPatch) (*Bot, error) {
-	var look []byte
+	var look, hosts []byte
 	if p.Look != nil {
 		look, _ = json.Marshal(*p.Look)
+	}
+	if p.AllowedHosts != nil {
+		hosts, _ = json.Marshal(*p.AllowedHosts)
 	}
 	return scanBot(s.DB.QueryRow(ctx, `UPDATE bots SET
 		name=COALESCE($3,name), title=COALESCE($4,title), instructions=COALESCE($5,instructions),
 		model=COALESCE($6,model), look=COALESCE($7::jsonb,look), pinned=COALESCE($8,pinned),
-		computer_network=COALESCE($9,computer_network), voice=COALESCE($10,voice), read_aloud=COALESCE($11,read_aloud), updated_at=now()
+		computer_network=COALESCE($9,computer_network),
+		allowed_hosts=COALESCE($10::jsonb,allowed_hosts),
+		voice=COALESCE($11,voice), read_aloud=COALESCE($12,read_aloud), updated_at=now()
 		WHERE id=$1 AND space_id=$2 AND archived_at IS NULL RETURNING `+botColsBare,
-		id, spaceID, p.Name, p.Title, p.Instructions, p.Model, look, p.Pinned, p.Network, p.Voice, p.ReadAloud))
+		id, spaceID, p.Name, p.Title, p.Instructions, p.Model, look, p.Pinned, p.Network, hosts, p.Voice, p.ReadAloud))
 }
 
 func (s *Store) ArchiveBot(ctx context.Context, spaceID, id string) error {

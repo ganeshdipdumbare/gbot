@@ -8,7 +8,7 @@ export interface Message {
 }
 export interface Bot {
   id: string; spaceId: string; ownerId: string; name: string; title: string; instructions: string; model: string;
-  look: Look; pinned: boolean; computerNetwork: boolean; voice: string; readAloud: boolean;
+  look: Look; pinned: boolean; computerNetwork: boolean; allowedHosts: string[]; voice: string; readAloud: boolean;
   visibility: Visibility; role?: BotRole; createdAt: string; lastMessage?: Message;
 }
 export type Visibility = "private" | "team" | "invited";
@@ -18,24 +18,27 @@ export interface Sharing { visibility: Visibility; members: Member[]; spaceMembe
 export interface Space { id: string; name: string; role: "owner" | "member" }
 export interface Group { id: string; spaceId: string; userId: string; name: string; botIds: string[]; createdAt: string; lastMessage?: Message }
 export interface Presence { state: "idle" | "thinking" | "working" | "waiting" | "blocked" | "done"; detail?: string; queued?: number; live?: boolean }
-export interface Model { id: string; label: string; provider: string; local: boolean; tools: boolean; caps?: string[] }
-export type ProviderKind = "openai" | "anthropic" | "gemini";
+export interface Model { id: string; label: string; provider: string; local: boolean; tools: boolean; caps?: string[]; best?: boolean }
+export interface QueueItem { id: string; prompt: string; status: "queued" | "paused" | "running" | "waiting" | "done" | "stopped" | "error" | "cancelled"; error?: string; createdAt: string }
+export type ProviderKind = "openai" | "anthropic" | "gemini" | "codex";
+export interface CodexLogin { available: boolean; allowed: boolean }
 export interface Provider {
   id: string; name: string; kind: ProviderKind; baseUrl: string; hasKey: boolean;
-  local: boolean; models: string[]; enabled: boolean; status: string; createdAt: string;
+  local: boolean; models: string[]; caps?: Record<string, string[]>; enabled: boolean; status: string; createdAt: string;
 }
 export interface ProviderInput {
   name: string; kind: ProviderKind; baseUrl: string; apiKey?: string; local?: boolean;
   models?: string[]; enabled?: boolean; removeKey?: boolean;
 }
-export interface ComputerStatus { state: "off" | "starting" | "on"; controller: "bot" | "user"; network: boolean; available: boolean; backend: "microsandbox" | "docker" }
+export interface ComputerStatus { state: "off" | "starting" | "asleep" | "on"; controller: "bot" | "user"; network: boolean; available: boolean; backend: "microsandbox" | "docker" }
 export interface Routine {
   id: string; botId: string; name: string; prompt: string; kind: "schedule" | "webhook"; schedule?: string; when: string;
   active: boolean; nextRunAt?: string; lastRunAt?: string; webhookUrl?: string; secret?: string;
 }
 export interface ToolRule { tool: string; rule: "allow" | "block" }
-export interface MCPServer { id: string; name: string; url: string; hasAuth: boolean; enabled: boolean; status: string; tools: string[] }
+export interface MCPServer { id: string; name: string; url: string; hasAuth: boolean; oauth: boolean; enabled: boolean; status: string; tools: string[] }
 export interface Skill { id: string; name: string; description: string; body: string }
+export interface VaultSecret { id: string; name: string; origins: string[]; updatedAt: string }
 export interface VoiceInfo { transcribe: boolean; speak: boolean; transcribeBy?: string; speakBy?: string }
 
 export class ApiError extends Error {
@@ -68,13 +71,13 @@ export const api = {
   me: () => req<User>("GET", "/api/me"),
   updateMe: (b: { defaultModel?: string; approvalMode?: ApprovalMode }) => req<User>("PATCH", "/api/me", b),
   models: () => req<{ models: Model[]; ollamaHost: string }>("GET", "/api/models"),
-  providers: () => req<{ providers: Provider[] }>("GET", "/api/providers"),
+  providers: () => req<{ providers: Provider[]; codex?: CodexLogin }>("GET", "/api/providers"),
   createProvider: (b: ProviderInput) => req<Provider>("POST", "/api/providers", b),
   updateProvider: (id: string, b: Partial<ProviderInput>) => req<Provider>("PATCH", `/api/providers/${id}`, b),
   deleteProvider: (id: string) => req("DELETE", `/api/providers/${id}`, {}),
   refreshProvider: (id: string) => req<Provider>("POST", `/api/providers/${id}/refresh`, {}),
   discoverProvider: (b: { id?: string; kind: ProviderKind; baseUrl?: string; apiKey?: string }) =>
-    req<{ models: string[] }>("POST", "/api/providers/discover", b),
+    req<{ models: string[]; caps?: Record<string, string[]> }>("POST", "/api/providers/discover", b),
   rules: () => req<{ rules: ToolRule[] }>("GET", "/api/settings/rules"),
   setRule: (tool: string, rule: "allow" | "block" | "") => req<{ rules: ToolRule[] }>("PUT", "/api/settings/rules", { tool, rule }),
 
@@ -85,11 +88,16 @@ export const api = {
   messages: (id: string, before?: string) => req<{ messages: Message[] }>("GET", `${bot(id)}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`),
   send: (id: string, text: string) => req<Message>("POST", `${bot(id)}/messages`, { text }),
   stop: (id: string) => req("POST", `${bot(id)}/stop`, {}),
+  queue: (id: string) => req<{ items: QueueItem[] }>("GET", `${bot(id)}/queue`),
+  groupQueue: (id: string) => req<{ items: QueueItem[] }>("GET", `/api/groups/${id}/queue`),
+  queueAction: (qid: string, action: "pause" | "resume" | "cancel") => req<{ items: QueueItem[] }>("POST", `/api/queue/${qid}`, { action }),
+  clearQueue: (id: string) => req<{ items: QueueItem[] }>("POST", `${bot(id)}/queue/clear`, {}),
+  clearGroupQueue: (id: string) => req<{ items: QueueItem[] }>("POST", `/api/groups/${id}/queue/clear`, {}),
   answer: (cardId: string, b: { decision: "approve" | "reject" | "answer"; text?: string; always?: boolean }) =>
     req<Message>("POST", `/api/cards/${cardId}`, b),
 
   computer: (id: string) => req<ComputerStatus>("GET", `${bot(id)}/computer`),
-  computerAction: (id: string, action: "start" | "stop" | "control" | "input" | "show", body: unknown = {}) =>
+  computerAction: (id: string, action: "start" | "stop" | "sleep" | "wake" | "control" | "input" | "show", body: unknown = {}) =>
     req<ComputerStatus>("POST", `${bot(id)}/computer/${action}`, body),
   screenUrl: (id: string) => `${bot(id)}/computer/screen?t=${Date.now()}`,
   streamUrl: (id: string) => `${bot(id)}/computer/stream?t=${Date.now()}`,
@@ -113,9 +121,14 @@ export const api = {
   runRoutine: (id: string, rid: string) => req("POST", `${bot(id)}/routines/${rid}/run`, {}),
 
   mcp: () => req<{ servers: MCPServer[] }>("GET", "/api/mcp"),
+  startMcpOAuth: (b: { name: string; url: string }) => req<{ url: string }>("POST", "/api/mcp/oauth/start", b),
   addMcp: (b: { name: string; url: string; token?: string }) => req<MCPServer>("POST", "/api/mcp", b),
   toggleMcp: (id: string, enabled: boolean) => req<MCPServer>("PATCH", `/api/mcp/${id}`, { enabled }),
   deleteMcp: (id: string) => req("DELETE", `/api/mcp/${id}`),
+  vault: () => req<{ secrets: VaultSecret[] }>("GET", "/api/vault"),
+  addVault: (b: { name: string; value: string; origins: string[] }) => req<VaultSecret>("POST", "/api/vault", b),
+  updateVault: (id: string, b: { name?: string; value?: string; origins?: string[] }) => req<VaultSecret>("PATCH", `/api/vault/${id}`, b),
+  deleteVault: (id: string) => req("DELETE", `/api/vault/${id}`, {}),
   skills: () => req<{ skills: Skill[] }>("GET", "/api/skills"),
   saveSkill: (b: { name: string; description: string; body: string }) => req<Skill>("POST", "/api/skills", b),
   deleteSkill: (id: string) => req("DELETE", `/api/skills/${id}`),

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // A driver runs the computer image somewhere: a microVM (microsandbox)
@@ -22,6 +23,10 @@ type driver interface {
 	// exec runs args inside the computer. env is KEY=VALUE.
 	exec(ctx context.Context, id, user string, env []string, stdin []byte, detach bool, args ...string) (string, string, int, error)
 	stop(ctx context.Context, id string)
+	// pause freezes a running computer without discarding it; resume
+	// unfreezes it. The guest keeps its windows and processes.
+	pause(ctx context.Context, id string) error
+	resume(ctx context.Context, id string) error
 	list(ctx context.Context) []found
 }
 
@@ -93,15 +98,49 @@ func (msbDriver) start(ctx context.Context, botID, image string, network bool) (
 	if _, errOut, code, err := run(ctx, "msb", nil, args...); err != nil || code != 0 {
 		return "", fmt.Errorf("microsandbox: %s%v", strings.TrimSpace(errOut), errOrNil(err))
 	}
+	// create returns before the guest agent accepts connections.
+	ready := false
+	for i := 0; i < 100; i++ {
+		if _, _, code, err := run(ctx, "msb", nil, "exec", n, "--no-stdin", "--", "true"); err == nil && code == 0 {
+			ready = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !ready {
+		_, _, _, _ = run(ctx, "msb", nil, "rm", "--force", n)
+		return "", errors.New("microsandbox: the computer's agent didn't start")
+	}
 	// create only boots the VM; the desktop runs as a managed job.
 	desktop := []string{"exec", "-d", n, "-u", "gbot"}
 	if tz := hostTZ(); tz != "" {
 		desktop = append(desktop, "-e", "TZ="+tz)
 	}
-	if _, errOut, code, err := run(ctx, "msb", nil, append(desktop, "--", "/usr/local/bin/gbot-desktop")...); err != nil || code != 0 {
+	if _, errOut, code, err := msbRun(ctx, nil, append(desktop, "--", "/usr/local/bin/gbot-desktop")...); err != nil || code != 0 {
 		return "", fmt.Errorf("microsandbox: starting the desktop: %s%v", strings.TrimSpace(errOut), errOrNil(err))
 	}
 	return n, nil
+}
+
+// msbRun retries a command the guest agent refused while it was still
+// coming up ("agent client error: handshake: early eof").
+func msbRun(ctx context.Context, stdin []byte, args ...string) (string, string, int, error) {
+	for attempt := 0; ; attempt++ {
+		out, errOut, code, err := run(ctx, "msb", stdin, args...)
+		why := errOut
+		if err != nil {
+			why += err.Error()
+		}
+		if attempt < 5 && (err != nil || code != 0) && transientAgent(why) {
+			time.Sleep(time.Duration(attempt+1) * 150 * time.Millisecond)
+			continue
+		}
+		return out, errOut, code, err
+	}
+}
+
+func transientAgent(s string) bool {
+	return strings.Contains(s, "agent client error") || strings.Contains(s, "handshake") || strings.Contains(s, "early eof")
 }
 
 func (msbDriver) exec(ctx context.Context, id, user string, env []string, stdin []byte, detach bool, args ...string) (string, string, int, error) {
@@ -118,11 +157,19 @@ func (msbDriver) exec(ctx context.Context, id, user string, env []string, stdin 
 	for _, e := range env {
 		a = append(a, "-e", e)
 	}
-	return run(ctx, "msb", stdin, append(append(a, "--"), args...)...)
+	return msbRun(ctx, stdin, append(append(a, "--"), args...)...)
 }
 
 func (msbDriver) stop(ctx context.Context, id string) {
 	_, _, _, _ = run(ctx, "msb", nil, "rm", "--force", id)
+}
+
+func (msbDriver) pause(ctx context.Context, id string) error {
+	return commandErr(run(ctx, "msb", nil, "pause", "-q", id))
+}
+
+func (msbDriver) resume(ctx context.Context, id string) error {
+	return commandErr(run(ctx, "msb", nil, "resume", "-q", id))
 }
 
 func (msbDriver) list(ctx context.Context) []found {
@@ -196,6 +243,25 @@ func (dockerDriver) exec(ctx context.Context, id, user string, env []string, std
 
 func (dockerDriver) stop(ctx context.Context, id string) {
 	_, _, _, _ = run(ctx, "docker", nil, "rm", "-f", id)
+}
+
+func (dockerDriver) pause(ctx context.Context, id string) error {
+	return commandErr(run(ctx, "docker", nil, "pause", id))
+}
+
+func (dockerDriver) resume(ctx context.Context, id string) error {
+	return commandErr(run(ctx, "docker", nil, "unpause", id))
+}
+
+// commandErr turns a failed backend command into an error with its stderr.
+func commandErr(out, errOut string, code int, err error) error {
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return errors.New(strings.TrimSpace(errOut))
+	}
+	return nil
 }
 
 func (dockerDriver) list(ctx context.Context) []found {

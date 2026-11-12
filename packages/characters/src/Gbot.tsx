@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { hues } from "@gbot/ui-tokens";
 import { bodies, eyeSizes, mix } from "./parts";
 import { resolveLook, type Look } from "./traits";
@@ -16,6 +16,8 @@ export interface GbotProps {
   lookAt?: { x: number; y: number } | null;
   /** The bot's computer is running. */
   live?: boolean;
+  /** More blink, wander and sway, for the creation preview. */
+  lively?: boolean;
   /** Kept for compatibility; the bots draw no props. */
   props?: boolean;
   className?: string;
@@ -23,21 +25,29 @@ export interface GbotProps {
   title?: string;
 }
 
-function useBlink(enabled: boolean) {
+function useBlink(enabled: boolean, lively = false) {
   const [blink, setBlink] = useState(false);
   useEffect(() => {
     if (!enabled) return;
     let t: ReturnType<typeof setTimeout>;
+    let t2: ReturnType<typeof setTimeout>;
     const loop = () => {
       t = setTimeout(() => {
         setBlink(true);
-        setTimeout(() => setBlink(false), 120);
+        t2 = setTimeout(() => setBlink(false), 110);
+        // A preview bot sometimes blinks twice, which reads as curious.
+        if (lively && Math.random() < 0.35) {
+          setTimeout(() => {
+            setBlink(true);
+            setTimeout(() => setBlink(false), 95);
+          }, 190);
+        }
         loop();
-      }, 2600 + Math.random() * 4400);
+      }, lively ? 1500 + Math.random() * 2400 : 2600 + Math.random() * 4400);
     };
     loop();
-    return () => clearTimeout(t);
-  }, [enabled]);
+    return () => { clearTimeout(t); clearTimeout(t2); };
+  }, [enabled, lively]);
   return blink;
 }
 
@@ -48,13 +58,13 @@ const clamp = (v: number) => Math.max(-1, Math.min(1, v));
 // resting on a faint contact shadow. The eyes stay flat, like Grok Bot's:
 // simple upright pills in a light colour. When a bot looks somewhere its
 // face slides that way while the light stays put.
-export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, live, className, style, title }: GbotProps) {
+export const Gbot = memo(function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, live, lively, className, style, title }: GbotProps) {
   const t = resolveLook(look, seed);
   const color = hues[t.hue];
   const body = bodies[t.shape];
   const uid = useId().replace(/:/g, "");
   const happy = mood === "done" || mood === "happy";
-  const blink = useBlink(!happy && mood !== "sleepy");
+  const blink = useBlink(!happy && mood !== "sleepy", lively);
 
   // At rest the eyes wander now and then: calm, slightly curious.
   const [drift, setDrift] = useState({ x: 0, y: 0 });
@@ -65,10 +75,11 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
     const id = setInterval(() => {
       if (steered.current) return;
       const r = Math.random();
-      setDrift(r < 0.45 ? { x: 0, y: 0 } : { x: (Math.random() - 0.5) * 1.6, y: (Math.random() - 0.5) * 0.8 });
-    }, 2800 + Math.random() * 2400);
+      const spread = lively ? 2.5 : 1.6;
+      setDrift(r < (lively ? 0.35 : 0.45) ? { x: 0, y: 0 } : { x: (Math.random() - 0.5) * spread, y: (Math.random() - 0.5) * (lively ? 1.3 : 0.8) });
+    }, lively ? 1400 + Math.random() * 1700 : 2800 + Math.random() * 2400);
     return () => clearInterval(id);
-  }, [mood]);
+  }, [mood, lively]);
 
   const gaze = lookAt ? { x: clamp(lookAt.x), y: clamp(lookAt.y) } : drift;
   const gx = gaze.x * 2.4;
@@ -87,6 +98,10 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
   const url = (k: string) => `url(#${id(k)})`;
   const lit = mix(color.body, "#ffffff", 0.2);
   const shade = mix(color.body, "#000000", 0.1);
+  // Roster-size avatars skip the Gaussian edge filter and gloss: at 42px
+  // it is invisible, and dozens of filtered SVGs are what makes the list
+  // stutter.
+  const simple = size < 56;
 
   return (
     <svg
@@ -96,6 +111,7 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
       className={`gbot ${className ?? ""}`}
       data-mood={mood}
       data-small={size < 48 ? "" : undefined}
+      data-lively={lively ? "" : undefined}
       style={style}
       role="img"
       aria-label={title ?? "bot"}
@@ -139,10 +155,12 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
       <ellipse className="gbot-shadow" cx="50" cy="95.5" rx="27" ry="3.4" fill={url("ground")} />
 
       <g className="gbot-body" style={{ "--tilt": `${gaze.x * 3}deg` } as CSSProperties}>
-        <path d={body.d} fill={url("body")} filter={url("form")} />
-        <g clipPath={url("clip")}>
-          <ellipse cx={42 - px * 0.3} cy={24 - py * 0.3} rx="28" ry="16" fill={url("sheen")} />
-        </g>
+        <path d={body.d} fill={url("body")} filter={simple ? undefined : url("form")} />
+        {!simple && (
+          <g clipPath={url("clip")}>
+            <ellipse cx={42 - px * 0.3} cy={24 - py * 0.3} rx="28" ry="16" fill={url("sheen")} />
+          </g>
+        )}
         <g className="gbot-face" style={{ transform: `translate(${px}px, ${py}px)` }}>
           <g className={`gbot-eyes${blink ? " is-blink" : ""}`}>
             {([-1, 1] as const).map((side) => {
@@ -181,4 +199,4 @@ export function Gbot({ look, seed = "gbot", mood = "idle", size = 48, lookAt, li
       {live && <circle className="gbot-live" cx="84" cy="84" r="7.5" fill="#8B5CF6" stroke="var(--bg, #fff)" strokeWidth="3" />}
     </svg>
   );
-}
+});

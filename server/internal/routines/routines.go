@@ -25,6 +25,16 @@ type Service struct {
 	Log   *slog.Logger
 	// Fire starts a routine run on its bot, for the routine's creator.
 	Fire func(ctx context.Context, bot *store.Bot, r *store.Routine, input string)
+	// OnChange tells the creator's open clients that the list moved.
+	OnChange func(botID, userID string)
+}
+
+// Changed tells the creator's clients to reload their routine list. It is
+// called by the API handlers that edit a routine directly.
+func (s *Service) Changed(botID, userID string) {
+	if s.OnChange != nil {
+		s.OnChange(botID, userID)
+	}
 }
 
 var ErrInvalid = errors.New("invalid routine")
@@ -60,7 +70,43 @@ func (s *Service) Create(ctx context.Context, botID, userID, name, prompt, kind,
 		return nil, "", errors.Join(ErrInvalid, errors.New("kind must be schedule or webhook"))
 	}
 	out, err := s.Store.CreateRoutine(ctx, r, hash)
+	if err == nil {
+		s.Changed(botID, userID)
+	}
 	return out, secret, err
+}
+
+// Update changes a routine's name, prompt or schedule. Empty values keep
+// the current field.
+func (s *Service) Update(ctx context.Context, botID, userID, id, name, prompt, schedule string) (*store.Routine, error) {
+	cur, err := s.Store.GetRoutine(ctx, botID, userID, id)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	name, prompt, schedule = strings.TrimSpace(name), strings.TrimSpace(prompt), strings.TrimSpace(schedule)
+	if name != "" && (utf8.RuneCountInString(name) > 80) {
+		return nil, errors.Join(ErrInvalid, errors.New("keep the name under 80 characters"))
+	}
+	if prompt != "" && len(prompt) > 8000 {
+		return nil, errors.Join(ErrInvalid, errors.New("keep the instruction under 8000 characters"))
+	}
+	var next *time.Time
+	if schedule != "" {
+		if cur.Kind != "schedule" {
+			return nil, errors.Join(ErrInvalid, errors.New("a webhook routine has no schedule"))
+		}
+		sc, err := cron.Parse(schedule)
+		if err != nil {
+			return nil, errors.Join(ErrInvalid, err)
+		}
+		n := sc.Next(time.Now())
+		next = &n
+	}
+	out, err := s.Store.UpdateRoutineFields(ctx, botID, userID, id, name, prompt, schedule, next)
+	if err == nil {
+		s.Changed(botID, userID)
+	}
+	return out, err
 }
 
 // Run claims due routines every few seconds until ctx ends.

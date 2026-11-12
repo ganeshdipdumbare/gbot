@@ -85,7 +85,11 @@ func (m *Manager) WebAction(ctx context.Context, o Owner, what string, args ...s
 	m.note(ctx, id, "◍", "111", what)
 	c, cancel := context.WithTimeout(ctx, webTimeout)
 	defer cancel()
-	out, errOut, code, err := m.d.exec(c, id, "gbot", []string{"DISPLAY=:1"}, nil, false, args...)
+	env := []string{"DISPLAY=:1"}
+	if len(o.Hosts) > 0 {
+		env = append(env, "GBOT_ALLOWED_HOSTS="+strings.Join(o.Hosts, ","))
+	}
+	out, errOut, code, err := m.d.exec(c, id, "gbot", env, nil, false, args...)
 	if c.Err() != nil {
 		return "", errors.New("the browser took too long to answer")
 	}
@@ -109,6 +113,38 @@ func (m *Manager) WebClick(ctx context.Context, o Owner, ref int, accept bool) (
 
 func (m *Manager) WebType(ctx context.Context, o Owner, ref int, text string, submit, accept bool) (string, error) {
 	return m.WebAction(ctx, o, "Typing into ["+strconv.Itoa(ref)+"]", webCmd(typeArgs(ref, text, submit, accept)...)...)
+}
+
+// WebTypeSecret fills a password field from the vault. The value goes on
+// stdin, never in the command line, and the page must be on one of the
+// secret's origins.
+func (m *Manager) WebTypeSecret(ctx context.Context, o Owner, ref int, value string, origins []string, submit bool) (string, error) {
+	id, err := m.container(o, true)
+	if err != nil {
+		return "", err
+	}
+	if len(origins) == 0 {
+		return "", errors.New("that saved secret has no allowed sites")
+	}
+	m.note(ctx, id, "◍", "111", "Typing a saved secret into ["+strconv.Itoa(ref)+"]")
+	c, cancel := context.WithTimeout(ctx, webTimeout)
+	defer cancel()
+	env := []string{"DISPLAY=:1"}
+	if len(o.Hosts) > 0 {
+		env = append(env, "GBOT_ALLOWED_HOSTS="+strings.Join(o.Hosts, ","))
+	}
+	args := webCmd("type", strconv.Itoa(ref), "--secret", "--allow-origin", strings.Join(origins, ","))
+	if submit {
+		args = append(args, "--submit")
+	}
+	out, errOut, code, err := m.d.exec(c, id, "gbot", env, []byte(value), false, args...)
+	if c.Err() != nil {
+		return "", errors.New("the browser took too long to answer")
+	}
+	if err != nil {
+		return "", err
+	}
+	return webResult(out, errOut, code)
 }
 
 func (m *Manager) WebPress(ctx context.Context, o Owner, key string, accept bool) (string, error) {

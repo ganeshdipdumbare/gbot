@@ -1,5 +1,5 @@
 import { motion, type HTMLMotionProps } from "motion/react";
-import { forwardRef, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
+import { forwardRef, useState, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 
 // Snappy motion, like Grok Bot. Panels and dialogs land fast with no
 // overshoot and leave faster still; small things keep a hint of bounce.
@@ -83,12 +83,17 @@ export const Icon = {
   plus: () => <I><path d="M12 5v14M5 12h14" /></I>,
   send: () => <I><path d="M5 12h13M12 5l7 7-7 7" /></I>,
   stop: () => <I><rect x="7" y="7" width="10" height="10" rx="3" fill="currentColor" stroke="none" /></I>,
+  pause: () => <I><path d="M9 5v14M15 5v14" /></I>,
   gear: () => <I><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></I>,
   search: () => <I><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></I>,
   close: () => <I><path d="M6 6l12 12M18 6L6 18" /></I>,
   menu: () => <I><path d="M4 7h16M4 12h16M4 17h10" /></I>,
   dice: () => <I><rect x="4" y="4" width="16" height="16" rx="5" /><circle cx="9" cy="9" r="1.2" fill="currentColor" /><circle cx="15" cy="15" r="1.2" fill="currentColor" /><circle cx="15" cy="9" r="1.2" fill="currentColor" /><circle cx="9" cy="15" r="1.2" fill="currentColor" /></I>,
   pin: () => <I><path d="M14 4l6 6-3 1-4 4 .5 4-2.5.5L4 13l.5-2.5 4 .5 4-4zM4 20l5-5" /></I>,
+  unread: () => <I><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /></I>,
+  eye: () => <I><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6S2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.5" /></I>,
+  eyeOff: () => <I><path d="M3 3l18 18M10.6 6.2A9.7 9.7 0 0112 6c6 0 9.5 6 9.5 6a15 15 0 01-3 3.5M6.5 7.6A15.5 15.5 0 002.5 12s3.5 6 9.5 6a9.8 9.8 0 004.2-.9" /></I>,
+  lock: () => <I><rect x="5" y="10" width="14" height="10" rx="2.5" /><path d="M8 10V7a4 4 0 018 0v3" /></I>,
   chip: () => <I><rect x="6" y="6" width="12" height="12" rx="3" /><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" /></I>,
   logout: () => <I><path d="M15 4h3a2 2 0 012 2v12a2 2 0 01-2 2h-3M10 8l-4 4 4 4M6 12h10" /></I>,
   screen: () => <I><rect x="3" y="4" width="18" height="12" rx="3" /><path d="M9 20h6M12 16v4" /></I>,
@@ -112,3 +117,17 @@ export const Icon = {
   check: () => <I><path d="M5 12.5l4.5 4.5L19 7.5" /></I>,
   heart: () => <I><path d="M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z" /></I>,
 };
+
+// A password field with a show/hide control, for sign-in and secrets.
+export const PasswordInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function PasswordInput({ className = "", ...rest }, ref) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <Input ref={ref} {...rest} type={show ? "text" : "password"} className={`pr-10 ${className}`} />
+      <button type="button" onClick={() => setShow((v) => !v)} aria-label={show ? "Hide password" : "Show password"} aria-pressed={show}
+        className="absolute right-1 top-1/2 -translate-y-1/2 grid place-items-center size-7 rounded-md text-ink-3 hover:text-ink hover:bg-hover transition-colors cursor-pointer">
+        {show ? <Icon.eyeOff /> : <Icon.eye />}
+      </button>
+    </div>
+  );
+});

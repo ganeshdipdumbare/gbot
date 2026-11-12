@@ -138,6 +138,46 @@ func (s *Store) page(ctx context.Context, where string, args []any, before *time
 	return out, err
 }
 
+// SearchMessages finds what was said in one chat, newest first. It backs
+// the bot's history_search tool: context trimming hides old turns from the
+// model, this lets it look them up. A group is named by groupID; otherwise
+// the chat is the bot's own with userID.
+func (s *Store) SearchMessages(ctx context.Context, botID, userID, groupID, query string, since time.Time, limit int) ([]*Message, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	where, args := `bot_id=$1 AND chat_user_id=$2 AND group_id IS NULL`, []any{botID, userID}
+	if groupID != "" {
+		where, args = `group_id=$1`, []any{groupID}
+	}
+	args = append(args, since)
+	sinceIdx := len(args)
+	args = append(args, limit)
+	limitIdx := len(args)
+	q := `SELECT ` + msgCols + ` FROM messages WHERE ` + where + `
+		AND role IN ('user','bot') AND created_at >= $` + strconv.Itoa(sinceIdx)
+	if query != "" {
+		pattern := "%" + escapeLike(query) + "%"
+		args = append(args, pattern)
+		q += ` AND content ILIKE $` + strconv.Itoa(len(args)) + ` ESCAPE '\'`
+	}
+	q += ` ORDER BY created_at DESC, id DESC LIMIT $` + strconv.Itoa(limitIdx)
+	rows, err := s.DB.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Message
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // StartRun records a run and the person it was for.
 func (s *Store) StartRun(ctx context.Context, botID, userID, trigger, model string) (id string, err error) {
 	err = s.DB.QueryRow(ctx, `INSERT INTO runs(bot_id,user_id,trigger,model) VALUES($1,$2,$3,$4) RETURNING id`,

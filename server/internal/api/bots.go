@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/net/publicsuffix"
 
 	"gbot/internal/runs"
 	"gbot/internal/store"
@@ -75,6 +78,48 @@ func (s *Server) getBot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+
+// cleanHosts normalizes a browser allowlist. Accepting "https://x/y" is
+// friendly, but only the host survives; subdomains are covered by the
+// suffix match in the browser.
+func cleanHosts(in []string) ([]string, string) {
+	if len(in) > 50 {
+		return nil, "keep the allowlist to 50 sites"
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, raw := range in {
+		h := strings.ToLower(strings.TrimSpace(raw))
+		if i := strings.Index(h, "://"); i >= 0 {
+			h = h[i+3:]
+		}
+		if i := strings.IndexAny(h, "/?#"); i >= 0 {
+			h = h[:i]
+		}
+		h = strings.TrimPrefix(h, "*.")
+		h = strings.TrimSuffix(h, ".")
+		if h == "" {
+			continue
+		}
+		if !hostPattern.MatchString(h) || (!strings.Contains(h, ".") && h != "localhost") {
+			return nil, fmt.Sprintf("%q isn't a domain like linkedin.com", raw)
+		}
+		if h != "localhost" {
+			base, err := publicsuffix.EffectiveTLDPlusOne(h)
+			if err != nil {
+				return nil, fmt.Sprintf("%q isn't a domain like linkedin.com", raw)
+			}
+			h = base
+		}
+		if !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	return out, ""
+}
+
 func validBotFields(name, title, instructions *string, look *store.Look) string {
 	if name != nil {
 		*name = strings.TrimSpace(*name)
@@ -139,6 +184,14 @@ func (s *Server) updateBot(w http.ResponseWriter, r *http.Request) {
 	if msg := validBotFields(p.Name, p.Title, p.Instructions, p.Look); msg != "" {
 		writeErr(w, 400, msg)
 		return
+	}
+	if p.AllowedHosts != nil {
+		hosts, msg := cleanHosts(*p.AllowedHosts)
+		if msg != "" {
+			writeErr(w, 400, msg)
+			return
+		}
+		p.AllowedHosts = &hosts
 	}
 	if p.Model != nil && *p.Model != "" && s.Models.PickFor(r.Context(), s.userProviders(r.Context(), userFrom(r).ID), *p.Model) != *p.Model {
 		writeErr(w, 400, "that model isn't available")

@@ -1,26 +1,34 @@
 package runs
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"sort"
 	"strings"
+	"time"
 
-	"github.com/ganeshdipdumbare/kiln"
-	"github.com/ganeshdipdumbare/kiln/engine"
-	"github.com/ganeshdipdumbare/kiln/sdk"
+	"github.com/ganeshdipdumbare/kritrim"
 
 	"gbot/internal/crypto"
+	mcpoauth "gbot/internal/mcp"
 	"gbot/internal/store"
 )
 
-// MCP servers are tool_mcp modules in the shared agent, one instance per
-// server. kiln v0.5 loads modules only when an agent is built, so when
-// the set of servers changes the agent is rebuilt and swapped in. Runs
-// already in progress finish on the old agent. Each server is probed on
-// its own first, so one unreachable server can't stop the others.
+// MCP servers are remote tools the person adds. Each server's tools are
+// prefixed with its own short name, and the guard shows them only to runs
+// of the account that added the server.
 //
-// Each server's tools are prefixed with its own short name, and the guard
-// shows them only to runs of the account that added the server.
+// gbot connects each server itself to check it and learn its tools, then
+// registers those tools on every agent it builds. Doing the calls here
+// (instead of handing the URL to the SDK) keeps large SSE responses and
+// session handling in one place. A change to the set closes the cached
+// agents, so the next run reconnects without a removed integration.
 
 // mcpServer is one enabled server, with its headers decrypted.
 type mcpServer struct {
@@ -33,26 +41,50 @@ type mcpServer struct {
 	sig     string // url and headers; a change means reconnect
 }
 
-// spec is the tool_mcp module that serves this server.
-func (s mcpServer) spec() engine.ModuleSpec {
-	return engine.ModuleSpec{Use: "tool_mcp", As: "mcp_" + s.prefix, Config: map[string]any{
-		"servers": []any{map[string]any{"name": s.prefix, "url": s.url, "headers": s.headers, "timeout_seconds": 30}},
-	}}
+// mcpToolDef is one tool as the server described it.
+type mcpToolDef struct {
+	Name        string         `json:"name"`
+	Title       string         `json:"title,omitempty"`
+	Description string         `json:"description"`
+	Schema      map[string]any `json:"inputSchema"`
+	Annotations map[string]any `json:"annotations,omitempty"`
+}
+
+// label is the name the integrations panel shows: the server's own title
+// when it sent one, otherwise its bare tool name (no invented wording).
+func (d mcpToolDef) label() string {
+	if t := strings.TrimSpace(d.Title); t != "" {
+		return t
+	}
+	if d.Annotations != nil {
+		if t, ok := d.Annotations["title"].(string); ok {
+			if t = strings.TrimSpace(t); t != "" {
+				return t
+			}
+		}
+	}
+	name := d.Name
+	if i := strings.Index(name, "__"); i >= 0 {
+		name = name[i+2:]
+	}
+	return name
 }
 
 type mcpState struct {
 	srv    mcpServer
-	status string // connected | error message
-	loaded bool   // the live agent serves this server
+	status string       // connected | error message
+	loaded bool         // the live agents serve this server
+	tools  []string     // tool names the server offers
+	defs   []mcpToolDef // the same tools with schemas, for the agents
 	// off marks a server that was just disabled or deleted. It stays in
 	// the map (still counted as live) until the next sync rebuilds the
-	// agent without it, so the comparison can see what must be removed.
+	// agents without it, so the comparison can see what must be removed.
 	off bool
 }
 
 func mcpPrefix(id string) string { return "m" + strings.ReplaceAll(id, "-", "")[:8] }
 
-// decodeMCP reads a stored server, opening its sealed headers.
+// decodeMCP reads a stored server, opening its sealed headers and tokens.
 func decodeMCP(s *store.MCPServer, sealer *crypto.Sealer) mcpServer {
 	headers := map[string]any{}
 	if len(s.Sealed) > 0 && sealer != nil {
@@ -61,16 +93,62 @@ func decodeMCP(s *store.MCPServer, sealer *crypto.Sealer) mcpServer {
 			_ = json.Unmarshal(raw, &h)
 			for k, v := range h {
 				headers[k] = v
-				sdk.AddRedaction(v)
 			}
 		}
+	}
+	if t := openOAuth(s, sealer); t != nil {
+		headers["Authorization"] = "Bearer " + t.Access
 	}
 	sig, _ := json.Marshal(headers)
 	return mcpServer{id: s.ID, owner: s.UserID, name: s.Name, prefix: mcpPrefix(s.ID), url: s.URL,
 		headers: headers, sig: s.URL + "\n" + string(sig)}
 }
 
-// SyncMCP makes the live agent serve exactly the enabled servers.
+// openOAuth opens the sealed tokens. A broken seal is treated as no
+// token, so the server's error (401) is what the person sees.
+func openOAuth(s *store.MCPServer, sealer *crypto.Sealer) *mcpoauth.Tokens {
+	if len(s.OAuth) == 0 || sealer == nil {
+		return nil
+	}
+	raw, err := sealer.Open(s.OAuth)
+	if err != nil {
+		return nil
+	}
+	var t mcpoauth.Tokens
+	if json.Unmarshal(raw, &t) != nil || t.Access == "" {
+		return nil
+	}
+	return &t
+}
+
+// refreshToken renews an expiring access token before it is handed to
+// the agents. A failed refresh leaves the old token; the probe then
+// reports the provider's error and the person can reconnect.
+func (r *Runtime) refreshToken(ctx context.Context, s *store.MCPServer, sealer *crypto.Sealer) *store.MCPServer {
+	t := openOAuth(s, sealer)
+	if t == nil || !t.Expired() {
+		return s
+	}
+	next, err := mcpoauth.Refresh(ctx, t)
+	if err != nil {
+		r.log.Warn("mcp refresh", "server", s.Name, "err", err)
+		return s
+	}
+	raw, _ := json.Marshal(next)
+	sealed := sealer.Seal(raw)
+	updated, err := r.store.SetMCPOAuth(ctx, s.UserID, s.ID, sealed)
+	if err != nil {
+		r.log.Warn("mcp refresh save", "server", s.Name, "err", err)
+		return s
+	}
+	r.addSecret(next.Access)
+	if next.Refresh != "" {
+		r.addSecret(next.Refresh)
+	}
+	return updated
+}
+
+// SyncMCP makes the live agents serve exactly the enabled servers.
 func (r *Runtime) SyncMCP(ctx context.Context, sealer *crypto.Sealer) {
 	r.syncMu.Lock()
 	defer r.syncMu.Unlock()
@@ -89,52 +167,47 @@ func (r *Runtime) SyncMCP(ctx context.Context, sealer *crypto.Sealer) {
 
 	next := map[string]mcpState{}
 	for _, s := range servers {
+		s = r.refreshToken(ctx, s, sealer)
+		if t := openOAuth(s, sealer); t != nil {
+			r.addSecret(t.Access)
+			if t.Refresh != "" {
+				r.addSecret(t.Refresh)
+			}
+		}
 		srv := decodeMCP(s, sealer)
+		for _, v := range srv.headers {
+			if str, ok := v.(string); ok {
+				r.addSecret(str)
+			}
+		}
 		if st, ok := prev[srv.id]; ok && st.loaded && st.srv.sig == srv.sig {
 			next[srv.id] = st // already live, unchanged
 			continue
 		}
-		if err := r.probe(srv); err != nil {
-			status := sdk.Redact(err.Error())
+		defs, err := r.probe(srv)
+		if err != nil {
+			status := r.redact(err.Error())
 			r.log.Warn("mcp load", "server", srv.name, "err", status)
 			next[srv.id] = mcpState{srv: srv, status: status}
 			continue
 		}
-		next[srv.id] = mcpState{srv: srv, status: "connected", loaded: true}
-	}
-
-	// Compare the live set, not the probes: a server that keeps failing
-	// must not rebuild the agent on every sync.
-	if sameLive(prev, next) {
-		r.mu.Lock()
-		r.mcp = next
-		r.mu.Unlock()
-		return
-	}
-
-	live := liveMCPServers(next)
-	r.mu.Lock()
-	provs := liveProviderServers(r.providers)
-	r.mu.Unlock()
-	a, err := r.build(live, provs)
-	if err != nil {
-		// The agent stays as it was. Servers that only just probed fine
-		// are reported as not loaded.
-		r.log.Error("mcp rebuild", "err", sdk.Redact(err.Error()))
-		for id, st := range next {
-			if st.loaded && !prev[id].loaded {
-				next[id] = mcpState{srv: st.srv, status: "couldn't load: " + sdk.Redact(err.Error())}
-			}
+		names := make([]string, len(defs))
+		for i, d := range defs {
+			names[i] = d.Name
 		}
-		r.mu.Lock()
-		r.mcp = next
-		r.mu.Unlock()
-		return
+		next[srv.id] = mcpState{srv: srv, status: "connected", loaded: true, tools: names, defs: defs}
 	}
-	r.swap(&agentSlot{a: a})
+
+	// Swap the live set before dropping agents, so a run that starts in
+	// between builds with the new tools. The generation check in agentFor
+	// discards one that read the old set.
+	changed := !sameLive(prev, next)
 	r.mu.Lock()
 	r.mcp = next
 	r.mu.Unlock()
+	if changed {
+		r.invalidateAgents()
+	}
 }
 
 // sameLive reports whether two syncs leave the same servers live, with
@@ -162,29 +235,246 @@ func liveSigs(m map[string]mcpState) map[string]string {
 	return out
 }
 
-// probe connects one server in a throwaway agent. It fails with the
-// server's own error, which is what the person needs to see.
-func (r *Runtime) probe(s mcpServer) error {
-	a, err := kiln.New(kiln.WithModel("ollama:default"), kiln.WithModuleSpec(s.spec()))
+// mcpTools is the live tool set for one agent. The SDK's own MCP client
+// uses a 64 KB line buffer, which real servers (Notion) exceed, so the
+// calls go through gbot's client instead.
+func (r *Runtime) mcpTools() []kritrim.Tool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []kritrim.Tool
+	for _, st := range r.mcp {
+		if !st.loaded {
+			continue
+		}
+		srv := st.srv
+		for _, d := range st.defs {
+			name := d.Name
+			short := strings.TrimPrefix(name, srv.prefix+"__")
+			schema := d.Schema
+			if schema == nil {
+				schema = map[string]any{"type": "object"}
+			}
+			out = append(out, kritrim.Risky(kritrim.NewRawTool(name, d.Description, schema,
+				func(ctx context.Context, args map[string]any) (string, error) {
+					return r.callTool(ctx, srv, short, args)
+				})))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// callTool initializes a session and calls one remote tool. Each call
+// gets its own session so parallel tool calls can't interleave ids.
+func (r *Runtime) callTool(ctx context.Context, s mcpServer, name string, args map[string]any) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	headers := make(map[string]string, len(s.headers))
+	for k, v := range s.headers {
+		if str, ok := v.(string); ok {
+			headers[k] = str
+		}
+	}
+	p := &mcpProbe{url: s.url, headers: headers, client: &http.Client{Timeout: 2 * time.Minute}}
+	if err := p.call(ctx, "initialize", map[string]any{
+		"protocolVersion": "2025-06-18",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "gbot", "version": "1"},
+	}, &map[string]any{}); err != nil {
+		return "", err
+	}
+	_ = p.call(ctx, "notifications/initialized", nil, nil)
+	var res struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		Structured json.RawMessage `json:"structuredContent"`
+		IsError    bool            `json:"isError"`
+	}
+	if err := p.call(ctx, "tools/call", map[string]any{"name": name, "arguments": args}, &res); err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, c := range res.Content {
+		if c.Text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(c.Text)
+	}
+	out := b.String()
+	if out == "" && len(res.Structured) > 0 {
+		out = string(res.Structured)
+	}
+	if out == "" {
+		raw, _ := json.Marshal(res.Content)
+		out = string(raw)
+	}
+	if res.IsError {
+		return "", errors.New(r.redact(out))
+	}
+	return out, nil
+}
+
+// mcpProbe talks just enough streamable HTTP to initialize a server and
+// list its tools.
+type mcpProbe struct {
+	url     string
+	headers map[string]string
+	client  *http.Client
+	session string
+	seq     int
+}
+
+func (p *mcpProbe) call(ctx context.Context, method string, params any, out any) error {
+	p.seq++
+	body := map[string]any{"jsonrpc": "2.0", "method": method}
+	if params != nil {
+		body["params"] = params
+	}
+	if !strings.HasPrefix(method, "notifications/") {
+		body["id"] = p.seq
+	}
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.url, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
-	return a.Close()
+	for k, v := range p.headers {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", "2025-06-18")
+	if p.session != "" {
+		req.Header.Set("Mcp-Session-Id", p.session)
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
+		p.session = sid
+	}
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	if out == nil {
+		return nil
+	}
+	var msg struct {
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		sc := bufio.NewScanner(resp.Body)
+		// A tool list can be far larger than bufio's 64 KB default; Notion's
+		// is. A short buffer would silently drop the response.
+		sc.Buffer(make([]byte, 64*1024), 16<<20)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			var m struct {
+				Result json.RawMessage `json:"result"`
+				Error  *struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &m) != nil {
+				continue
+			}
+			// Skip notifications; the answer to this call has a result.
+			if m.Result == nil && m.Error == nil {
+				continue
+			}
+			msg = m
+			break
+		}
+		if err := sc.Err(); err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+	} else if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil {
+		if errors.Is(err, io.EOF) {
+			return errors.New("the server sent an empty response")
+		}
+		return err
+	}
+	if msg.Error != nil {
+		return errors.New(msg.Error.Message)
+	}
+	if msg.Result == nil {
+		return errors.New("the server sent no response")
+	}
+	return json.Unmarshal(msg.Result, out)
+}
+
+// probe connects one server and returns its tools. It fails with the
+// server's own error, which is what the person needs to see.
+func (r *Runtime) probe(s mcpServer) ([]mcpToolDef, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	headers := make(map[string]string, len(s.headers))
+	for k, v := range s.headers {
+		if str, ok := v.(string); ok {
+			headers[k] = str
+		}
+	}
+	p := &mcpProbe{url: s.url, headers: headers, client: &http.Client{Timeout: 15 * time.Second}}
+	if err := p.call(ctx, "initialize", map[string]any{
+		"protocolVersion": "2025-06-18",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "gbot", "version": "1"},
+	}, &map[string]any{}); err != nil {
+		return nil, err
+	}
+	_ = p.call(ctx, "notifications/initialized", nil, nil)
+	var list struct {
+		Tools []mcpToolDef `json:"tools"`
+	}
+	if err := p.call(ctx, "tools/list", map[string]any{}, &list); err != nil {
+		return nil, err
+	}
+	for i := range list.Tools {
+		list.Tools[i].Name = s.prefix + "__" + list.Tools[i].Name
+	}
+	sort.Slice(list.Tools, func(i, j int) bool { return list.Tools[i].Name < list.Tools[j].Name })
+	return list.Tools, nil
 }
 
 // WarmMCP marks a just-added or re-enabled server as connecting, so the
 // panel can show it right away while the background sync probes it.
 func (r *Runtime) WarmMCP(s *store.MCPServer, sealer *crypto.Sealer) {
+	srv := decodeMCP(s, sealer)
+	for _, v := range srv.headers {
+		if str, ok := v.(string); ok {
+			r.addSecret(str)
+		}
+	}
+	if t := openOAuth(s, sealer); t != nil {
+		r.addSecret(t.Access)
+		if t.Refresh != "" {
+			r.addSecret(t.Refresh)
+		}
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if st, ok := r.mcp[s.ID]; ok && !st.off {
 		return // already known; don't undo a live connection
 	}
-	r.mcp[s.ID] = mcpState{srv: decodeMCP(s, sealer), status: "connecting"}
+	r.mcp[s.ID] = mcpState{srv: srv, status: "connecting"}
 }
 
 // ForgetMCP marks a server as going away, so the panel shows it off at
-// once. Its live entry is kept until the sync so the agent is rebuilt
+// once. Its live entry is kept until the sync so the agents are rebuilt
 // without it; dropping it here would make the comparison miss it.
 func (r *Runtime) ForgetMCP(id string) {
 	r.mu.Lock()
@@ -207,14 +497,25 @@ func (r *Runtime) MCPStatus(id string) string {
 
 // MCPTools lists the tool names a server registered.
 func (r *Runtime) MCPTools(id string) []string {
-	ag, release := r.hold()
-	defer release()
-	p := mcpPrefix(id) + "__"
-	var out []string
-	for _, t := range ag.Engine().Root().Snapshot().Tools {
-		if strings.HasPrefix(t.Name, p) {
-			out = append(out, t.Name)
-		}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if st, ok := r.mcp[id]; ok && st.loaded {
+		return append([]string(nil), st.tools...)
+	}
+	return nil
+}
+
+// MCPToolLabels lists the display names a server gave its tools.
+func (r *Runtime) MCPToolLabels(id string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.mcp[id]
+	if !ok || !st.loaded {
+		return nil
+	}
+	out := make([]string, len(st.defs))
+	for i, d := range st.defs {
+		out[i] = d.label()
 	}
 	return out
 }

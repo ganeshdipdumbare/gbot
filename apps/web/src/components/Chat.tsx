@@ -1,9 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
-import type { Bot, Group, Message, Presence } from "../lib/api";
+import type { Bot, Group, Message, Presence, QueueItem } from "../lib/api";
 import { api } from "../lib/api";
-import { get as useStoreGet, groupKey, isGroupKey, loadMessages, loadOlder, onLive, retry, sendMessage, useStore, type ChatKey } from "../lib/store";
+import { clearQueue, get as useStoreGet, groupKey, isGroupKey, loadMessages, loadOlder, loadQueue, onLive, queueAction, retry, sendMessage, set as setStore, useStore, type ChatKey } from "../lib/store";
 import { toast } from "../lib/toast";
 import { Skeleton } from "./Feedback";
 import { moodOf, presenceText, useGaze } from "../lib/hooks";
@@ -23,12 +23,22 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
   const bots = useStore((s) => s.bots);
   const messages = useStore((s) => (chatKey ? s.messages[chatKey] : undefined));
   const presence = useStore((s) => s.presence);
+  const computers = useStore((s) => s.computers);
   const loaded = useStore((s) => s.bots.length > 0 || s.me === null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (chatKey) loadMessages(chatKey).catch((e) => setError(e.message));
   }, [chatKey]);
+  useEffect(() => {
+    if (chatKey) loadQueue(chatKey).catch(() => {});
+  }, [chatKey]);
+  // Read the computer once so the green dot is right after a reload,
+  // even when the bot is idle and no run has published presence.
+  useEffect(() => {
+    if (!bot) return;
+    api.computer(bot.id).then((c) => setStore((s) => ({ computers: { ...s.computers, [bot.id]: c } }))).catch(() => {});
+  }, [bot?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const members = useMemo(() => (group ? group.botIds.map((id) => bots.find((b) => b.id === id)).filter(Boolean) as Bot[] : []), [group, bots]);
 
@@ -61,23 +71,29 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
 
   const p = bot ? presence[bot.id] : undefined;
   const busy = bot ? !!p && !["idle", "done", "waiting"].includes(p.state) : members.some((b) => { const s = presence[b.id]?.state; return s === "thinking" || s === "working"; });
-  const live = bot ? !!p?.live : false;
+  // The computer event is independent of presence; a live screen should
+  // show the dot even when the bot is idle.
+  const live = bot ? !!p?.live || computers[bot.id]?.state === "on" : false;
 
   return (
     <div className="h-full flex flex-col">
       <header className="flex items-center gap-1 px-2 h-11 shrink-0 hairline-b bg-bg/85 backdrop-blur-xl z-10">
         {onMenu && <IconButton label="Bots" onClick={onMenu}><Icon.menu /></IconButton>}
         {bot ? (
-          <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-8 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
-            <Gbot look={bot.look} seed={bot.id} size={24} mood={moodOf(p, bot)} />
-            <span className="text-[15px] font-semibold tracking-[-0.2px] truncate">{bot.name}</span>
-            <Status p={p} fallback={bot.title} />
+          <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-10 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
+            <Gbot look={bot.look} seed={bot.id} size={26} mood={moodOf(p, bot)} />
+            <span className="flex flex-col min-w-0 text-left">
+              <span className="text-[15px] font-semibold leading-5 tracking-[-0.2px] truncate">{bot.name}</span>
+              <span className="text-[12px] leading-4 text-ink-3 truncate">{botJob(p, bot.title)}</span>
+            </span>
           </button>
         ) : (
-          <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-8 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
+          <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-10 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
             <Stack bots={members} size={20} presence={presence} />
-            <span className="text-[15px] font-semibold tracking-[-0.2px] truncate">{group!.name}</span>
-            <span className="text-[13px] text-ink-3 truncate">{members.map((b) => b.name).join(", ")}</span>
+            <span className="flex flex-col min-w-0 text-left">
+              <span className="text-[15px] font-semibold leading-5 tracking-[-0.2px] truncate">{group!.name}</span>
+              <span className="text-[12px] leading-4 text-ink-3 truncate">{members.map((b) => b.name).join(", ")}</span>
+            </span>
           </button>
         )}
         <div className="flex-1" />
@@ -92,6 +108,7 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
       </header>
 
       <Transcript chatKey={chatKey!} bot={bot} group={group} members={members} messages={messages} presence={presence} error={error} onTakeover={() => onComputer(true)} />
+      <QueueStrip chatKey={chatKey!} />
       <Composer
         autoFocusKey={chatKey!}
         placeholder={bot ? `Message ${bot.name}…` : `Message ${group!.name}…`}
@@ -104,17 +121,52 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
   );
 }
 
-function Status({ p, fallback }: { p?: Presence; fallback: string }) {
-  const busy = p && p.state !== "idle";
+// A stable empty list: a fresh [] on every snapshot makes
+// useSyncExternalStore re-render forever (React error #185).
+const NO_QUEUE: QueueItem[] = [];
+
+// QueueStrip is only the messages waiting behind the turn that is running
+// now. The running one is already in the transcript, so repeating it here
+// just looks like it is stuck.
+function QueueStrip({ chatKey }: { chatKey: ChatKey }) {
+  const items = useStore((s) => s.queue[chatKey] ?? NO_QUEUE);
+  const waiting = items.filter((q) => q.status === "queued" || q.status === "paused");
+  if (!waiting.length) return null;
+  const fail = (e: unknown) => toast((e as Error).message || "Couldn't change the queue", "error");
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      <motion.span key={(p?.state ?? "idle") + (p?.detail ?? "")}
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}
-        className={`text-[13px] truncate ${busy ? "text-ink-2" : "text-ink-3"}`}>
-        {busy ? (p!.detail && p!.state === "working" ? p!.detail : presenceText[p!.state]) : fallback}
-      </motion.span>
-    </AnimatePresence>
+    <div className="max-w-[720px] w-full mx-auto px-4 sm:px-6 pt-2 shrink-0 entry-in">
+      <div className="rounded-2xl bg-surface hairline">
+        <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+          <span className="text-[12px] font-medium text-ink-2">
+            {waiting.length === 1 ? "1 message waiting" : `${waiting.length} messages waiting`}
+          </span>
+          <span className="flex-1" />
+          <button className="text-[12px] text-ink-3 hover:text-danger cursor-pointer" onClick={() => clearQueue(chatKey).catch(fail)}>
+            Clear
+          </button>
+        </div>
+        <ul className="px-2 pb-2 max-h-32 overflow-y-auto scroll-soft">
+          {waiting.map((q) => (
+            <li key={q.id} className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-hover">
+              <span className={`size-1.5 rounded-full shrink-0 ${q.status === "paused" ? "bg-ink-3" : "bg-accent"}`} />
+              <span className="text-[13px] truncate flex-1" title={q.prompt}>{q.prompt || "(no text)"}</span>
+              <button className="text-[12px] text-ink-2 hover:text-ink cursor-pointer" onClick={() => queueAction(chatKey, q.id, q.status === "paused" ? "resume" : "pause").catch(fail)}>
+                {q.status === "paused" ? "Resume" : "Pause"}
+              </button>
+              <button className="text-[12px] text-ink-3 hover:text-danger cursor-pointer" onClick={() => queueAction(chatKey, q.id, "cancel").catch(fail)}>Cancel</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
+}
+
+// The bot's job sits under its name; while it works, the job line shows
+// what it is doing instead.
+function botJob(p: Presence | undefined, fallback: string) {
+  if (!p || p.state === "idle" || p.state === "done") return fallback;
+  return p.state === "working" && p.detail ? p.detail : presenceText[p.state];
 }
 
 export function Stack({ bots, size, presence }: { bots: Bot[]; size: number; presence?: Record<string, Presence> }) {
@@ -134,10 +186,12 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
   chatKey: ChatKey; bot?: Bot; group?: Group; members: Bot[]; messages?: Message[]; presence: Record<string, Presence>; error: string; onTakeover: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const lastTop = useRef(0);
+  const primed = useRef(false);
   const lastLen = messages?.length ?? 0;
   const lastId = messages?.[lastLen - 1]?.id;
-  const lastContent = messages?.[lastLen - 1]?.content.length ?? 0;
   const hasMore = useStore((s) => s.hasMore[chatKey]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [below, setBelow] = useState(0); // new messages below the fold
@@ -153,19 +207,65 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
   const byId = useMemo(() => Object.fromEntries((bot ? [bot] : members).map((b) => [b.id, b])), [bot, members]);
 
   // Who is thinking right now, without a streaming bubble to show for it.
+  // In a one-to-one chat, once the bot has spoken the header already says
+  // what it is still doing; a thinking row under the reply reads as stuck.
   const typing = useMemo(() => {
     const ids = bot ? [bot.id] : members.map((b) => b.id);
+    const rows = messages ?? [];
+    const answered: string[] = [];
+    for (let i = rows.length - 1; i >= 0 && rows[i].role !== "user"; i--) {
+      const id = rows[i].botId;
+      if (rows[i].role === "bot" && id) answered.push(id);
+    }
     return ids.filter((id) => {
       const s = presence[id]?.state;
-      return (s === "thinking" || s === "working") && !messages?.some((m) => m.streaming && m.botId === id);
+      return (s === "thinking" || s === "working")
+        && !rows.some((m) => m.streaming && m.botId === id)
+        && (!!group || !answered.includes(id));
     });
-  }, [bot, members, presence, messages]);
+  }, [bot, group, members, presence, messages]);
 
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [lastLen, lastContent, typing.length]);
-  useEffect(() => { stick.current = true; setBelow(0); }, [chatKey]);
+  useEffect(() => { stick.current = true; lastTop.current = 0; primed.current = false; setBelow(0); }, [chatKey]);
+  // Any content growth (thinking footer, streamed text, cards) follows
+  // the bottom while the person is already there. A discrete arrival
+  // animates; a token stream is followed per frame so it never lags.
+  useEffect(() => {
+    const el = ref.current, content = contentRef.current;
+    if (!el || !content) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0;
+    let settle = 0;
+    let lastGrow = 0;
+    const toEnd = (smooth: boolean) => {
+      if (!stick.current) return;
+      const top = el.scrollHeight - el.clientHeight;
+      // A long jump (first paint of history) is instant; animating it just
+      // scrolls through the whole chat.
+      const far = top - el.scrollTop > el.clientHeight;
+      if (smooth && !far && !reduced) el.scrollTo({ top, behavior: "smooth" });
+      else el.scrollTop = top;
+    };
+    const keepBottom = () => {
+      if (!stick.current) return;
+      const now = performance.now();
+      const smooth = primed.current && now - lastGrow > 200;
+      lastGrow = now;
+      primed.current = true;
+      clearTimeout(settle);
+      settle = window.setTimeout(() => toEnd(true), 140);
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        toEnd(smooth);
+        // One more frame catches text wrapping that lands after layout.
+        requestAnimationFrame(() => toEnd(smooth));
+      });
+    };
+    const ro = new ResizeObserver(keepBottom);
+    ro.observe(content);
+    ro.observe(el);
+    return () => { cancelAnimationFrame(raf); clearTimeout(settle); ro.disconnect(); };
+  }, [chatKey]);
   // Count messages that arrive while scrolled up.
   useEffect(() => {
     if (lastId && lastId !== seenLast.current && !stick.current) setBelow((n) => n + 1);
@@ -220,12 +320,17 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
     <div ref={ref} onClick={onClick}
       onScroll={(e) => {
         const el = e.currentTarget;
-        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        if (stick.current && below) setBelow(0);
-        if (el.scrollTop < 200) older();
+        const top = el.scrollTop;
+        const dist = el.scrollHeight - top - el.clientHeight;
+        // A user scroll up releases the bottom at once, even mid-stream;
+        // coming back within a few pixels of the bottom pins it again.
+        if (top < lastTop.current - 1 && dist > 8) stick.current = false;
+        else if (dist <= 8) { stick.current = true; if (below) setBelow(0); }
+        lastTop.current = top;
+        if (top < 200) older();
       }}
       className="h-full overflow-y-auto scroll-soft">
-      <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-4 pb-6" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+      <div ref={contentRef} className="max-w-[720px] mx-auto px-4 sm:px-6 pt-4 pb-6" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
         {!messages && (
           <div className="space-y-3 pt-6" aria-hidden>
             <div className="flex justify-end"><Skeleton className="h-9 w-56 rounded-2xl!" /></div>
