@@ -108,6 +108,10 @@ data class Routine(
 @Serializable data class McpResp(val servers: List<McpServer> = emptyList())
 @Serializable data class UrlResp(val url: String = "")
 @Serializable data class VaultResp(val secrets: List<VaultSecret> = emptyList())
+@Serializable data class SlackLink(val installId: String = "", val channelId: String = "", val channel: String = "", val botId: String = "", val createdAt: String = "")
+@Serializable data class SlackInstall(val id: String = "", val teamId: String = "", val teamName: String = "", val createdAt: String = "", val links: List<SlackLink> = emptyList())
+@Serializable data class SlackResp(val installs: List<SlackInstall> = emptyList(), val eventUrl: String = "")
+
 @Serializable data class SkillsResp(val skills: List<Skill> = emptyList())
 @Serializable data class SpacesResp(val spaces: List<Space> = emptyList(), val current: String = "")
 @Serializable data class MembersResp(val members: List<Member> = emptyList())

@@ -81,6 +81,11 @@ class Screens {
             "/api/groups/g1/queue" to """{"items":[]}""",
             "/api/settings/rules" to """{"rules":[{"tool":"browser_open","rule":"allow"}]}""",
             "/api/mcp" to """{"servers":[{"id":"x1","name":"Notion","url":"https://mcp.notion.com/mcp","oauth":true,"enabled":true,"status":"connected","tools":["m1234abcd__search","m1234abcd__create_page"]}]}""",
+            "/api/slack" to """{"eventUrl":"https://bots.example.com/slack/events","installs":[
+              {"id":"s1","teamId":"T0123ABC","teamName":"Acme","createdAt":"${ago(500)}","links":[
+                {"installId":"s1","channelId":"C0123ABC","channel":"build","botId":"b3","createdAt":"${ago(400)}"}
+              ]}
+            ]}""",
             "/api/voice" to """{"transcribe":false,"speak":false}""",
             "/api/skills" to """{"skills":[]}""",
         )
@@ -128,6 +133,7 @@ class Screens {
     @Test fun hatch() = shot("hatch") { HatchScreen(rememberNavController()) }
     @Test fun login() = shot("login") { LoginScreen({}, {}) }
     @Test fun appearance() = shot("appearance") { SettingsTab(rememberNavController(), "appearance") }
+    @Test fun slack() = shot("slack") { SettingsTab(rememberNavController(), "slack") }
 
     /** The same roster with the theme forced, not left to the host's setting. */
     @Test fun homeDark() {

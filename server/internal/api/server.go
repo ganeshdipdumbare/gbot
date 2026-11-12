@@ -57,6 +57,12 @@ type Server struct {
 	// state. Only the callback touches it concurrently.
 	oauthMu      sync.Mutex
 	oauthPending map[string]*mcpPending
+
+	// slackWait holds where each in-flight Slack reply belongs, and
+	// slackSubs which spaces already have a relay watching for them.
+	slackMu   sync.Mutex
+	slackWait map[string]slackTarget
+	slackSubs map[string]bool
 }
 
 const sessionCookie = "gbot_session"
@@ -88,6 +94,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/bots/{id}/stop", s.authed(s.stopBot))
 	mux.Handle("GET /api/events", s.authed(s.events))
 	mux.Handle("GET /api/events/poll", s.authed(s.pollEvents))
+	mux.HandleFunc("POST /slack/events", s.slackEvents)
+	mux.Handle("GET /api/slack", s.authed(s.listSlack))
+	mux.Handle("POST /api/slack", s.authed(s.connectSlack))
+	mux.Handle("DELETE /api/slack/{id}", s.authed(s.disconnectSlack))
+	mux.Handle("PUT /api/slack/{id}/links", s.authed(s.linkSlack))
+	mux.Handle("DELETE /api/slack/{id}/links/{channel}", s.authed(s.unlinkSlack))
 	mux.Handle("GET /api/bots/{id}/sharing", s.authed(s.sharing))
 	mux.Handle("PUT /api/bots/{id}/sharing", s.authed(s.setVisibility))
 	mux.Handle("POST /api/bots/{id}/sharing/members", s.authed(s.addBotMember))

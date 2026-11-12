@@ -3,6 +3,9 @@ package dev.gbot.app.local
 import android.content.Context
 import dev.gbot.app.live.Events
 import dev.gbot.app.net.Api
+import dev.gbot.app.net.SlackInstall
+import dev.gbot.app.net.SlackLink
+import dev.gbot.app.net.SlackResp
 import dev.gbot.app.net.Bot
 import dev.gbot.app.net.BotsResp
 import dev.gbot.app.net.CodexLogin
@@ -390,6 +393,13 @@ class LocalApi(
     override suspend fun addBotMember(id: String, email: String, role: String): Sharing = unsupported()
 
     override suspend fun removeBotMember(id: String, userId: String): Sharing = unsupported()
+
+    // Slack needs a server Slack can reach; on the phone there is none.
+    override suspend fun slack(): SlackResp = SlackResp()
+    override suspend fun connectSlack(b: JsonObject): SlackInstall = throw UnsupportedOperationException("Slack needs your server")
+    override suspend fun disconnectSlack(id: String) {}
+    override suspend fun linkSlack(id: String, b: JsonObject): SlackLink = throw UnsupportedOperationException("Slack needs your server")
+    override suspend fun unlinkSlack(id: String, channelId: String) {}
 
     override suspend fun spaces(): SpacesResp = SpacesResp()
 

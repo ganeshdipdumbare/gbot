@@ -56,6 +56,13 @@ interface Api {
     suspend fun addSpaceMember(id: String, email: String): MembersResp
     suspend fun removeSpaceMember(id: String, userId: String): MembersResp
 
+    // Slack
+    suspend fun slack(): SlackResp
+    suspend fun connectSlack(b: JsonObject): SlackInstall
+    suspend fun disconnectSlack(id: String)
+    suspend fun linkSlack(id: String, b: JsonObject): SlackLink
+    suspend fun unlinkSlack(id: String, channelId: String)
+
     // Routines
     suspend fun routines(id: String): RoutinesResp
     suspend fun createRoutine(id: String, name: String, prompt: String, kind: String, schedule: String?): Routine

@@ -34,6 +34,8 @@ needs you, stuck, done), and keep working while you keep chatting.
   and scoped to your account.
 - **Group chats.** Up to six bots in one chat. The first leads, `@mentions`
   bring others in, and bots hand work to each other.
+- **Slack.** Mention a bot in a channel and it answers in the thread, with
+  the same memory, tools and approvals it has in its own chat.
 - **Voice.** Dictation and read-aloud, local by default.
 - **Everywhere.** Web, a 4 MB desktop app (Tauri), and a native Android app
   (Kotlin + Compose) that also runs with no server at all.
@@ -107,6 +109,29 @@ unavailable, type model names manually (one per line). API keys are encrypted
 at rest, never returned by the API, and scoped to your account: other accounts
 cannot see or select your provider's models. `OLLAMA_HOST` and the API-key
 environment variables below remain server-wide defaults.
+
+### Slack
+
+A bot can answer in a Slack channel. gbot does not host a Slack app, so you
+create one in your own workspace and paste its two secrets into
+Settings -> Slack; both are encrypted with the server key and never come
+back out of the API.
+
+1. Create a Slack app, add the `chat:write` bot scope and install it.
+2. Under Event Subscriptions, set the Request URL to
+   `$GBOT_PUBLIC_URL/slack/events` and subscribe to `app_mention`.
+3. In Settings -> Slack, paste the workspace (team) ID, the `xoxb-` bot
+   token and the signing secret, then link each channel to a bot.
+
+Every inbound request is checked against the signing secret and refused if
+it is more than five minutes old, so a captured one cannot be replayed.
+A Slack message runs as the person who connected the workspace -- their
+approvals, tools and memory apply -- and is marked untrusted, because the
+text came from outside. Messages posted by any bot are ignored, so two
+bots cannot talk to each other in circles.
+
+This needs `GBOT_PUBLIC_URL`: Slack has to reach gbot over the internet, so
+it does not work in the phone-only mode.
 
 ### Configuration
 

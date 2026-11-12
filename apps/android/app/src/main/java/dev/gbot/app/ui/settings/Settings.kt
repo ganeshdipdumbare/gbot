@@ -132,6 +132,7 @@ fun SettingsHome(nav: NavHostController) {
             Group {
                 Row("users", "Team", "People and sharing") { nav.navigate(R.settings("team")) }
                 Row("plug", "Integrations", "Apps your bots can use") { nav.navigate(R.settings("integrations")) }
+                Row("users", "Slack", "Bring a bot into a channel") { nav.navigate(R.settings("slack")) }
                 Row("lock", "Vault", "Passwords your bots can type") { nav.navigate(R.settings("vault")) }
                 Row("spark", "Skills", "Know-how bots load when needed") { nav.navigate(R.settings("skills")) }
                 Row("speaker", "Voice", "Dictation and read aloud", last = true) { nav.navigate(R.settings("voice")) }
@@ -169,6 +170,7 @@ fun SettingsTab(nav: NavHostController, tab: String) {
         "general" -> General(back)
         "notifications" -> Notifications(back)
         "appearance" -> Appearance(back)
+        "slack" -> SlackTab(back)
         "models" -> Models(back)
         "team" -> Team(back)
         "integrations" -> Integrations(back)

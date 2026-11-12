@@ -76,6 +76,12 @@ class RemoteApi(val http: Http) : Api {
     override suspend fun setVisibility(id: String, v: String): Sharing = http.send("PUT", "${bot(id)}/sharing", obj("visibility" to v))
     override suspend fun addBotMember(id: String, email: String, role: String): Sharing = http.send("POST", "${bot(id)}/sharing/members", obj("email" to email, "role" to role))
     override suspend fun removeBotMember(id: String, userId: String): Sharing = http.send("DELETE", "${bot(id)}/sharing/members/$userId")
+    override suspend fun slack(): SlackResp = http.get("/api/slack")
+    override suspend fun connectSlack(b: JsonObject): SlackInstall = http.send("POST", "/api/slack", b)
+    override suspend fun disconnectSlack(id: String) { http.call("DELETE", "/api/slack/$id", JsonObject(emptyMap())) }
+    override suspend fun linkSlack(id: String, b: JsonObject): SlackLink = http.send("PUT", "/api/slack/$id/links", b)
+    override suspend fun unlinkSlack(id: String, channelId: String) { http.call("DELETE", "/api/slack/$id/links/$channelId", JsonObject(emptyMap())) }
+
     override suspend fun spaces(): SpacesResp = http.get("/api/spaces")
     override suspend fun createSpace(name: String): Space = http.send("POST", "/api/spaces", obj("name" to name))
     override suspend fun selectSpace(id: String): SpaceIdResp = http.send("PUT", "/api/me/space", obj("spaceId" to id))

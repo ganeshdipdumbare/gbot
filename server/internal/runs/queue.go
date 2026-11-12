@@ -19,7 +19,7 @@ import (
 
 func queueable(trigger string) bool {
 	switch trigger {
-	case "chat", "routine", "webhook", "resume":
+	case "chat", "routine", "webhook", "resume", "slack":
 		return true
 	}
 	return false
