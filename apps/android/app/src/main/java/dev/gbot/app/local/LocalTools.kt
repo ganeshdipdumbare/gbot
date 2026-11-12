@@ -24,11 +24,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
+/** Models sometimes wrap a value in quotes; keep the words, not the quotes. */
+internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").removeSurrounding("'").trim()
+
 /**
  * What a bot can do on this phone. Small on purpose: a window on the web,
  * a notification, its own memory, and pages fetched in the background.
- */
-class LocalTools(
+ */class LocalTools(
     private val ctx: Context,
     private val db: LocalDb,
     private val browser: BrowserController,
@@ -293,21 +295,21 @@ class LocalTools(
         }
         "bot_list" -> rosterSummary(roster())
         "bot_create" -> {
-            val newName = args.str("name").trim()
+            val newName = unquote(args.str("name"))
             if (newName.isEmpty()) "Give the new bot a name." else {
-                val b = createBot(newName, args.str("title").trim())
-                val notes = args.str("instructions").trim()
+                val b = createBot(newName, unquote(args.str("title")))
+                val notes = unquote(args.str("instructions"))
                 if (notes.isNotEmpty()) changeBot(b.id, buildJsonObject { put("instructions", notes) })
                 "Hatched ${b.name}."
             }
         }
         "bot_update" -> {
-            val raw = args.str("bot")
+            val raw = unquote(args.str("bot"))
             val target = pickPeer(raw, roster())
             val patch = buildJsonObject {
-                if (args.str("title").isNotBlank()) put("title", args.str("title"))
-                if (args.str("instructions").isNotBlank()) put("instructions", args.str("instructions"))
-                if (args.str("model").isNotBlank()) put("model", args.str("model"))
+                if (args.str("title").isNotBlank()) put("title", unquote(args.str("title")))
+                if (args.str("instructions").isNotBlank()) put("instructions", unquote(args.str("instructions")))
+                if (args.str("model").isNotBlank()) put("model", args.str("model").trim())
             }
             when {
                 target == null -> noBotNamed(raw)
@@ -319,7 +321,7 @@ class LocalTools(
             }
         }
         "bot_archive" -> {
-            val raw = args.str("bot")
+            val raw = unquote(args.str("bot"))
             val target = pickPeer(raw, roster())
             when {
                 target == null -> noBotNamed(raw)

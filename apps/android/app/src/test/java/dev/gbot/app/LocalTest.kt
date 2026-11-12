@@ -8,6 +8,7 @@ import dev.gbot.app.local.LocalProviders
 import dev.gbot.app.local.ModelMemory
 import dev.gbot.app.local.normalizeName
 import dev.gbot.app.local.pickPeer
+import dev.gbot.app.local.unquote
 import dev.gbot.app.local.usesComputer
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -49,6 +50,14 @@ class LocalTest {
         assertTrue(usesComputer("browser_click"))
         assertTrue(usesComputer("open_in_chrome"))
         assertTrue(usesComputer("vault_type"))
+    }
+
+    @Test
+    fun `a quoted tool value loses its quotes`() {
+        assertEquals("Joker", unquote("\"Joker\""))
+        assertEquals("Jokes on demand", unquote(" 'Jokes on demand' "))
+        assertEquals("Joker", unquote("Joker"))
+        assertEquals("He said \"hi\"", unquote("He said \"hi\""))
     }
 
     @Test
