@@ -142,6 +142,14 @@ class GbotApp : Application() {
         http.server = url
     }
 
+    /** What one bot remembers on this phone; empty on a server account. */
+    fun memories(bot: String): List<dev.gbot.app.local.Note> = localApi?.memories(bot).orEmpty()
+
+    /** Forget the facts that mention [text]. */
+    fun forget(bot: String, text: String) {
+        localApi?.forget(bot, text)
+    }
+
     /** Use the model, memory and browser on this phone. */
     fun useLocal(load: Boolean = true) {
         mode = Mode.Local

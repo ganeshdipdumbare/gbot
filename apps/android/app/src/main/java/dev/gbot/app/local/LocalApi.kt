@@ -178,8 +178,12 @@ class LocalApi(
         )
     }
 
-    private fun hatchMainBot(): Bot {
-        val b = Bot(
+    /** What one bot remembers, for the settings screen. */
+    fun memories(bot: String): List<Note> = db.memories(bot)
+
+    fun forget(bot: String, text: String) = db.forget(bot, text)
+
+    private fun hatchMainBot(): Bot {        val b = Bot(
             id = MAIN_BOT, name = "gbot", title = "Your main bot", look = MAIN_LOOK,
             instructions = MAIN_PURPOSE, model = defaultModelId(), pinned = true,
             createdAt = Instant.now().toString(),

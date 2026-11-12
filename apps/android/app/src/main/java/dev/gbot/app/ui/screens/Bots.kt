@@ -47,6 +47,7 @@ import dev.gbot.app.ui.Field
 import dev.gbot.app.ui.GButton
 import dev.gbot.app.ui.Gbot
 import dev.gbot.app.ui.Icon
+import dev.gbot.app.ui.IconBtn
 import dev.gbot.app.ui.Label
 import dev.gbot.app.ui.LocalG
 import dev.gbot.app.ui.LookPicker
@@ -190,12 +191,43 @@ fun BotSettingsScreen(nav: NavHostController, id: String) {
             LookPicker(look, bot.id) { look = it }
         }
         ErrorText(error)
+        if (app.mode == Mode.Local) MemorySection(bot.id)
         if (canManage && app.mode == Mode.Server) ShareSection(bot)
         if (bot.isOwner && bot.id != MAIN_BOT) GButton("Archive bot", { archiving = true }, variant = Variant.Danger)
     }
     if (archiving) Confirm("Archive ${bot.name}?", "Their chat is kept.", "Archive", onConfirm = {
         scope.attempt("${bot.name} archived") { app.api.archiveBot(bot.id); app.store.removeBot(bot.id); nav.home() }
     }, onDismiss = { archiving = false })
+}
+
+/** What the bot has learned about the person, and a way to take it back. */
+@Composable
+private fun MemorySection(botId: String) {
+    val g = LocalG.current
+    var notes by remember(botId) { mutableStateOf(GbotApp.instance.memories(botId)) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Memory", style = T.label, color = g.ink, modifier = Modifier.weight(1f))
+            Text("${notes.size} kept", style = T.tiny, color = g.ink3)
+        }
+        Panel {
+            if (notes.isEmpty()) {
+                Text("Nothing remembered yet. Ask it to remember something, or it saves facts as you talk.", style = T.small, color = g.ink2)
+            }
+            for (n in notes) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f)) {
+                        Text(n.text, style = T.small, color = g.ink)
+                        Text(n.at.take(10), style = T.tiny, color = g.ink3)
+                    }
+                    IconBtn("close", "Forget", { 
+                        GbotApp.instance.forget(botId, n.text)
+                        notes = GbotApp.instance.memories(botId)
+                    }, size = 28.dp)
+                }
+            }
+        }
+    }
 }
 
 private val visibilities = listOf(

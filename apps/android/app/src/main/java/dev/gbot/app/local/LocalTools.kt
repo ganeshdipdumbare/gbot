@@ -89,8 +89,12 @@ class LocalTools(
             params("title", "string", "Short title", "text", "string", "One or two lines", required = listOf("title", "text")),
         ),
         ToolSchema(
-            "remember", "Keep a fact for later conversations with this bot.",
+            "remember", "Keep a fact about the person for later conversations: a preference, a name, a decision, how they like things.",
             params("text", "string", "The fact, in one sentence", required = listOf("text")),
+        ),
+        ToolSchema(
+            "forget", "Drop something you remembered, when it is wrong or they asked you to forget it.",
+            params("text", "string", "What to forget; leave empty to forget everything", required = emptyList()),
         ),
         ToolSchema(
             "recall", "Look through what this bot remembers and its past conversations.",
@@ -293,12 +297,17 @@ class LocalTools(
             "Notification shown."
         }
         "remember" -> {
-            db.remember(botId, args.str("text"))
-            "Remembered."
+            val note = db.remember(botId, args.str("text"))
+            "Remembered: ${note.text.take(160)}"
+        }
+        "forget" -> {
+            val what = args.str("text").trim()
+            db.forget(botId, what)
+            if (what.isEmpty()) "Forgot everything." else "Forgot anything about “${what.take(80)}”."
         }
         "recall" -> {
             val q = args.str("query")
-            val notes = db.recall(botId, q)
+            val notes = rankNotes(db.memories(botId), q, 6).map { "Remembered ${noteDay(it.at)}: ${it.text.take(300)}" }
             val past = db.searchMessages(botId, q).map { "${if (it.role == "user") "They said" else "I said"}: ${it.content.take(300)}" }
             (notes + past).take(8).joinToString("\n").ifBlank { "Nothing found." }
         }

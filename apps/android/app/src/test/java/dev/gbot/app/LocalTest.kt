@@ -222,6 +222,40 @@ class LocalTest {
     // ---- The exchange card is what the chat UI opens on tap ----
 
     @Test
+    fun `saying the same fact twice keeps one copy`() {
+        assertTrue(dev.gbot.app.local.sameFact("Likes espresso", "likes espresso."))
+        assertTrue(dev.gbot.app.local.sameFact("The person likes espresso in the morning", "Likes espresso in the morning"))
+        // Short facts must match exactly: "tea" and "green tea" are different.
+        assertFalse(dev.gbot.app.local.sameFact("tea", "green tea"))
+        assertFalse(dev.gbot.app.local.sameFact("Likes tea", "Likes coffee"))
+        assertFalse(dev.gbot.app.local.sameFact("", "anything"))
+    }
+
+    @Test
+    fun `a query ranks the facts that share its words first`() {
+        val now = java.time.Instant.parse("2026-11-12T00:00:00Z").toEpochMilli()
+        val notes = listOf(
+            dev.gbot.app.local.Note("1", "2026-11-11T00:00:00Z", "Flies to Berlin in December"),
+            dev.gbot.app.local.Note("2", "2026-01-01T00:00:00Z", "Prefers window seats on flights"),
+            dev.gbot.app.local.Note("3", "2026-11-12T00:00:00Z", "Drinks oat milk"),
+        )
+        assertEquals(listOf("1", "2"), dev.gbot.app.local.rankNotes(notes, "flights to berlin", 2, now).map { it.id })
+        // No query at all: newest first.
+        assertEquals(listOf("3", "1", "2"), dev.gbot.app.local.rankNotes(notes, "", 3, now).map { it.id })
+    }
+
+    @Test
+    fun `the prompt carries the freshest facts, dated`() {
+        val notes = listOf(
+            dev.gbot.app.local.Note("old", "2026-01-02T00:00:00Z", "Old fact"),
+            dev.gbot.app.local.Note("new", "2026-11-12T08:00:00Z", "New fact"),
+        )
+        val kept = dev.gbot.app.local.promptNotes(notes, 1)
+        assertEquals(listOf("new"), kept.map { it.id })
+        assertEquals("2026-11-12", dev.gbot.app.local.noteDay(kept[0].at))
+    }
+
+    @Test
     fun `a plan is read one step per line`() {
         assertEquals(
             listOf("Find the flights", "Compare prices", "Book the cheapest"),

@@ -143,24 +143,44 @@ class LocalDb(context: Context) : SQLiteOpenHelper(context, "gbot-local.db", nul
 
     // Memory
 
-    @Synchronized fun remember(bot: String, text: String) {
+    /**
+     * Keep a fact. Saying the same thing again only refreshes it, so a
+     * bot that repeats itself does not fill its memory with copies.
+     */
+    @Synchronized fun remember(bot: String, text: String): Note {
+        val body = text.trim().take(2000)
+        val at = Instant.now().toString()
+        val same = memories(bot).firstOrNull { sameFact(it.text, body) }
+        if (same != null) {
+            writableDatabase.update("notes", ContentValues().apply { put("at", at) }, "id = ?", arrayOf(same.id))
+            return same.copy(at = at)
+        }
+        val id = UUID.randomUUID().toString()
         writableDatabase.insert("notes", null, ContentValues().apply {
-            put("id", UUID.randomUUID().toString())
+            put("id", id)
             put("bot", bot)
-            put("at", Instant.now().toString())
-            put("text", text.trim().take(2000))
+            put("at", at)
+            put("text", body)
         })
+        return Note(id, at, body)
     }
 
-    @Synchronized fun notes(bot: String, limit: Int = 8): List<String> = readableDatabase.rawQuery(
-        "SELECT text FROM notes WHERE bot = ? ORDER BY at DESC LIMIT $limit", arrayOf(bot),
-    ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+    @Synchronized fun memories(bot: String): List<Note> = readableDatabase.rawQuery(
+        "SELECT id, at, text FROM notes WHERE bot = ? ORDER BY at DESC", arrayOf(bot),
+    ).use { c -> buildList { while (c.moveToNext()) add(Note(c.getString(0), c.getString(1), c.getString(2))) } }
 
-    @Synchronized fun recall(bot: String, query: String, limit: Int = 6): List<String> {
-        val q = "%${query.trim().replace("%", "")}%"
-        return readableDatabase.rawQuery(
-            "SELECT text FROM notes WHERE bot = ? AND text LIKE ? ORDER BY at DESC LIMIT $limit", arrayOf(bot, q),
-        ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+    /** Forget the facts that mention [text], or every fact when it's empty. */
+    @Synchronized fun forget(bot: String, text: String) {
+        val wanted = text.trim()
+        if (wanted.isEmpty()) {
+            writableDatabase.delete("notes", "bot = ?", arrayOf(bot))
+            return
+        }
+        for (n in memories(bot)) {
+            if (sameFact(n.text, wanted) || normalizeFact(n.text).contains(normalizeFact(wanted))) {
+                writableDatabase.delete("notes", "id = ?", arrayOf(n.id))
+            }
+        }
     }
 
     // Providers
