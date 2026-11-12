@@ -60,6 +60,7 @@ class RemoteApi(val http: Http) : Api {
     override suspend fun groupQueue(id: String): QueueResp = http.get("/api/groups/$id/queue")
     override suspend fun queueAction(qid: String, action: String): QueueResp = http.send("POST", "/api/queue/$qid", obj("action" to action))
     override suspend fun clearQueue(id: String): QueueResp = http.send("POST", "${bot(id)}/queue/clear")
+    override suspend fun clearChat(id: String, memory: Boolean) { http.call("DELETE", "${bot(id)}/messages" + if (memory) "?memory=1" else "") }
     override suspend fun clearGroupQueue(id: String): QueueResp = http.send("POST", "/api/groups/$id/queue/clear")
     override suspend fun answer(cardId: String, decision: String, text: String?, always: Boolean?): Message =
         http.send("POST", "/api/cards/$cardId", obj("decision" to decision, "text" to text, "always" to always))

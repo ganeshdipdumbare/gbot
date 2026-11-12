@@ -93,6 +93,8 @@ fun BotSettingsScreen(nav: NavHostController, id: String) {
     var error by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(false) }
     var archiving by remember { mutableStateOf(false) }
+    var clearing by remember { mutableStateOf(false) }
+    var forgetToo by remember { mutableStateOf(false) }
     val canManage = bot.canManage
 
     LaunchedEffect(Unit) {
@@ -193,8 +195,29 @@ fun BotSettingsScreen(nav: NavHostController, id: String) {
         ErrorText(error)
         if (app.mode == Mode.Local) MemorySection(bot.id)
         if (canManage && app.mode == Mode.Server) ShareSection(bot)
+        GButton("Clear chat history", { forgetToo = false; clearing = true }, variant = Variant.Soft, icon = "trash")
         if (bot.isOwner && bot.id != MAIN_BOT) GButton("Archive bot", { archiving = true }, variant = Variant.Danger)
     }
+    if (clearing) Confirm(
+        "Clear your chat with ${bot.name}?",
+        "Every message goes, and ${bot.name} starts fresh: it won't remember this conversation. Anything running stops. This can't be undone.",
+        "Clear",
+        onConfirm = {
+            val memory = forgetToo
+            scope.attempt("Chat cleared") { app.api.clearChat(bot.id, memory); app.store.clearChat(bot.id) }
+        },
+        onDismiss = { clearing = false },
+        extra = {
+            androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Also forget what it learned", style = T.body, color = LocalG.current.ink)
+                    Text("Preferences and facts it remembers about you", style = T.small, color = LocalG.current.ink3)
+                }
+                Spacer(Modifier.width(12.dp))
+                Toggle(forgetToo, { forgetToo = it })
+            }
+        },
+    )
     if (archiving) Confirm("Archive ${bot.name}?", "Their chat is kept.", "Archive", onConfirm = {
         scope.attempt("${bot.name} archived") { app.api.archiveBot(bot.id); app.store.removeBot(bot.id); nav.home() }
     }, onDismiss = { archiving = false })

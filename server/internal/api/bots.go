@@ -233,6 +233,23 @@ func (s *Server) archiveBot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
+// clearChat deletes the caller's own chat with a bot; other people's chats
+// with a shared bot are untouched. ?memory=1 also forgets what the bot
+// learned in it.
+func (s *Server) clearChat(w http.ResponseWriter, r *http.Request) {
+	b := s.bot(w, r)
+	if b == nil {
+		return
+	}
+	memory := r.URL.Query().Get("memory") == "1"
+	if err := s.Runtime.ClearChat(r.Context(), b, userFrom(r).ID, memory); err != nil {
+		s.Log.Error("clear chat", "err", err)
+		writeErr(w, 500, "could not clear the chat")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"cleared": true, "memory": memory})
+}
+
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	b := s.bot(w, r)
 	if b == nil {

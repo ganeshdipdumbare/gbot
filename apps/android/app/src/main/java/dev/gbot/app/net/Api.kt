@@ -35,6 +35,8 @@ interface Api {
     suspend fun groupQueue(id: String): QueueResp
     suspend fun queueAction(qid: String, action: String): QueueResp
     suspend fun clearQueue(id: String): QueueResp
+    /** Delete this chat with a bot and start it fresh; [memory] also forgets what the bot learned. */
+    suspend fun clearChat(id: String, memory: Boolean)
     suspend fun clearGroupQueue(id: String): QueueResp
     suspend fun answer(cardId: String, decision: String, text: String? = null, always: Boolean? = null): Message
 

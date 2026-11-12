@@ -131,6 +131,16 @@ class Store(private var api: Api, context: Context) {
 
     fun setComputer(botId: String, c: ComputerStatus) = set { s -> s.copy(computers = s.computers + (botId to c)) }
     fun setQueue(k: ChatKey, items: List<QueueItem>) = set { s -> s.copy(queue = s.queue + (k to items)) }
+
+    /** A bot's chat was cleared, here or on another device: show it empty. */
+    fun clearChat(botId: String) = set { s ->
+        s.copy(
+            messages = s.messages + (botId to emptyList()),
+            queue = s.queue + (botId to emptyList()),
+            hasMore = s.hasMore + (botId to false),
+            bots = s.bots.map { if (it.id == botId) it.copy(lastMessage = null) else it },
+        )
+    }
     fun setConnected(v: Boolean) { if (now.connected != v) set { it.copy(connected = v) } }
 
     fun setHidden(ids: Set<String>) {

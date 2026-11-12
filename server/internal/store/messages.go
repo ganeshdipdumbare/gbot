@@ -239,3 +239,32 @@ func (s *Store) UnjoinedRounds(ctx context.Context) ([]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// ClearChat deletes one person's chat with a bot: its messages (cards and
+// exchange cards included), and the model thread and rolling summary
+// behind it, so the bot starts fresh rather than remembering the old
+// conversation unseen. Long-term memory goes too only when memory is set.
+// thread is the chat's agent thread, which also names its memory.
+func (s *Store) ClearChat(ctx context.Context, botID, userID, thread string, memory bool) (int64, error) {
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `DELETE FROM messages WHERE bot_id=$1 AND chat_user_id=$2 AND group_id IS NULL`, botID, userID)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_sessions WHERE id=$1`, thread); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM summaries WHERE thread_id=$1`, thread); err != nil {
+		return 0, err
+	}
+	if memory {
+		if _, err := tx.Exec(ctx, `DELETE FROM agent_memory WHERE ns=$1`, thread); err != nil {
+			return 0, err
+		}
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
+}

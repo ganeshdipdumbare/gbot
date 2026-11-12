@@ -159,6 +159,16 @@ export async function queueAction(k: ChatKey, qid: string, action: "pause" | "re
 }
 
 /** Stops the current reply and drops everything waiting. */
+// A bot's chat was cleared, here or on another device: show it empty.
+export function clearChat(botId: string) {
+  set((s) => ({
+    messages: { ...s.messages, [botId]: [] },
+    queue: { ...s.queue, [botId]: [] },
+    hasMore: { ...s.hasMore, [botId]: false },
+    bots: s.bots.map((b) => (b.id === botId ? { ...b, lastMessage: undefined } : b)),
+  }));
+}
+
 export async function clearQueue(k: ChatKey) {
   const { items } = isGroupKey(k) ? await api.clearGroupQueue(k.slice(2)) : await api.clearQueue(k);
   setQueue(k, items);
@@ -197,6 +207,7 @@ type LiveEvent =
   | { type: "delta"; botId: string; groupId?: string; data: { id: string; text: string } }
   | { type: "bot"; botId: string; data: Bot }
   | { type: "bot_removed"; botId: string }
+  | { type: "cleared"; botId: string }
   | { type: "group"; groupId: string; data: Group }
   | { type: "group_removed"; groupId: string }
   | { type: "queue"; botId?: string; groupId?: string; data: QueueItem[] }
@@ -243,6 +254,9 @@ function handle(e: LiveEvent) {
         const bots = s.bots.filter((b) => b.id !== e.botId);
         return { bots, activeId: s.activeId === e.botId ? bots[0]?.id ?? null : s.activeId };
       });
+      break;
+    case "cleared":
+      clearChat(e.botId);
       break;
     case "group":
       upsertGroup(e.data);

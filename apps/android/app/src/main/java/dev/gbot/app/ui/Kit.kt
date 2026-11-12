@@ -287,12 +287,20 @@ fun Empty(text: String, seed: String = "empty-int") {
 }
 
 @Composable
-fun Confirm(title: String, text: String, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit, danger: Boolean = true) {
+fun Confirm(
+    title: String, text: String, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit, danger: Boolean = true,
+    extra: (@Composable () -> Unit)? = null,
+) {
     val g = LocalG.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title, style = T.h2) },
-        text = { Text(text, style = T.body, color = g.ink2) },
+        text = {
+            androidx.compose.foundation.layout.Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp)) {
+                Text(text, style = T.body, color = g.ink2)
+                extra?.invoke()
+            }
+        },
         confirmButton = { TextButton({ onDismiss(); onConfirm() }) { Text(confirm, color = if (danger) g.danger else g.ink, fontWeight = FontWeight.SemiBold) } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel", color = g.ink2) } },
         containerColor = if (g.dark) Color(0xFF2A2A2A) else Color.White,

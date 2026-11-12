@@ -145,6 +145,21 @@ class PhoneParityTest {
     }
 
     @Test
+    fun `clearing a chat empties only that chat, and memory only when asked`() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val db = LocalDb(ctx)
+        fun msg(id: String, bot: String) = dev.gbot.app.net.Message(id = id, botId = bot, role = "user", content = "hi", createdAt = "2026-11-12T10:00:0${id.last()}Z")
+        db.putMessage(msg("a1", "pip")); db.putMessage(msg("a2", "pip")); db.putMessage(msg("b1", "taro"))
+        db.remember("pip", "Likes short answers")
+        db.clearChat("pip")
+        assertTrue(db.messages("pip").isEmpty())
+        assertEquals(1, db.messages("taro").size)
+        assertEquals(1, db.memories("pip").size)
+        db.forget("pip", "")
+        assertTrue(db.memories("pip").isEmpty())
+    }
+
+    @Test
     fun `a bot's files stay in its own folder`() = runBlocking {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         val tools = LocalTools(ctx, LocalDb(ctx), BrowserController(ctx), "bot-files")

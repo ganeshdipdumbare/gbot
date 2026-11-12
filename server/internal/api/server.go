@@ -91,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/bots/{id}", s.authed(s.archiveBot))
 	mux.Handle("GET /api/bots/{id}/messages", s.authed(s.listMessages))
 	mux.Handle("POST /api/bots/{id}/messages", s.authed(s.sendMessage))
+	mux.Handle("DELETE /api/bots/{id}/messages", s.authed(s.clearChat))
 	mux.Handle("POST /api/bots/{id}/stop", s.authed(s.stopBot))
 	mux.Handle("GET /api/events", s.authed(s.events))
 	mux.Handle("GET /api/events/poll", s.authed(s.pollEvents))

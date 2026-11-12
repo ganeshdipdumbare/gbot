@@ -26,6 +26,8 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -149,6 +151,15 @@ class Screens {
     @Test fun appearance() = shot("appearance") { SettingsTab(rememberNavController(), "appearance") }
     @Test fun slack() = shot("slack") { SettingsTab(rememberNavController(), "slack") }
     @Test fun asks() = shot("asks") { ChatScreen(rememberNavController(), "b4") }
+
+    /** Clearing a chat asks first, and offers to forget what the bot learned too. */
+    @Test fun clearChat() {
+        shot("bot-settings-clear") { BotSettingsScreen(rememberNavController(), "b1") }
+        rule.onNodeWithText("Clear chat history", useUnmergedTree = true).performScrollTo().performClick()
+        repeat(4) { rule.waitForIdle(); Thread.sleep(150) }
+        val bmp = rule.onNode(androidx.compose.ui.test.isDialog()).captureToImage().asAndroidBitmap()
+        File(File("build/shots").apply { mkdirs() }, "clear-chat.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
 
     /** A round's popup: every question and answer in one place. */
     @Test fun roundPopup() {

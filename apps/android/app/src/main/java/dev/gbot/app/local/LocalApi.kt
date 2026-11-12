@@ -260,6 +260,14 @@ class LocalApi(
         return QueueResp(chat?.let { brain.queueFor(it) }.orEmpty())
     }
 
+    /** Stop what's running, then delete the chat. The bot's context is rebuilt from it, so it starts fresh. */
+    override suspend fun clearChat(id: String, memory: Boolean) = withContext(Dispatchers.IO) {
+        brain.clearQueue(id)
+        db.clearChat(id)
+        if (memory) db.forget(id, "")
+        emit("cleared", id)
+    }
+
     override suspend fun clearQueue(id: String): QueueResp {
         brain.clearQueue(id)
         return QueueResp()

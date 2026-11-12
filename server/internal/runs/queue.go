@@ -339,3 +339,21 @@ func (r *Runtime) jobFromQueue(ctx context.Context, q *store.QueueItem) (*Job, e
 	}
 	return j, nil
 }
+
+// ClearChat wipes one person's chat with a bot and starts it fresh: the
+// turn running now is stopped, what's queued is dropped, and the model
+// thread goes with the messages. memory also forgets what the bot learned
+// in this chat. Every device of that person is told to empty the chat.
+func (r *Runtime) ClearChat(ctx context.Context, b *store.Bot, userID string, memory bool) error {
+	r.Stop(ChatKey(b.ID, userID))
+	if err := r.ClearQueue(ctx, b.SpaceID, b.ID, userID, ""); err != nil {
+		return err
+	}
+	if _, err := r.store.ClearChat(ctx, b.ID, userID, threadID(b, userID), memory); err != nil {
+		return err
+	}
+	c := newConvo(b.SpaceID, b.ID, "", userID)
+	r.chat(c, Event{Type: "cleared", BotID: b.ID, Data: map[string]bool{"memory": memory}})
+	r.setPresence(c, b, Presence{State: "idle"})
+	return nil
+}

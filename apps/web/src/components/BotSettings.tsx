@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Gbot, type Look } from "@gbot/characters";
 import { api } from "../lib/api";
-import { upsertBot, useStore } from "../lib/store";
+import { clearChat, upsertBot, useStore } from "../lib/store";
 import { attempt, toast } from "../lib/toast";
 import { Modal } from "./Modal";
 import { LookPicker, SurpriseButton } from "./LookPicker";
@@ -27,6 +27,8 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [forgetToo, setForgetToo] = useState(false);
 
   useEffect(() => {
     if (!open || !bot) return;
@@ -122,6 +124,31 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
             <Icon.pin /> {bot.pinned ? "Unpin" : "Pin"}
           </Button>
         </div>}
+        <div className="border-t border-line pt-4">
+          {clearing ? (
+            <div className="space-y-3 rounded-2xl bg-surface p-4">
+              <p className="text-[14px]">
+                <span className="font-medium">Clear your chat with {bot.name}?</span>{" "}
+                Every message goes, and {bot.name} starts fresh: it won't remember this conversation. Anything running stops. This can't be undone.
+              </p>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="text-[14px]">Also forget what it learned</div>
+                  <div className="text-[12.5px] text-ink-3">Preferences and facts it remembers about you</div>
+                </div>
+                <Toggle on={forgetToo} onChange={setForgetToo} label="Also forget what it learned" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setClearing(false)}>Cancel</Button>
+                <Button variant="danger" onClick={async () => {
+                  if (await attempt(() => api.clearChat(bot.id, forgetToo), "Chat cleared") !== undefined) { clearChat(bot.id); setClearing(false); }
+                }}>Clear</Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="soft" onClick={() => { setForgetToo(false); setClearing(true); }}><Icon.trash /> Clear chat history</Button>
+          )}
+        </div>
         {role === "owner" && <div className="border-t border-line pt-4">
           {confirm ? (
             <div className="flex items-center gap-2">

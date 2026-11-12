@@ -92,6 +92,8 @@ export const api = {
   groupQueue: (id: string) => req<{ items: QueueItem[] }>("GET", `/api/groups/${id}/queue`),
   queueAction: (qid: string, action: "pause" | "resume" | "cancel") => req<{ items: QueueItem[] }>("POST", `/api/queue/${qid}`, { action }),
   clearQueue: (id: string) => req<{ items: QueueItem[] }>("POST", `${bot(id)}/queue/clear`, {}),
+  // Delete this chat with a bot and start it fresh; memory also forgets what it learned.
+  clearChat: (id: string, memory: boolean) => req("DELETE", `${bot(id)}/messages${memory ? "?memory=1" : ""}`),
   clearGroupQueue: (id: string) => req<{ items: QueueItem[] }>("POST", `/api/groups/${id}/queue/clear`, {}),
   answer: (cardId: string, b: { decision: "approve" | "reject" | "answer"; text?: string; always?: boolean }) =>
     req<Message>("POST", `/api/cards/${cardId}`, b),

@@ -59,6 +59,7 @@ class Events(private val store: Store, private val alerts: Alerts) {
             }
             "bot" -> e.data<Bot>()?.let(store::upsertBot)
             "bot_removed" -> botId?.let(store::removeBot)
+            "cleared" -> botId?.let(store::clearChat)
             "group" -> e.data<Group>()?.let(store::upsertGroup)
             "group_removed" -> groupId?.let(store::removeGroup)
             "queue" -> {

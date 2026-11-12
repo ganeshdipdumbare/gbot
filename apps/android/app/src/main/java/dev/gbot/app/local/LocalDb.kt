@@ -152,6 +152,9 @@ class LocalDb(context: Context) : SQLiteOpenHelper(context, "gbot-local.db", nul
 
     @Synchronized fun patchMessage(m: Message) = putMessage(m)
 
+    /** Every message in one chat, cards and exchange cards included. */
+    @Synchronized fun clearChat(chat: String) { writableDatabase.delete("msgs", "chat = ?", arrayOf(chat)) }
+
     /** The newest [limit] messages for a chat key, oldest first, or the page before [before]. */
     @Synchronized fun messages(chat: String, before: String? = null, limit: Int = 100): List<Message> {
         val (where, args) = if (before == null) "chat = ?" to arrayOf(chat) else "chat = ? AND at < ?" to arrayOf(chat, before)
