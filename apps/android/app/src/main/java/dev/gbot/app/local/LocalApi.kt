@@ -162,8 +162,9 @@ class LocalApi(
             val existing = list.find { it.id == MAIN_BOT }
             when {
                 existing == null -> list + hatchMainBot()
-                // Older installs seeded it without the mark: fix it once.
-                existing.look != MAIN_LOOK -> {
+                // Seeded before the mark existed: give it the look once, but
+                // never overwrite a look the person has since chosen.
+                existing.look == Look() -> {
                     val fixed = existing.copy(look = MAIN_LOOK)
                     db.putBot(fixed)
                     list.map { if (it.id == MAIN_BOT) fixed else it }
@@ -209,7 +210,7 @@ class LocalApi(
             pinned = if (b.containsKey("pinned")) b.flag("pinned") else old.pinned,
             readAloud = if (b.containsKey("readAloud")) b.flag("readAloud") else old.readAloud,
             voice = if (b.containsKey("voice")) b.str("voice") else old.voice,
-            look = if (id == MAIN_BOT) old.look else (b["look"] as? JsonObject)?.let { l ->
+            look = (b["look"] as? JsonObject)?.let { l ->
                 old.look.copy(
                     shape = l["shape"]?.jsonPrimitive?.contentOrNull ?: old.look.shape,
                     hue = l["hue"]?.jsonPrimitive?.contentOrNull ?: old.look.hue,
