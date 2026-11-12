@@ -56,6 +56,7 @@ import dev.gbot.app.ui.IconBtn
 import dev.gbot.app.ui.Label
 import dev.gbot.app.ui.LocalG
 import dev.gbot.app.ui.Panel
+import dev.gbot.app.ui.Popup
 import dev.gbot.app.ui.Screen
 import dev.gbot.app.ui.SectionTitle
 import dev.gbot.app.ui.T
@@ -191,7 +192,7 @@ fun Integrations(back: () -> Unit) {
         connecting = a
         scope.launch {
             try { val r = app.api.startMcpOAuth(a.name, a.url); authUrl = r.url; openAuth(r.url) }
-            catch (e: Exception) { connecting = null; error = e.message ?: "Couldn't start sign-in" }
+            catch (e: Exception) { error = e.message ?: "Couldn't start sign-in" }
         }
     }
 
@@ -199,47 +200,9 @@ fun Integrations(back: () -> Unit) {
     val apps = catalog.filter { (cat == "All" || it.category == cat) && "${it.name} ${it.blurb}".lowercase().contains(q) }
     Screen("Integrations", back, actions = { GButton("Custom", { adding = Triple("", "", false); token = ""; error = "" }, variant = Variant.Soft, small = true, icon = "plus"); Spacer(Modifier.width(8.dp)) }) {
         Text("Let your bots work in the apps you already use. Each account stays yours, and you can remove an app any time.", style = T.small, color = g.ink2)
-        connecting?.let { c ->
-            Panel {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(g.live))
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Signing in to ${c.name}", style = T.small.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
-                        Text(if (authUrl.isNotEmpty()) "Finish in the browser, then come back." else "Preparing the sign-in…", style = T.tiny, color = g.ink2)
-                    }
-                    if (authUrl.isNotEmpty()) GButton("Open", { openAuth(authUrl) }, variant = Variant.Soft, small = true)
-                    GButton("Cancel", { connecting = null; authUrl = "" }, variant = Variant.Ghost, small = true)
-                }
-            }
-        }
-        adding?.let { (n0, u0, fromCatalog) ->
-            var name by remember(n0) { mutableStateOf(n0) }
-            var url by remember(u0) { mutableStateOf(u0) }
-            Panel {
-                Text("Connect ${name.ifEmpty { "a server" }}", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
-                Text(if (fromCatalog) "Paste a token if this app needs one." else "Give it a name and URL.", style = T.small, color = g.ink2)
-                Column { Label("Name"); Field(name, { name = it }, placeholder = "GitHub") }
-                Column { Label("URL"); Field(url, { url = it }, placeholder = "https://mcp.example.com/mcp", keyboard = KeyboardType.Uri) }
-                Column { Label("Token", "optional"); Field(token, { token = it }, placeholder = "Personal access token", password = true) }
-                Text(if (app.mode == Mode.Local) "Tokens stay on this phone and are never shown to bots." else "Tokens are encrypted on the server and never shown to bots.", style = T.tiny, color = g.ink3)
-                ErrorText(error)
-                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                    GButton("Cancel", { adding = null }, variant = Variant.Ghost, small = true)
-                    Spacer(Modifier.width(6.dp))
-                    GButton(if (busy) "Connecting…" else "Connect", {
-                        busy = true; error = ""
-                        scope.launch {
-                            try { app.api.addMcp(name.trim(), url.trim(), token.ifEmpty { null }); adding = null; load() }
-                            catch (e: Exception) { error = e.message ?: "Couldn't connect" } finally { busy = false }
-                        }
-                    }, small = true, enabled = !busy && name.isNotBlank() && url.isNotBlank())
-                }
-            }
-        }
         Field(search, { search = it }, placeholder = "Search apps")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { (listOf("All") + categories).forEach { c -> Chip(c, cat == c, { cat = c }) } }
-        if (adding == null) ErrorText(error)
+        if (adding == null && connecting == null) ErrorText(error)
         categories.forEach { c ->
             val inCat = apps.filter { it.category == c }
             if (inCat.isEmpty()) return@forEach
@@ -263,6 +226,51 @@ fun Integrations(back: () -> Unit) {
         SectionTitle("Connected")
         if (list?.isEmpty() == true) Text("Nothing connected yet.", style = T.small, color = g.ink3)
         list?.forEach { m -> ConnectedServer(m) { scope.launch { load() } } }
+    }
+    connecting?.let { c ->
+        Popup({ connecting = null; authUrl = "" }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Color(c.tint)), contentAlignment = Alignment.Center) { Text(c.name.take(1), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Signing in to ${c.name}", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(g.live))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (authUrl.isNotEmpty()) "Finish in the browser, then come back here." else "Preparing the sign-in…", style = T.small, color = g.ink2)
+                    }
+                }
+            }
+            ErrorText(error)
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                GButton("Cancel", { connecting = null; authUrl = "" }, variant = Variant.Ghost, small = true)
+                if (authUrl.isNotEmpty()) { Spacer(Modifier.width(6.dp)); GButton("Open sign-in again", { openAuth(authUrl) }, variant = Variant.Soft, small = true) }
+            }
+        }
+    }
+    adding?.let { (n0, u0, fromCatalog) ->
+        var name by remember(n0) { mutableStateOf(n0) }
+        var url by remember(u0) { mutableStateOf(u0) }
+        Popup({ if (!busy) adding = null }, dismissable = !busy) {
+                Text("Connect ${name.ifEmpty { "a server" }}", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
+                Text(if (fromCatalog) "$name connects with a personal access token. Make one in its settings and paste it here." else "Give it a name and URL, and a token if it needs one.", style = T.small, color = g.ink2)
+                Column { Label("Name"); Field(name, { name = it }, placeholder = "GitHub") }
+                Column { Label("URL"); Field(url, { url = it }, placeholder = "https://mcp.example.com/mcp", keyboard = KeyboardType.Uri) }
+                Column { Label("Token", if (fromCatalog) null else "optional"); Field(token, { token = it }, placeholder = "Personal access token", password = true) }
+                Text(if (app.mode == Mode.Local) "Tokens stay on this phone and are never shown to bots." else "Tokens are encrypted on the server and never shown to bots.", style = T.tiny, color = g.ink3)
+                ErrorText(error)
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    GButton("Cancel", { adding = null }, variant = Variant.Ghost, small = true)
+                    Spacer(Modifier.width(6.dp))
+                    GButton(if (busy) "Connecting…" else "Connect", {
+                        busy = true; error = ""
+                        scope.launch {
+                            try { app.api.addMcp(name.trim(), url.trim(), token.ifEmpty { null }); adding = null; load() }
+                            catch (e: Exception) { error = e.message ?: "Couldn't connect" } finally { busy = false }
+                        }
+                    }, small = true, enabled = !busy && name.isNotBlank() && url.isNotBlank() && (!fromCatalog || token.isNotBlank()))
+                }
+        }
     }
 }
 

@@ -152,6 +152,15 @@ class Screens {
     @Test fun slack() = shot("slack") { SettingsTab(rememberNavController(), "slack") }
     @Test fun asks() = shot("asks") { ChatScreen(rememberNavController(), "b4") }
 
+    /** Connecting an app far down the list opens a popup, not a form scrolled out of view. */
+    @Test fun connectPopup() {
+        shot("integrations") { SettingsTab(rememberNavController(), "integrations") }
+        rule.onNodeWithText("GitHub", useUnmergedTree = true).performScrollTo().performClick()
+        repeat(4) { rule.waitForIdle(); Thread.sleep(150) }
+        val bmp = rule.onNode(androidx.compose.ui.test.isDialog()).captureToImage().asAndroidBitmap()
+        File(File("build/shots").apply { mkdirs() }, "connect-popup.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
     /** Clearing a chat asks first, and offers to forget what the bot learned too. */
     @Test fun clearChat() {
         shot("bot-settings-clear") { BotSettingsScreen(rememberNavController(), "b1") }

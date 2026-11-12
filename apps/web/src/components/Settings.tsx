@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type ApprovalMode, type CodexLogin, type MCPServer, type Provider, type ProviderKind, type Skill, type ToolRule, type VaultSecret, type VoiceInfo } from "../lib/api";
@@ -484,6 +485,8 @@ function Integrations() {
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
 
+  // The token form opened from a catalog app (GitHub), which needs its token.
+  const fromCatalog = adding && catalog.some((a) => a.token && a.name === name && sameUrl(a.url, url));
   const q = search.trim().toLowerCase();
   const apps = catalog.filter((a) => (cat === "All" || a.category === cat) && `${a.name} ${a.blurb}`.toLowerCase().includes(q));
   const groups = categories.map((c) => ({ c, apps: apps.filter((a) => a.category === c) })).filter((g) => g.apps.length > 0);
@@ -509,32 +512,45 @@ function Integrations() {
 
   return (
     <>
-      {connecting && (
-        <div className="fixed inset-x-0 bottom-4 z-[70] flex justify-center px-4 pointer-events-none">
-          <div className="pointer-events-auto flex max-w-[480px] items-center gap-3 rounded-2xl bg-bg px-4 py-3 shadow-pop hairline pop-in">
-            <span className="size-2 shrink-0 rounded-full bg-live animate-pulse" />
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-semibold">Signing in to {connecting}</div>
-              <div className="text-[12.5px] leading-4 text-ink-2">
-                {authUrl ? "Finish in the window that opened. Nothing there?" : "Preparing the sign-in…"}
+      {/* Both dialogs go to the page itself: inside the settings panel,
+          which animates with a transform, "fixed" would pin them to the
+          scrolled list, out of view on a phone. */}
+      {connecting && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={closeAuth} aria-hidden />
+          <div role="dialog" aria-modal="true" aria-label={`Signing in to ${connecting}`}
+            className="relative w-full max-w-[420px] rounded-2xl bg-bg p-4 shadow-pop hairline pop-in space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl text-[16px] font-bold text-white shadow-sm" aria-hidden
+                style={{ background: catalog.find((a) => a.name === connecting)?.tint ?? "#888" }}>{connecting[0]}</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[15px] font-semibold">Signing in to {connecting}</div>
+                <div className="flex items-center gap-1.5 text-[12.5px] leading-4 text-ink-2">
+                  <span className="size-2 shrink-0 rounded-full bg-live animate-pulse" />
+                  {authUrl ? "Finish in the window that opened, then come back here." : "Preparing the sign-in…"}
+                </div>
               </div>
             </div>
-            {authUrl && (
-              <Button variant="soft" onClick={() => { popupRef.current = openAuth(authUrl); popupRef.current?.focus(); }}>Open sign-in</Button>
-            )}
-            <button type="button" onClick={closeAuth} className="shrink-0 text-[12.5px] text-ink-2 hover:text-ink cursor-pointer">Cancel</button>
+            {error && <p className="text-danger text-[13px]" role="alert">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={closeAuth}>Cancel</Button>
+              {authUrl && (
+                <Button variant="soft" onClick={() => { popupRef.current = openAuth(authUrl); popupRef.current?.focus(); }}>Open sign-in again</Button>
+              )}
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-      {adding && (
+      {adding && createPortal(
         <div className="fixed inset-0 z-[66] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/30" onClick={() => !busy && setAdding(false)} aria-hidden />
+          <div className="absolute inset-0 bg-black/40" onClick={() => !busy && setAdding(false)} aria-hidden />
           <div role="dialog" aria-modal="true" aria-label={`Connect ${name || "a server"}`}
             className="relative w-full max-w-[420px] rounded-2xl bg-bg p-4 shadow-pop hairline pop-in">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <div className="text-[15px] font-semibold">Connect {name || "a server"}</div>
-                <div className="text-[12.5px] text-ink-2">{url ? "Paste a token if this app needs one." : "Give it a name and URL."}</div>
+                <div className="text-[12.5px] text-ink-2">{fromCatalog ? `${name} connects with a personal access token. Make one in its settings and paste it here.` : "Give it a name and URL, and a token if it needs one."}</div>
               </div>
               <button type="button" aria-label="Close" onClick={() => setAdding(false)}
                 className="grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:text-ink hover:bg-hover cursor-pointer"><Icon.close /></button>
@@ -542,16 +558,17 @@ function Integrations() {
             <div className="space-y-3">
               <div><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="GitHub" autoFocus={!url} /></div>
               <div><Label>URL</Label><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://mcp.example.com/mcp" /></div>
-              <div><Label hint="optional">Token</Label><PasswordInput value={token} onChange={(e) => setToken(e.target.value)} placeholder="Personal access token" autoComplete="off" autoFocus={!!url} /></div>
+              <div><Label hint={fromCatalog ? undefined : "optional"}>Token</Label><PasswordInput value={token} onChange={(e) => setToken(e.target.value)} placeholder="Personal access token" autoComplete="off" autoFocus={!!url} /></div>
               <p className="text-[12.5px] text-ink-2">Tokens are encrypted on this server and never shown to bots.</p>
               {error && <p className="text-danger text-[13px]" role="alert">{error}</p>}
               <div className="flex justify-end gap-2 pt-1">
                 <Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
-                <Button onClick={add} disabled={busy || !name.trim() || !url.trim()}>{busy ? "Connecting…" : "Connect"}</Button>
+                <Button onClick={add} disabled={busy || !name.trim() || !url.trim() || (fromCatalog && !token.trim())}>{busy ? "Connecting…" : "Connect"}</Button>
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       <div className="space-y-5">
       <div className="flex items-start gap-3">

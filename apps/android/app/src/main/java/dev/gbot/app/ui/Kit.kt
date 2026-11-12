@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -283,6 +284,30 @@ fun Empty(text: String, seed: String = "empty-int") {
         Gbot(dev.gbot.app.net.Look(shape = "cloud", hue = "cream", eyes = "dot"), seed, 52, mood = "sleepy")
         Spacer(Modifier.height(8.dp))
         Text(text, style = T.small, color = LocalG.current.ink2)
+    }
+}
+
+/**
+ * A centred card over the screen, for a short form or a step in progress.
+ * It scrolls when tall and stays clear of the keyboard, so a form opened
+ * from far down a list is never out of view.
+ */
+@Composable
+fun Popup(onDismiss: () -> Unit, dismissable: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
+    val g = LocalG.current
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = dismissable, dismissOnClickOutside = dismissable, usePlatformDefaultWidth = false),
+    ) {
+        Box(Modifier.fillMaxSize().imePadding().padding(20.dp), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.widthIn(max = 480.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp))
+                    .background(if (g.dark) Color(0xFF262626) else Color.White)
+                    .verticalScroll(rememberScrollState()).padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                content = content,
+            )
+        }
     }
 }
 
