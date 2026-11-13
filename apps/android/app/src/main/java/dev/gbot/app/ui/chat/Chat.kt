@@ -67,6 +67,8 @@ import dev.gbot.app.ui.Icon
 import dev.gbot.app.ui.IconBtn
 import dev.gbot.app.ui.LocalG
 import dev.gbot.app.ui.Markdown
+import dev.gbot.app.ui.Motion
+import dev.gbot.app.ui.shimmer
 import dev.gbot.app.ui.R
 import dev.gbot.app.ui.T
 import dev.gbot.app.ui.TopBar
@@ -316,7 +318,7 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
             items(typing, key = { "typing$it" }) { id ->
                 val b = byId[id] ?: return@items
                 val pr = s.presence[id]
-                Row(Modifier.padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.animateItem(fadeInSpec = Motion.quick(), placementSpec = null, fadeOutSpec = Motion.fast()).padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Gbot(b.look, b.id, 32, mood = if (pr?.state == "working") "working" else "thinking")
                     Spacer(Modifier.width(10.dp))
                     Text((if (group != null) "${b.name} · " else "") + (pr?.detail ?: if (pr?.state == "working") "Working" else "Thinking"), style = T.small, color = g.ink3)
@@ -326,7 +328,10 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
                 val m = r.m
                 val from = m.str("from")?.let { f -> s.bots.find { it.id == f } }
                 val author = from ?: m.botId?.let { byId[it] ?: s.bots.find { b -> b.id == it } }
-                Column {
+                // New rows arrive with a quick fade. No placement spring:
+                // a streaming reply grows every frame, and the rows above
+                // must follow it exactly rather than trail behind.
+                Column(Modifier.animateItem(fadeInSpec = Motion.quick(), placementSpec = null, fadeOutSpec = Motion.fast())) {
                     if (r.stamp != null) Text(r.stamp, style = T.tiny, color = g.ink3, modifier = Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 4.dp), textAlign = TextAlign.Center)
                     when {
                         m.role == "card" -> if (author != null) Card(m, author, onTakeover)
@@ -348,7 +353,7 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
             }
             if (messages == null) items(4) { i ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = if (i % 2 == 0) Arrangement.End else Arrangement.Start) {
-                    Box(Modifier.width(if (i % 2 == 0) 180.dp else 260.dp).heightIn(min = if (i % 2 == 0) 36.dp else 60.dp).clip(RoundedCornerShape(18.dp)).background(g.surface))
+                    Box(Modifier.width(if (i % 2 == 0) 180.dp else 260.dp).heightIn(min = if (i % 2 == 0) 36.dp else 60.dp).shimmer().clip(RoundedCornerShape(18.dp)).background(g.surface))
                 }
             }
         }

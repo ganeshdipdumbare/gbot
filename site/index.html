@@ -34,6 +34,7 @@
       <a href="#computer">Computer</a>
       <a href="#crew">Crew</a>
       <a href="#integrations">Integrations</a>
+      <a href="#apps">Apps</a>
       <a href="#run">Run it</a>
     </nav>
     <div class="nav-actions">
@@ -205,7 +206,7 @@
             </div>
           </fieldset>
         </form>
-        <p class="small">The same rig draws them on web, desktop and Android.</p>
+        <p class="small">The same rig draws them on web, Mac and Android.</p>
       </div>
     </section>
 
@@ -256,7 +257,7 @@
     <section class="section" id="platforms">
       <header class="section-head">
         <h2>Wherever you are.</h2>
-        <p>One brain, three doors. The phone app can also run with no server at all.</p>
+        <p>The same crew on the web, on your Mac and on your phone. The Android app can also run with no server at all.</p>
       </header>
       <div class="screens" tabindex="0" role="group" aria-label="Screens from the app">
         <figure data-reveal>
@@ -276,19 +277,117 @@
           <figcaption><b>Integrations</b>Each account stays yours.</figcaption>
         </figure>
       </div>
-      <div class="platforms">
+    </section>
+
+    <section class="section" id="apps">
+      <header class="section-head">
+        <h2>Two ways to run.<br />Three apps.</h2>
+        <p>gbot is one brain you can open from three places. Where that brain lives is the only real choice: on a server you run, or entirely inside your phone.</p>
+      </header>
+
+      <div class="modes">
+        <article class="mode" data-reveal>
+          <div class="mode-top">
+            <span class="kicker">Mode 1</span>
+            <span class="opens"><i>Web</i><i>Mac</i><i>Android</i></span>
+          </div>
+          <h3>With your server</h3>
+          <p>Run one Go binary (plus Postgres) on a computer you own. Every app signs in to it, so the same bots, chats and memory follow you from laptop to phone.</p>
+          <ul class="ticks">
+            <li>Each bot gets a full Linux desktop in a microVM.</li>
+            <li>Routines and webhooks run around the clock.</li>
+            <li>Several people, each with their own account and spaces.</li>
+            <li>Models from Ollama, any OpenAI-compatible server, Anthropic, Gemini or a Codex login.</li>
+          </ul>
+          <a class="link" href="#run">Start the server <span aria-hidden="true">→</span></a>
+        </article>
+        <article class="mode" data-reveal>
+          <div class="mode-top">
+            <span class="kicker">Mode 2</span>
+            <span class="opens"><i>Android</i></span>
+          </div>
+          <h3>Phone only</h3>
+          <p>Choose <b>Use a model on this phone</b> on the first screen. No server, no account: the model, chats, memory and the bot's browser all stay in the app.</p>
+          <ul class="ticks">
+            <li>An on-device Gemma 4 model works offline, or bring your own cloud key.</li>
+            <li>The bot's computer is a real browser window it reads, clicks and fills.</li>
+            <li>Routines wake the app on time, even when it's closed.</li>
+            <li>Slack, integrations, skills, vault and voice all work here too.</li>
+          </ul>
+          <a class="link" href="https://ganeshdip--8099.getbb.app/gbot.apk">Download the APK <span aria-hidden="true">→</span></a>
+        </article>
+      </div>
+
+      <div class="apps">
         <article data-reveal>
-          <h3>Web <span class="tag">localhost:8080</span></h3>
-          <p>The whole app, served by one Go binary. Live updates, no build step for you.</p>
+          <div class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18"/></svg></div>
+          <h3>Web</h3>
+          <p class="app-sub">The full app, served by the gbot server itself.</p>
+          <dl>
+            <dt>Install</dt><dd>Nothing. Open <code>127.0.0.1:8080</code>, or your server's address from any browser.</dd>
+            <dt>Runs in</dt><dd>Mode 1 only.</dd>
+            <dt>Alerts</dt><dd>Browser notifications while the tab is open.</dd>
+            <dt>Good for</dt><dd>Any computer, and iPhone: Safari → Share → Add to Home Screen.</dd>
+          </dl>
         </article>
         <article data-reveal>
-          <h3>Desktop <span class="tag">macOS</span></h3>
-          <p>A 4 MB Tauri shell with native notifications. It is just your server in a window.</p>
+          <div class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+          <h3>Mac</h3>
+          <p class="app-sub">A 4 MB native window around the same web app.</p>
+          <dl>
+            <dt>Install</dt><dd><code>make desktop</code> builds <code>gbot.app</code> and a <code>.dmg</code>.</dd>
+            <dt>Runs in</dt><dd>Mode 1 only. It finds the server on this Mac by itself, or connects to any address you type, and remembers it.</dd>
+            <dt>Alerts</dt><dd>Native macOS notifications.</dd>
+            <dt>Good for</dt><dd>Keeping your crew in the Dock instead of a browser tab. If the server isn't up yet, it waits and opens the moment it is.</dd>
+          </dl>
         </article>
         <article data-reveal>
-          <h3>Android <span class="tag">APK</span></h3>
-          <p>Native Kotlin and Compose. It can also run with no server at all, entirely on your phone.</p>
+          <div class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></div>
+          <h3>Android</h3>
+          <p class="app-sub">Native Kotlin and Jetpack Compose, not a web page.</p>
+          <dl>
+            <dt>Install</dt><dd>The APK, Android 8 or newer.</dd>
+            <dt>Runs in</dt><dd>Mode 1 or Mode 2. Switch any time in Settings; each mode keeps its own bots.</dd>
+            <dt>Alerts</dt><dd>Approve or Decline right on the notification, even when gbot is closed, without Google's push service.</dd>
+            <dt>Good for</dt><dd>Sharing a link to a bot from any app, launcher shortcuts to your pinned bots, and <code>gbot://</code> links.</dd>
+          </dl>
         </article>
+      </div>
+
+      <div class="compare" data-reveal>
+        <div class="compare-scroll" tabindex="0" role="region" aria-label="What each app and mode can do">
+          <table>
+            <caption class="sr">Feature comparison across Web, Mac, Android with a server, and Android on the phone alone</caption>
+            <thead>
+              <tr>
+                <th scope="col"><span class="sr">Feature</span></th>
+                <th scope="col">Web<small>Mode 1</small></th>
+                <th scope="col">Mac<small>Mode 1</small></th>
+                <th scope="col">Android<small>Mode 1 · server</small></th>
+                <th scope="col" class="hl">Android<small>Mode 2 · phone only</small></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Needs a gbot server</th><td>Yes</td><td>Yes</td><td>Yes</td><td class="hl">No</td></tr>
+              <tr><th scope="row">Account</th><td colspan="3">Sign in to your server</td><td class="hl">None</td></tr>
+              <tr><th scope="row">Where the model runs</th><td colspan="3">Wherever the server points: Ollama, OpenAI-compatible, Anthropic, Gemini, Codex</td><td class="hl">On the phone (Gemma 4 E2B / E4B), or your own OpenAI, Anthropic, Gemini or compatible key</td></tr>
+              <tr><th scope="row">Where chats and memory live</th><td colspan="3">In Postgres on your server, shared by every app</td><td class="hl">In the app's private storage</td></tr>
+              <tr><th scope="row">The bot's computer</th><td colspan="3">Linux desktop in a microVM (or Docker): browser, terminal, files. Watch live, take control, sleep and wake</td><td class="hl">A Chromium window on the phone: read, click, fill, hand off to Chrome</td></tr>
+              <tr><th scope="row">Chat, approvals, questions</th><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td class="hl"><i class="y">✓</i></td></tr>
+              <tr><th scope="row">Group chats</th><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td class="hl"><i class="y">✓</i></td></tr>
+              <tr><th scope="row">Scheduled routines</th><td colspan="3">On the server, around the clock</td><td class="hl">On the phone; an alarm wakes gbot when one is due</td></tr>
+              <tr><th scope="row">Webhook routines</th><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td class="hl"><i class="n">—</i></td></tr>
+              <tr><th scope="row">Integrations (MCP)</th><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td class="hl"><i class="y">✓</i></td></tr>
+              <tr><th scope="row">Slack</th><td colspan="3">Events API; needs a public <code>GBOT_PUBLIC_URL</code></td><td class="hl">Socket Mode; no public address needed</td></tr>
+              <tr><th scope="row">Skills, vault, voice</th><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td class="hl"><i class="y">✓</i></td></tr>
+              <tr><th scope="row">Teams and spaces</th><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td><i class="y">✓</i></td><td class="hl"><i class="n">—</i> just you</td></tr>
+              <tr><th scope="row">Notifications</th><td>Browser, while open</td><td>Native macOS</td><td>Always on, with actions</td><td class="hl">On the phone</td></tr>
+              <tr><th scope="row">Works with no internet</th><td colspan="3">On your network, with a local model</td><td class="hl">Anywhere, with a phone model</td></tr>
+              <tr><th scope="row">Share sheet, shortcuts, <code>gbot://</code></th><td><i class="n">—</i></td><td><i class="n">—</i></td><td><i class="y">✓</i></td><td class="hl"><i class="y">✓</i></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small compare-note">Phone-only limits: a phone model is a 2.6–3.7 GB download and the larger one wants 8 GB of RAM; one reply runs at a time; the browser keeps its own sign-ins, separate from Chrome.</p>
       </div>
     </section>
 
@@ -337,7 +436,23 @@
         </details>
         <details>
           <summary>Which models can I use?</summary>
-          <p>Anything on Ollama or an OpenAI-compatible server, plus Anthropic, Gemini, and the ChatGPT account the Codex CLI is signed in to. The phone app can also download a small model and work offline.</p>
+          <p>On a server: anything on Ollama or an OpenAI-compatible server, plus Anthropic, Gemini, and the ChatGPT account the Codex CLI is signed in to. On the phone alone: Gemma 4 (E2B or E4B) running on the device, which works offline, or your own OpenAI, Anthropic, Gemini or compatible key.</p>
+        </details>
+        <details>
+          <summary>Do I need to run a server?</summary>
+          <p>Only for the web and Mac apps. The Android app can run entirely on the phone: pick <b>Use a model on this phone</b> on the first screen. You can connect a server later from Settings, or go back to phone-only the same way.</p>
+        </details>
+        <details>
+          <summary>How is the Mac app different from the web app?</summary>
+          <p>It is the same app in a native window. It finds the server on your Mac on its own (or remembers the address you give it), lives in the Dock, and uses macOS notifications. Everything else is identical, because the server is doing the work.</p>
+        </details>
+        <details>
+          <summary>What do I lose on the phone alone?</summary>
+          <p>Bots get a browser window instead of a full Linux desktop, routines run on a schedule but not from webhooks, and teams and spaces are server features. Chat, memory, approvals, group chats, integrations, Slack, skills, the vault and voice all work.</p>
+        </details>
+        <details>
+          <summary>Is there an iPhone app?</summary>
+          <p>Not a native one. Open your server's address in Safari and choose Share → Add to Home Screen; it runs full screen like an app.</p>
         </details>
         <details>
           <summary>Is it free?</summary>

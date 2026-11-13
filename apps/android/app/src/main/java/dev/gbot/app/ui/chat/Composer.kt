@@ -5,6 +5,12 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import dev.gbot.app.ui.Motion
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -173,7 +179,7 @@ fun Composer(placeholder: String, busy: Boolean, mentionable: List<Bot>, onSend:
                 )
             }
             if (mode != Dictation.Mode.None) {
-                val ring by animateFloatAsState(1f + level * 0.6f, label = "level")
+                val ring by animateFloatAsState(1f + level * 0.6f, Motion.snap(), label = "level")
                 Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
                     if (listening) Box(Modifier.size(36.dp).scale(ring).clip(CircleShape).background(g.live.copy(alpha = 0.3f)))
                     Box(Modifier.size(36.dp).clip(CircleShape).background(if (listening) g.live else Color.Transparent).tap { mic() }, contentAlignment = Alignment.Center) {
@@ -183,7 +189,10 @@ fun Composer(placeholder: String, busy: Boolean, mentionable: List<Bot>, onSend:
                 }
                 Spacer(Modifier.width(4.dp))
             }
-            AnimatedContent(busy && text.isBlank(), label = "send") { stop ->
+            AnimatedContent(
+                busy && text.isBlank(), label = "send",
+                transitionSpec = { (scaleIn(Motion.pressUp, initialScale = 0.6f) + fadeIn(Motion.fast())) togetherWith (scaleOut(Motion.fast(), targetScale = 0.6f) + fadeOut(Motion.fast())) },
+            ) { stop ->
                 if (stop) Box(Modifier.size(36.dp).clip(CircleShape).background(g.emphasis).tap(onClick = onStop), contentAlignment = Alignment.Center) { Icon("stop", size = 16.dp, color = g.onEmphasis) }
                 else {
                     val can = text.isNotBlank()

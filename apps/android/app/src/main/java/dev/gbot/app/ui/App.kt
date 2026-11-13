@@ -9,10 +9,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -136,12 +135,12 @@ fun AppRoot(activity: MainActivity) {
             // there, the chat slides away, and the avatar flies home.
             // Predictive back must match — Navigation's default is
             // scaleOut(0.7), which shrinks the whole screen from all sides.
-            enterTransition = { slideInHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeIn(tween(140)) },
-            exitTransition = { fadeOut(tween(110)) },
+            enterTransition = { slideInHorizontally(Motion.screenIn()) { it / 12 } + fadeIn(Motion.quick()) },
+            exitTransition = { fadeOut(Motion.fast()) },
             popEnterTransition = { EnterTransition.None },
-            popExitTransition = { slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeOut(tween(150)) },
+            popExitTransition = { slideOutHorizontally(Motion.screenOut()) { it / 12 } + fadeOut(Motion.screenOut()) },
             predictivePopEnterTransition = { EnterTransition.None },
-            predictivePopExitTransition = { slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeOut(tween(150)) },
+            predictivePopExitTransition = { slideOutHorizontally(Motion.screenOut()) { it / 12 } + fadeOut(Motion.screenOut()) },
         ) {
             composable(R.SERVER) { ServerScreen(
                 onDone = {
@@ -199,7 +198,8 @@ private fun Toasts(modifier: Modifier) {
     LaunchedEffect(Unit) {
         app.toasts.collect { current = it; delay(2400); if (current === it) current = null }
     }
-    AnimatedVisibility(current != null, modifier.navigationBarsPadding().padding(bottom = 88.dp), enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+    AnimatedVisibility(current != null, modifier.navigationBarsPadding().padding(bottom = 88.dp), enter = slideInVertically(Motion.offsetSpring) { it } + scaleIn(Motion.quick(), initialScale = 0.92f) + fadeIn(Motion.quick()),
+        exit = slideOutVertically(Motion.screenOut()) { it / 2 } + fadeOut(Motion.fast())) {
         val t = current ?: return@AnimatedVisibility
         Text(
             t.text, style = T.small, color = if (t.error) g.danger else g.ink,

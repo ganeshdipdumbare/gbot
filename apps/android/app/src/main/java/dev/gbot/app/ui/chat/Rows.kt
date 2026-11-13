@@ -1,6 +1,11 @@
 package dev.gbot.app.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import dev.gbot.app.ui.Motion
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -73,13 +78,13 @@ fun Activity(m: Message) {
     val long = steps.size > 4
     var open by remember(m.id) { mutableStateOf(!long) }
     val failed = steps.count { (it["ok"] as? JsonPrimitive)?.booleanOrNull == false }
-    val rot by animateFloatAsState(if (open) 90f else 0f, label = "chev")
+    val rot by animateFloatAsState(if (open) 90f else 0f, Motion.snap(), label = "chev")
     Column(Modifier.padding(top = 8.dp).widthIn(max = 560.dp)) {
         if (long) Row(Modifier.clip(RoundedCornerShape(6.dp)).tap { open = !open }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Worked through ${steps.size} steps" + if (failed > 0) " · $failed failed" else "", style = T.small.copy(fontSize = 13.5.sp), color = g.ink3)
             Text(" ›", style = T.small, color = g.ink3, modifier = Modifier.rotate(rot))
         }
-        AnimatedVisibility(open) {
+        AnimatedVisibility(open, enter = expandVertically(Motion.sizeSpring) + fadeIn(Motion.quick()), exit = shrinkVertically(Motion.sizeSpring) + fadeOut(Motion.fast())) {
             Column {
                 steps.forEach { st ->
                     val ok = (st["ok"] as? JsonPrimitive)?.booleanOrNull != false

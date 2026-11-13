@@ -3,6 +3,13 @@ package dev.gbot.app.ui
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -104,7 +111,7 @@ fun Modifier.tap(enabled: Boolean = true, onClick: () -> Unit): Modifier = click
 fun Modifier.pressable(enabled: Boolean = true, onLong: (() -> Unit)? = null, onClick: () -> Unit): Modifier {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
-    val s by animateFloatAsState(if (pressed) 0.96f else 1f, label = "press")
+    val s by animateFloatAsState(if (pressed) 0.96f else 1f, if (pressed) Motion.pressDown else Motion.pressUp, label = "press")
     val haptic = LocalHapticFeedback.current
     return this.scale(s).combinedClickable(
         interactionSource = src,
@@ -114,6 +121,17 @@ fun Modifier.pressable(enabled: Boolean = true, onLong: (() -> Unit)? = null, on
         onLongClick = onLong?.let { f -> { haptic.performHapticFeedback(HapticFeedbackType.LongPress); f() } },
         onClick = onClick,
     )
+}
+
+/**
+ * A placeholder that breathes while it waits, so a loading list reads as
+ * "on its way" rather than "broken". Alpha only: no layout, no allocation.
+ */
+@Composable
+fun Modifier.shimmer(): Modifier {
+    val inf = rememberInfiniteTransition(label = "shimmer")
+    val a by inf.animateFloat(1f, 0.45f, infiniteRepeatable(tween(720, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "a")
+    return this.graphicsLayer { alpha = a }
 }
 
 enum class Variant { Primary, Soft, Ghost, Danger }

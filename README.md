@@ -176,8 +176,10 @@ tools and memory apply — and is marked untrusted, because the text came from
 outside. Messages posted by any bot are ignored, so two bots cannot talk to
 each other in circles.
 
-This needs `GBOT_PUBLIC_URL`: Slack has to reach gbot over the internet, so it
-does not work in the phone-only mode.
+On a server this needs `GBOT_PUBLIC_URL`, because Slack has to reach gbot over
+the internet. The phone-only Android app uses Socket Mode instead (the app
+opens the connection to Slack), so it needs no public address: add an
+app-level `xapp-` token with `connections:write` next to the bot token.
 
 ---
 
@@ -283,8 +285,9 @@ The rest of the app is here too. Group chats work the same way: @mentioned bots
 answer, otherwise the first bot leads, and a reply can hand work to a teammate
 by @mentioning them. Routines use the same 5-field cron and presets as the
 server, can be created from chat, and run while gbot is open (a missed time
-catches up later). Integrations speak MCP over HTTP — servers that need
-sign-in (OAuth) still need your gbot server; add one with a token instead.
+catches up later); an alarm wakes gbot when one is due, even when it is
+closed. Integrations speak MCP over HTTP, with the same one-tap sign-in as the
+server, or a token. Slack works through Socket Mode (see [Slack](#slack)).
 Skills load with `use_skill`, the vault types saved secrets into fields on the
 sites they were saved for without showing the value to the model, and every
 provider, notification and voice feature works. Team sharing and spaces stay
@@ -294,7 +297,7 @@ Phone limits worth knowing: the model download is 2–4 GB and the largest wants
 8 GB of RAM; the first load and a long prompt take seconds; one reply runs at a
 time (the rest wait in the chat queue); the browser has its own cookie jar
 (not Chrome's, so sign in inside gbot's window), some sites block WebViews,
-downloads are not handled yet, and routines do not run while gbot is closed.
+downloads are not handled yet, and webhook routines need a server.
 The model is unloaded after two idle minutes (or when gbot goes to the
 background), so it isn't holding RAM while you're away — change that window in
 Settings → Models, where each downloaded model can also be removed.

@@ -4,6 +4,9 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import dev.gbot.app.ui.Motion
+import dev.gbot.app.ui.shimmer
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -174,7 +177,7 @@ fun HomeScreen(nav: NavHostController) {
                 items(bots, key = { it.id }) { b ->
                     // A bot that starts working moves up the roster; let it
                     // travel instead of jumping.
-                    Box(Modifier.animateItem()) {
+                    Box(Modifier.animateItem(fadeInSpec = Motion.quick(), placementSpec = Motion.placement, fadeOutSpec = Motion.fast())) {
                         BotRow(b, s.presence[b.id], s.computers[b.id]?.state == "on", s.unread[b.id] ?: 0, onClick = { open(b.id) }, onLong = { menu = b })
                     }
                 }
@@ -182,7 +185,7 @@ fun HomeScreen(nav: NavHostController) {
                     Text("Groups", style = T.tiny, color = g.ink3, modifier = Modifier.padding(start = 10.dp, top = 16.dp, bottom = 4.dp))
                 }
                 items(groups, key = { "g:" + it.id }) { gr ->
-                    Box(Modifier.animateItem()) {
+                    Box(Modifier.animateItem(fadeInSpec = Motion.quick(), placementSpec = Motion.placement, fadeOutSpec = Motion.fast())) {
                         GroupRow(gr, s.bots, s.presence, s.unread[groupKey(gr.id)] ?: 0, onClick = { open(groupKey(gr.id)) }, onLong = { nav.navigate(R.group(gr.id)) })
                     }
                 }
@@ -314,7 +317,7 @@ private fun RowShell(onClick: () -> Unit, onLong: () -> Unit, avatar: @Composabl
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AnimatedContent(
                     line,
-                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    transitionSpec = { (fadeIn(Motion.quick()) + slideInVertically(Motion.quick()) { it / 3 }) togetherWith fadeOut(Motion.fast()) },
                     label = "status",
                     modifier = Modifier.weight(1f),
                 ) { text ->
@@ -355,9 +358,9 @@ private fun GroupRow(gr: Group, bots: List<Bot>, presence: Map<String, Presence>
 private fun SkeletonRow() {
     val g = LocalG.current
     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(42.dp).clip(CircleShape).background(g.surface2))
+        Box(Modifier.size(42.dp).shimmer().clip(CircleShape).background(g.surface2))
         Spacer(Modifier.width(12.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.shimmer(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.width(110.dp).height(12.dp).clip(RoundedCornerShape(6.dp)).background(g.surface2))
             Box(Modifier.width(180.dp).height(10.dp).clip(RoundedCornerShape(6.dp)).background(g.surface2))
         }

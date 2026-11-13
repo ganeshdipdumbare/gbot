@@ -172,7 +172,7 @@ fun Gbot(
     val shared = LocalSharedScope.current
     val anim = LocalAnimScope.current
     val shaped = if (sharedKey != null && shared != null && anim != null) {
-        with(shared) { modifier.sharedElement(rememberSharedContentState(sharedKey), anim) }
+        with(shared) { modifier.sharedElement(rememberSharedContentState(sharedKey), anim, boundsTransform = Motion.avatarFly) }
     } else {
         modifier
     }
