@@ -29,10 +29,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.semantics.contentDescription
@@ -89,6 +88,7 @@ fun Gbot(
     val bg = LocalG.current.bg
     val happy = mood == "done" || mood == "happy"
     val small = size < 48
+    val simple = size < 56
 
     // Blinking, now and then.
     var blink by remember { mutableStateOf(false) }
@@ -173,6 +173,7 @@ fun Gbot(
         mood == "blocked" -> rot = keys(phase, 0f to 0f, .7f to 0f, .74f to -5f, .78f to 5f, .82f to -4f, .86f to 3f, .9f to 0f, 1f to 0f)
     }
 
+    val lit = Color(mix(hue.body, 0xFFFFFFFF, 0.2f)); val base = Color(hue.body); val shade = Color(mix(hue.body, 0xFF000000, 0.1f))
     val eye = Color(hue.eye)
     val (ew, eh) = eyeSizes.getValue(t.eyes)
     val s = body.eyeScale
@@ -194,15 +195,25 @@ fun Gbot(
             withTransform({ scale(1f, 3.4f / 27f, Offset(50f, 95.5f)) }) {
                 drawCircle(Brush.radialGradient(0f to Color(0x33000000), 0.6f to Color(0x12000000), 1f to Color.Transparent, center = Offset(50f, 95.5f), radius = 27f), 27f, Offset(50f, 95.5f))
             }
-            val box = android.graphics.RectF(0f, 0f, 106f, 106f)
             val pivot = Offset(bounds.center.x, bounds.bottom)
             withTransform({
                 rotate(rot, pivot)
                 translate(0f, ty * bounds.height)
                 scale(sx, sy, pivot)
             }) {
-                // The body as the site builds it: extruded, lit, projected.
-                drawIntoCanvas { Bots3D.draw(it.nativeCanvas, t.shape, hue.body, this.size.minDimension, box) }
+                val fill = Brush.radialGradient(
+                    0f to lit, 0.55f to base, 1f to shade,
+                    center = Offset(bounds.left + bounds.width * 0.5f, bounds.top + bounds.height * 0.12f),
+                    radius = maxOf(bounds.width, bounds.height) * 0.95f,
+                )
+                drawPath(path, fill)
+                if (!simple) clipPath(path) {
+                    // Soft edges: a lit rim above, a shaded one below, and a diffuse highlight.
+                    drawRect(Brush.verticalGradient(0f to Color(0x2EFFFFFF), 0.18f to Color.Transparent, 0.78f to Color.Transparent, 1f to Color(0x24000000), startY = bounds.top, endY = bounds.bottom))
+                    withTransform({ scale(1f, 16f / 28f, Offset(42f - px * 0.3f, 24f - py * 0.3f)) }) {
+                        drawCircle(Brush.radialGradient(0f to Color(0x47FFFFFF), 1f to Color.Transparent, center = Offset(42f - px * 0.3f, 24f - py * 0.3f), radius = 28f), 28f, Offset(42f - px * 0.3f, 24f - py * 0.3f))
+                    }
+                }
                 withTransform({
                     translate(px + scan, py)
                     scale(1f, blinkY, Offset(body.faceX, body.faceY))
