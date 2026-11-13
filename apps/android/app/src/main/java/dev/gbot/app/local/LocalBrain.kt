@@ -356,6 +356,12 @@ class LocalBrain(
                     override suspend fun setRoutine(id: String, active: Boolean) { api.updateRoutine(bot.id, id, active) }
                     override suspend fun deleteRoutine(id: String) { api.deleteRoutine(bot.id, id) }
                     override suspend fun runRoutine(id: String) { api.runRoutine(bot.id, id) }
+                    override fun watching(host: String) {
+                        event(
+                            bot, group, "Browsing ${host.ifEmpty { "the web" }} — tap to watch",
+                            buildJsonObject { put("kind", "browser"); put("host", host) },
+                        )
+                    }
                     override fun contract(goal: String, checks: List<String>): String {
                         if (goal.isEmpty() || checks.isEmpty()) return "Give the goal and at least one check."
                         runProof.contract = Contract(goal, checks)
@@ -644,10 +650,17 @@ class LocalBrain(
         if (!ask(bot, group, name, tools.describe(name, args), args, touchesWorld = world)) {
             return "The person declined or blocked this step. Do not retry it; ask what they would like instead."
         }
-        return runCatching {
+        val out = runCatching {
             (if (api.isMcpTool(name)) api.callMcp(name, args) else tools.run(name, args)).take(4000)
         }.getOrElse { "The tool failed: ${it.message}" }
-            .also { proof?.add(evidenceName(name, args), it) }
+        proof?.add(evidenceName(name, args), out)
+        // Say the site, not just "working", so the header tells them where
+        // the bot is and what they could be watching.
+        if (name.startsWith("browser_")) {
+            val host = hostOf(browser.url.value)
+            if (host.isNotEmpty()) stage("Browsing $host")
+        }
+        return out
     }
 
     /** How a step reads to the verifier: what was done, never what was typed. */
@@ -805,12 +818,13 @@ class LocalBrain(
             }
             appendLine()
             appendLine("Your tools:")
-            appendLine("- browser_open, browser_read, browser_click, browser_fill, browser_enter, browser_back: your own browser window. Always browser_read before you act, and use the numbered element ids it gives you.")
+            appendLine("- browser_open, browser_read, browser_click, browser_fill, browser_enter, browser_back: your own browser window, which the person can watch. Use it whenever the job needs a sign-in, a form, a click, or should happen in front of them — applying, booking, buying, checking their account. Always browser_read before you act, and use the numbered element ids it gives you.")
+            appendLine("- web_fetch: read a page's text with nothing on screen. Use it when they only want the information — search results, articles, prices. It has no sign-ins and cannot click, so it is never the way to do something for them.")
             appendLine("- open_in_chrome: hand the page to the person's real browser when a site needs their sign-in there.")
             appendLine("- vault_type: type a saved secret into a field on a site it was saved for; you never see the value.")
             appendLine("- use_skill: load the full instructions of a skill.")
             appendLine("- browser_forward, browser_reload, browser_scroll, browser_wait: more ways around a page.")
-            appendLine("- notify, remember, recall, web_fetch, profile.")
+            appendLine("- notify, remember, recall, profile.")
             appendLine("- ask_user: ask the person a question on a card, with options when it's a choice. Use it rather than asking in plain text.")
             appendLine("- file_list, file_read, file_write: your own folder on this phone, for notes, drafts and data you keep.")
             appendLine("- routine_list, routine_update, routine_delete, routine_run: your scheduled routines.")
@@ -822,6 +836,7 @@ class LocalBrain(
             appendLine("Rules:")
             appendLine("- Do not invent facts about the person. Use profile for forms and personal details.")
             appendLine("- Say what you did in one or two lines. If a step needs their approval, it appears as a card; wait for the answer.")
+            appendLine("- Never say something was sent, submitted, applied for, booked or bought unless you did it in the browser and the page confirmed it.")
             appendLine("- A message from the person may arrive with an internal plan. Follow it. If none came, or the task turns out different, call plan first with one step per line. The person never sees a plan, so don't tell them about it.")
             appendLine("- Use remember for durable facts about the person: preferences, names, decisions, how they like things. Use forget when they correct you or ask you to.")
             appendLine("- You cannot run shell commands, open other apps, text, email, or post through chat apps. To reach another of the person's bots, use message_bot — or @Name inside a group chat.")

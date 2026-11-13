@@ -159,7 +159,7 @@ fun ChatScreen(nav: NavHostController, key: ChatKey, prefill: String = "") {
             IconBtn("gear", if (bot != null) "Bot settings" else "Group settings", { nav.navigate(if (bot != null) R.bot(bot.id) else R.group(group!!.id)) })
         }
         Box(Modifier.weight(1f)) {
-            Transcript(key, bot, group, members, messages, error, onTakeover = { bot?.let { nav.navigate(R.computer(it.id, take = true)) } }, onLong = { actions = it })
+            Transcript(key, bot, group, members, messages, error, onTakeover = { bot?.let { nav.navigate(R.computer(it.id, take = true)) } }, onWatch = { bot?.let { nav.navigate(R.computer(it.id)) } }, onLong = { actions = it })
         }
         QueueStrip(key, s.queue[key].orEmpty())
         Box(Modifier.navigationBarsPadding()) {
@@ -228,7 +228,7 @@ private fun QueueStrip(key: ChatKey, items: List<QueueItem>) {
 }
 
 @Composable
-private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot>, messages: List<Message>?, error: String, onTakeover: () -> Unit, onLong: (Message) -> Unit) {
+private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot>, messages: List<Message>?, error: String, onTakeover: () -> Unit, onWatch: () -> Unit, onLong: (Message) -> Unit) {
     val app = GbotApp.instance
     val g = LocalG.current
     val s by app.store.state.collectAsState()
@@ -328,6 +328,7 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
                         r.round?.isEmpty() == true -> Unit
                         r.round != null -> RoundCard(r.round, s.bots)
                         m.role == "event" && m.kind == "botmsg" -> Exchange(m, s.bots)
+                        m.role == "event" && m.kind == "browser" -> EventLine(m, author, onWatch)
                         m.role == "event" -> EventLine(m, author)
                         else -> Bubble(m, author, r.first, r.last, group != null, onLong)
                     }

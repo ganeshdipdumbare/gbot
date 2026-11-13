@@ -325,4 +325,12 @@ class LocalTest {
         assertEquals("say hi to Pip", sent["message"]?.jsonPrimitive?.contentOrNull)
         assertEquals("sent", sent["status"]?.jsonPrimitive?.contentOrNull)
     }
+
+    @Test
+    fun `a url gives the site to show while the bot works`() {
+        assertEquals("linkedin.com", dev.gbot.app.local.hostOf("https://www.linkedin.com/jobs/"))
+        assertEquals("example.com", dev.gbot.app.local.hostOf("http://example.com/x?y=1"))
+        assertEquals("", dev.gbot.app.local.hostOf(""))
+        assertEquals("", dev.gbot.app.local.hostOf("not a url"))
+    }
 }

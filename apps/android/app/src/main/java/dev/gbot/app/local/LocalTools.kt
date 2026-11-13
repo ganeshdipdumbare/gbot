@@ -59,6 +59,8 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
         suspend fun runRoutine(id: String)
         fun contract(goal: String, checks: List<String>): String
         suspend fun verify(): String
+        /** The first browser step of this run: where the person can watch. */
+        fun watching(host: String)
     }
 
     /** The bot's own folder on this phone: notes, drafts and files it makes. */
@@ -69,6 +71,9 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
 
     /** The current task's steps, kept for this run only. */
     private var plan: List<String> = emptyList()
+
+    /** Set once a browser step has told the person where to watch. */
+    private var watchPosted = false
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -76,7 +81,8 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
 
     val schemas: List<ToolSchema> = listOf(
         ToolSchema(
-            "browser_open", "Open a web address in the bot's own browser. Use this to look at a site.",
+            "browser_open",
+            "Open a web address in the bot's own browser, which the person can watch. Use it for anything that needs a sign-in, a form, a click, or where the person should see it happen.",
             params("url", "string", "Full web address, e.g. https://example.com", required = listOf("url")),
         ),
         ToolSchema(
@@ -130,7 +136,7 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
             params("query", "string", "Words to look for", required = listOf("query")),
         ),
         ToolSchema(
-            "web_fetch", "Fetch a page's text without opening the browser. Good for articles and plain sites.",
+            "web_fetch", "Read a page's text without opening the browser. For information where the person only wants the answer: it has no sign-ins, cannot click, and the person sees nothing while it runs.",
             params("url", "string", "Full web address", required = listOf("url")),
         ),
         ToolSchema("profile", "The person's own details, for filling in forms (name, email, phone, links, about).", params()),
@@ -282,7 +288,17 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
     private val lastLabels = mutableMapOf<Int, String>()
     private fun lastSnapshotLabel(id: Int): String = lastLabels[id] ?: "#$id"
 
-    suspend fun run(name: String, args: JsonObject): String = when (name) {
+    suspend fun run(name: String, args: JsonObject): String {
+        val out = runTool(name, args)
+        // The first browser step of a run says where the person can watch.
+        if (!watchPosted && name.startsWith("browser_")) {
+            watchPosted = true
+            host?.watching(hostOf(browser.url.value))
+        }
+        return out
+    }
+
+    private suspend fun runTool(name: String, args: JsonObject): String = when (name) {
         "plan" -> {
             val steps = planSteps(args.str("steps"))
             if (steps.isEmpty()) "Give the plan as one step per line."
@@ -584,3 +600,7 @@ fun planSteps(raw: String): List<String> = raw.lines()
     .map { it.trim().trimStart('-', '*', '•', '·', ' ', '—', '–').trim() }
     .map { it.replace(Regex("^\\d+[.):]\\s*"), "") }
     .filter { line -> line.any { it.isLetterOrDigit() } }
+
+/** The site a URL points at, for a status line or a "watch me" note. */
+fun hostOf(url: String): String = runCatching { java.net.URI(url).host.orEmpty() }
+    .getOrDefault("").removePrefix("www.")
