@@ -18,3 +18,4 @@ packages/*/dist/
 /gbot.apk
 .gbot.pid
 __pycache__/
+.vercel

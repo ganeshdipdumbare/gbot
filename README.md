@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="https://gbot-ganeshdipdumbares-projects.vercel.app">Website</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#features">Features</a> ·
   <a href="#configuration">Configuration</a> ·
@@ -304,10 +305,17 @@ Settings → Models, where each downloaded model can also be removed.
 
 ### Landing page
 
+Live at **<https://gbot-ganeshdipdumbares-projects.vercel.app>**.
+
 `site/` is a self-contained static page (no build step, no external assets).
-The repository root has a `vercel.json` that serves it: import the repo on
-Vercel and keep the default root — it publishes `site/` with long-lived caching
-for assets. It also runs from any static host, or locally:
+The repository root has a `vercel.json` that publishes `site/` with long-lived
+caching for assets. Deploy with:
+
+```bash
+vercel deploy --prod
+```
+
+It also runs from any static host, or locally:
 
 ```bash
 cd site && python3 -m http.server
