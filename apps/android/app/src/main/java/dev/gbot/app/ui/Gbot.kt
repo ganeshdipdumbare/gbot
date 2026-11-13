@@ -206,7 +206,12 @@ fun Gbot(
                     center = Offset(bounds.left + bounds.width * 0.5f, bounds.top + bounds.height * 0.12f),
                     radius = maxOf(bounds.width, bounds.height) * 0.95f,
                 )
-                drawPath(path, fill)
+                // Thickness, as on the web: a rim that lifts at the top
+                // and shades below, around a slightly smaller lit face.
+                drawPath(path, Brush.verticalGradient(0f to lit, 0.5f to base, 1f to shade, startY = bounds.top, endY = bounds.bottom))
+                clipPath(path) {
+                    withTransform({ scale(0.972f, 0.972f, bounds.center) }) { drawPath(path, fill) }
+                }
                 if (!simple) clipPath(path) {
                     // Soft edges: a lit rim above, a shaded one below, and a diffuse highlight.
                     drawRect(Brush.verticalGradient(0f to Color(0x2EFFFFFF), 0.18f to Color.Transparent, 0.78f to Color.Transparent, 1f to Color(0x24000000), startY = bounds.top, endY = bounds.bottom))
