@@ -93,7 +93,7 @@ fun SettingsHome(nav: NavHostController) {
     val scope = rememberCoroutineScope()
     var signingOut by remember { mutableStateOf(false) }
     val theme by app.theme.collectAsState()
-    LaunchedEffect(Unit) { if (app.store.now.models.isNullOrEmpty()) app.store.loadModels() }
+    LaunchedEffect(Unit) { app.store.loadModels() }
     val local = app.mode == Mode.Local
     val me = s.me
     val chosen = s.models?.find { it.id == me?.defaultModel }
@@ -309,7 +309,7 @@ private fun Models(back: () -> Unit) {
     val g = LocalG.current
     val s by app.store.state.collectAsState()
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { if (app.store.now.models.isNullOrEmpty()) app.store.loadModels() }
+    LaunchedEffect(Unit) { app.store.loadModels() }
     val hasLocal = s.models?.any { it.local } == true
     val localCount = s.models?.count { it.local } ?: 0
     val providerCount = s.models?.count { !it.local } ?: 0

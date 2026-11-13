@@ -6,8 +6,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -127,15 +127,16 @@ fun AppRoot(activity: MainActivity) {
     val g = LocalG.current
     NowTicker {
     Box(Modifier.fillMaxSize().background(g.bg)) {
+        SharedTransitionLayout {
+        val sharedScope = this
         NavHost(
             nav, start,
-            // Going back is the move people make all day: the screen they
-            // return to is simply there, and the one they leave slides
-            // away. Waiting for it to fade in is what reads as a stall.
-            enterTransition = { slideInHorizontally(tween(180, easing = FastOutSlowInEasing)) { it / 10 } + fadeIn(tween(120)) },
-            exitTransition = { fadeOut(tween(100)) },
-            popEnterTransition = { EnterTransition.None },
-            popExitTransition = { slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { it / 10 } + fadeOut(tween(160)) },
+            // Short and decisive: the screen is there before the motion
+            // has finished explaining itself.
+            enterTransition = { slideInHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeIn(tween(140)) },
+            exitTransition = { fadeOut(tween(110)) },
+            popEnterTransition = { fadeIn(tween(140)) },
+            popExitTransition = { slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeOut(tween(150)) },
         ) {
             composable(R.SERVER) { ServerScreen(
                 onDone = {
@@ -145,16 +146,22 @@ fun AppRoot(activity: MainActivity) {
                 onBack = if (nav.previousBackStackEntry != null) ({ nav.popBackStack() }) else null,
             ) }
             composable(R.LOGIN) { LoginScreen(onSignedIn = { nav.home() }, onChangeServer = { nav.navigate(R.SERVER) }) }
-            composable(R.HOME) { HomeScreen(nav) }
+            composable(R.HOME) {
+                CompositionLocalProvider(LocalSharedScope provides sharedScope, LocalAnimScope provides this) {
+                    HomeScreen(nav)
+                }
+            }
             composable(
                 "chat/{key}?prefill={prefill}",
                 arguments = listOf(navArgument("prefill") { type = NavType.StringType; defaultValue = "" }),
             ) { e ->
-                ChatScreen(
-                    nav,
-                    Uri.decode(e.arguments?.getString("key").orEmpty()),
-                    prefill = e.arguments?.getString("prefill").orEmpty(),
-                )
+                CompositionLocalProvider(LocalSharedScope provides sharedScope, LocalAnimScope provides this) {
+                    ChatScreen(
+                        nav,
+                        Uri.decode(e.arguments?.getString("key").orEmpty()),
+                        prefill = e.arguments?.getString("prefill").orEmpty(),
+                    )
+                }
             }
             composable("bot/{id}") { e -> BotSettingsScreen(nav, e.arguments?.getString("id").orEmpty()) }
             composable("group/{id}") { e -> GroupSettingsScreen(nav, e.arguments?.getString("id").orEmpty()) }
@@ -163,6 +170,7 @@ fun AppRoot(activity: MainActivity) {
             composable(R.NEW_GROUP) { NewGroupScreen(nav) }
             composable(R.SETTINGS) { SettingsHome(nav) }
             composable("settings/{tab}") { e -> SettingsTab(nav, e.arguments?.getString("tab").orEmpty()) }
+        }
         }
         Toasts(Modifier.align(Alignment.BottomCenter))
     }

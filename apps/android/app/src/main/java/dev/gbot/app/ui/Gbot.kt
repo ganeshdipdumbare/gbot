@@ -188,32 +188,12 @@ fun Gbot(
     } else {
         modifier
     }
-    // Brushes are built once per look: during a screen transition the
-    // avatar redraws every frame, and allocating gradients per frame is
-    // what makes a pop stutter.
-    val shadowBrush = remember { Brush.radialGradient(0f to Color(0x33000000), 0.6f to Color(0x12000000), 1f to Color.Transparent, center = Offset(50f, 95.5f), radius = 27f) }
-    val sheenBrush = remember {
-        Brush.radialGradient(0f to Color(0x47FFFFFF), 1f to Color.Transparent, center = Offset(42f, 24f), radius = 28f)
-    }
-    val rimBrush = remember(bounds) {
-        Brush.verticalGradient(
-            0f to Color(0x2EFFFFFF), 0.18f to Color.Transparent, 0.78f to Color.Transparent, 1f to Color(0x24000000),
-            startY = bounds.top, endY = bounds.bottom,
-        )
-    }
-    val bodyBrush = remember(lit, base, shade, bounds) {
-        Brush.radialGradient(
-            0f to lit, 0.55f to base, 1f to shade,
-            center = Offset(bounds.left + bounds.width * 0.5f, bounds.top + bounds.height * 0.12f),
-            radius = maxOf(bounds.width, bounds.height) * 0.95f,
-        )
-    }
     Canvas(shaped.size(size.dp).semantics { contentDescription = "bot" }) {
         val unit = this.size.minDimension / 106f
         withTransform({ scale(unit, unit, Offset.Zero); translate(3f, 3f) }) {
             // Contact shadow.
             withTransform({ scale(1f, 3.4f / 27f, Offset(50f, 95.5f)) }) {
-                drawCircle(shadowBrush, 27f, Offset(50f, 95.5f))
+                drawCircle(Brush.radialGradient(0f to Color(0x33000000), 0.6f to Color(0x12000000), 1f to Color.Transparent, center = Offset(50f, 95.5f), radius = 27f), 27f, Offset(50f, 95.5f))
             }
             val pivot = Offset(bounds.center.x, bounds.bottom)
             withTransform({
@@ -221,15 +201,17 @@ fun Gbot(
                 translate(0f, ty * bounds.height)
                 scale(sx, sy, pivot)
             }) {
-                val fill = bodyBrush
+                val fill = Brush.radialGradient(
+                    0f to lit, 0.55f to base, 1f to shade,
+                    center = Offset(bounds.left + bounds.width * 0.5f, bounds.top + bounds.height * 0.12f),
+                    radius = maxOf(bounds.width, bounds.height) * 0.95f,
+                )
                 drawPath(path, fill)
                 if (!simple) clipPath(path) {
                     // Soft edges: a lit rim above, a shaded one below, and a diffuse highlight.
-                    drawRect(rimBrush)
-                    // The highlight slides with the gaze, drawn from one
-                    // cached brush instead of a new one every frame.
-                    withTransform({ translate(-px * 0.3f, -py * 0.3f); scale(1f, 16f / 28f, Offset(42f, 24f)) }) {
-                        drawCircle(sheenBrush, 28f, Offset(42f, 24f))
+                    drawRect(Brush.verticalGradient(0f to Color(0x2EFFFFFF), 0.18f to Color.Transparent, 0.78f to Color.Transparent, 1f to Color(0x24000000), startY = bounds.top, endY = bounds.bottom))
+                    withTransform({ scale(1f, 16f / 28f, Offset(42f - px * 0.3f, 24f - py * 0.3f)) }) {
+                        drawCircle(Brush.radialGradient(0f to Color(0x47FFFFFF), 1f to Color.Transparent, center = Offset(42f - px * 0.3f, 24f - py * 0.3f), radius = 28f), 28f, Offset(42f - px * 0.3f, 24f - py * 0.3f))
                     }
                 }
                 withTransform({
