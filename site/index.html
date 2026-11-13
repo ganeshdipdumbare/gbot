@@ -6,10 +6,15 @@
   <title>gbot — AI teammates on your own machine</title>
   <meta name="description" content="Cute, persistent AI teammates with their own computer, memory and routines. Local-first: no accounts, no API keys, no telemetry." />
   <meta name="theme-color" content="#0b0b0c" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="gbot — AI teammates on your own machine" />
+  <meta property="og:description" content="Cute, persistent AI teammates with their own computer, memory and routines. Local-first: no accounts, no API keys, no telemetry." />
+  <meta name="twitter:card" content="summary" />
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
+<body id="top">
+  <a class="skip" href="#main">Skip to content</a>
   <div class="aurora" aria-hidden="true"></div>
 
   <header class="nav">
@@ -23,10 +28,13 @@
       <a href="#integrations">Integrations</a>
       <a href="#run">Run it</a>
     </nav>
-    <a class="btn ghost small" href="https://github.com/ganeshdipdumbare/gbot">GitHub</a>
+    <div class="nav-actions">
+      <a class="btn ghost small" href="https://github.com/ganeshdipdumbare/gbot">GitHub</a>
+      <a class="btn primary small" href="https://ganeshdip--8099.getbb.app/gbot.apk">Download</a>
+    </div>
   </header>
 
-  <main id="top">
+  <main id="main">
     <section class="hero">
       <div class="hero-copy">
         <span class="eyebrow"><i></i> Local-first AI teammates</span>
@@ -40,9 +48,9 @@
       </div>
 
       <div class="hero-art" aria-hidden="true">
-        <div class="phone back"><img src="assets/screens/integrations.png" alt="" /></div>
+        <div class="phone back"><img src="assets/screens/integrations.png" width="720" height="1548" alt="" /></div>
         <div class="phone front">
-          <img src="assets/screens/chat.png" alt="" />
+          <img src="assets/screens/chat.png" width="720" height="1548" alt="" />
         </div>
         <div class="float-card one">
           <span class="face mint"></span>
@@ -141,7 +149,7 @@
 
     <section class="section crew" id="crew">
       <div class="crew-art">
-        <img src="assets/screens/hatch.png" alt="Give a bot a name, job, shape and color" loading="lazy" />
+        <img src="assets/screens/hatch.png" width="720" height="1548" alt="Give a bot a name, job, shape and color" loading="lazy" />
       </div>
       <div class="crew-copy">
         <span class="kicker">Not another avatar</span>
@@ -242,7 +250,62 @@
         </div>
       </div>
       <div class="run-art" aria-hidden="true">
-        <img src="assets/screens/integrations.png" alt="" loading="lazy" />
+        <img src="assets/screens/integrations.png" width="720" height="1548" alt="" loading="lazy" />
+      </div>
+    </section>
+    <section class="section trust" aria-label="How it stays yours">
+      <div class="trust-grid">
+        <div>
+          <h3>Your data stays home</h3>
+          <p>Chats, memory and files live on your machine. Cloud models are opt-in, and each account brings its own keys.</p>
+        </div>
+        <div>
+          <h3>Sandboxed computers</h3>
+          <p>Each bot gets an isolated microVM with no network until you allow it, and its browser can be limited to a site list.</p>
+        </div>
+        <div>
+          <h3>You approve what matters</h3>
+          <p>Risky steps arrive as a card. Once outside text enters a run, changes always ask first, even in Auto.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section faq" id="faq">
+      <header class="section-head">
+        <span class="kicker">Questions</span>
+        <h2>Good to know.</h2>
+      </header>
+      <div class="faq-grid">
+        <details>
+          <summary>Does my data leave my machine?</summary>
+          <p>Not by default. The bots, chats, memory and their computers run on your hardware. If you connect a cloud model, only the prompt and the model's answer go to that provider, with your own key.</p>
+        </details>
+        <details>
+          <summary>Which models can I use?</summary>
+          <p>Anything on Ollama or an OpenAI-compatible server, plus Anthropic, Gemini, and the ChatGPT account the Codex CLI is signed in to. The phone app can also download a small model and work offline.</p>
+        </details>
+        <details>
+          <summary>Is it free?</summary>
+          <p>gbot is software you run yourself, with no subscription. You pay only for optional cloud models if you choose to connect one.</p>
+        </details>
+        <details>
+          <summary>What can a bot actually do?</summary>
+          <p>Browse and fill forms in its own browser, write and read files, remember things, run routines, and talk to other bots. Anything risky waits for your approval.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="section final">
+      <div class="final-card">
+        <div>
+          <span class="kicker">Ready when you are</span>
+          <h2>Hatch your first bot tonight.</h2>
+          <p>One command to start the server, or one APK to run it all on your phone.</p>
+        </div>
+        <div class="cta">
+          <a class="btn primary" href="https://ganeshdip--8099.getbb.app/gbot.apk">Download for Android</a>
+          <a class="btn" href="https://github.com/ganeshdipdumbare/gbot">Get the source</a>
+        </div>
       </div>
     </section>
   </main>
