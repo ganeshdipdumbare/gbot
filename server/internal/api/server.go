@@ -74,7 +74,11 @@ func (s *Server) Handler() http.Handler {
 	s.msgLimit = auth.NewLimiter(60, time.Minute)
 	s.hookLimit = auth.NewLimiter(120, time.Minute)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+	// Allow the desktop shell (Tauri custom-protocol origin) to discover us.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write([]byte("ok"))
+	})
 
 	mux.HandleFunc("GET /api/setup", s.setup)
 	mux.HandleFunc("POST /api/auth/signup", s.signup)
