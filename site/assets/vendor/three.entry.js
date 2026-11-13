@@ -1,0 +1,26 @@
+// What the site uses from three.js. `make site-three` bundles this into
+// three-<version>.min.js, so only these parts ship.
+export {
+  BufferAttribute,
+  BufferGeometry,
+  CanvasTexture,
+  CircleGeometry,
+  Color,
+  DirectionalLight,
+  Group,
+  HemisphereLight,
+  Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
+  PerspectiveCamera,
+  PlaneGeometry,
+  Raycaster,
+  RingGeometry,
+  Scene,
+  Shape,
+  ShapeGeometry,
+  ShapeUtils,
+  Vector2,
+  Vector3,
+  WebGLRenderer,
+} from "three";

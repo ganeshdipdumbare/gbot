@@ -5,31 +5,39 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>gbot — AI teammates on your own machine</title>
   <meta name="description" content="Cute, persistent AI teammates with their own computer, memory and routines. Local-first: no accounts, no API keys, no telemetry." />
-  <meta name="theme-color" content="#0b0b0c" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#fcfcfc" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="gbot — AI teammates on your own machine" />
   <meta property="og:description" content="Cute, persistent AI teammates with their own computer, memory and routines. Local-first: no accounts, no API keys, no telemetry." />
   <meta name="twitter:card" content="summary" />
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml" />
+  <script>document.documentElement.classList.add("js")</script>
   <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">{ "imports": { "three": "./assets/vendor/three-0.187.0.min.js" } }</script>
+  <link rel="modulepreload" href="js/shapes.js" />
+  <link rel="modulepreload" href="js/bots.js" />
+  <link rel="modulepreload" href="assets/vendor/three-0.187.0.min.js" />
+  <script type="module" src="js/main.js"></script>
 </head>
 <body id="top">
   <a class="skip" href="#main">Skip to content</a>
-  <div class="aurora" aria-hidden="true"></div>
 
-  <header class="nav">
+  <header class="nav" data-nav>
     <a class="brand" href="#top" aria-label="gbot home">
-      <img src="assets/logo.svg" width="30" height="30" alt="" />
+      <img src="assets/logo.svg" width="28" height="28" alt="" />
       <span>gbot</span>
     </a>
     <nav class="nav-links" aria-label="Sections">
       <a href="#features">Features</a>
       <a href="#computer">Computer</a>
+      <a href="#crew">Crew</a>
       <a href="#integrations">Integrations</a>
       <a href="#run">Run it</a>
     </nav>
     <div class="nav-actions">
-      <a class="btn ghost small" href="https://github.com/ganeshdipdumbare/gbot">GitHub</a>
+      <a class="btn quiet small" href="https://github.com/ganeshdipdumbare/gbot">GitHub</a>
       <a class="btn primary small" href="https://ganeshdip--8099.getbb.app/gbot.apk">Download</a>
     </div>
   </header>
@@ -37,9 +45,8 @@
   <main id="main">
     <section class="hero">
       <div class="hero-copy">
-        <span class="eyebrow"><i></i> Local-first AI teammates</span>
-        <h1>Your own bots.<br /><em>Your own machine.</em></h1>
-        <p class="lede">gbot gives you a crew of small, persistent AI teammates. Each one has its own computer, memory, chat and routines — and none of it leaves hardware you own.</p>
+        <h1>Your own bots.<br />Your own machine.</h1>
+        <p class="lede">gbot gives you a crew of small, persistent AI teammates. Each one has its own computer, memory, chat and routines, and none of it leaves hardware you own.</p>
         <div class="cta">
           <a class="btn primary" href="https://ganeshdip--8099.getbb.app/gbot.apk">Download for Android</a>
           <a class="btn" href="#run">Run it yourself</a>
@@ -47,235 +54,283 @@
         <p class="meta">Web · macOS · Android · one Go binary</p>
       </div>
 
-      <div class="hero-art" aria-hidden="true">
-        <div class="phone back"><img src="assets/screens/integrations.png" width="720" height="1548" alt="" /></div>
-        <div class="phone front">
-          <img src="assets/screens/chat.png" width="720" height="1548" alt="" />
-        </div>
-        <div class="float-card one">
-          <span class="face mint"></span>
-          <div><b>Pixel</b><span>Found 3 flights under €200</span></div>
-        </div>
-        <div class="float-card two">
-          <span class="face coral blink"></span>
-          <div><b>Nori</b><span>Needs your OK</span></div>
+      <div class="stage hero-stage" data-stage="hero">
+        <div class="chip" data-chip hidden inert>
+          <div class="chip-card">
+            <span class="chip-line">
+              <i class="chip-dot" data-chip-state="working"></i>
+              <b data-chip-name></b>
+              <span data-chip-text></span>
+            </span>
+            <span class="chip-actions" data-chip-actions hidden>
+              <button type="button" class="btn primary tiny" data-act="approve">Approve</button>
+              <button type="button" class="btn tiny" data-act="decline">Decline</button>
+            </span>
+          </div>
         </div>
       </div>
+      <p class="hint" data-hint hidden>They keep an eye on you. Tap one.</p>
     </section>
 
-    <section class="ticker" aria-label="What they do">
-      <div class="ticker-inner">
-        <span>own browser</span><i>·</i><span>lasting memory</span><i>·</i><span>approval cards</span><i>·</i>
-        <span>routines</span><i>·</i><span>group chats</span><i>·</i><span>Slack</span><i>·</i><span>voice</span><i>·</i>
-        <span>local models</span><i>·</i><span>your machine</span><i>·</i>
-        <span>own browser</span><i>·</i><span>lasting memory</span><i>·</i><span>approval cards</span><i>·</i>
-        <span>routines</span><i>·</i><span>group chats</span><i>·</i><span>Slack</span><i>·</i><span>voice</span><i>·</i>
-        <span>local models</span><i>·</i><span>your machine</span><i>·</i>
-      </div>
-    </section>
-
-    <section class="section" id="features">
-      <header class="section-head">
-        <span class="kicker">More than a chat window</span>
-        <h2>Small bots. Real work.</h2>
+    <section class="section features" id="features">
+      <header class="features-head">
+        <h2>Small bots.<br />Real work.</h2>
         <p>They don't just answer. They open pages, fill forms, keep notes and come back when something needs you.</p>
       </header>
-
-      <div class="cards">
-        <article class="card">
-          <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3a4 4 0 0 0-4 4v1a4 4 0 0 0 0 8v1a4 4 0 0 0 8 0v-1a4 4 0 0 0 0-8V7a4 4 0 0 0-4-4Z"/><path d="M9 10h.01M15 10h.01"/></svg></span>
+      <ol class="rows">
+        <li data-reveal>
           <h3>Memory that lasts</h3>
-          <p>Preferences, names, decisions — kept, ranked and recalled. When a chat outgrows the model, a rolling summary holds the thread.</p>
-        </article>
-        <article class="card">
-          <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg></span>
+          <p>Preferences, names, decisions: kept, ranked and recalled. When a chat outgrows the model, a rolling summary holds the thread.</p>
+        </li>
+        <li data-reveal>
           <h3>Asks before it acts</h3>
           <p>Anything risky arrives as a card in the chat: approve, decline, or always allow. Questions use the same card.</p>
-        </article>
-        <article class="card">
-          <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+        </li>
+        <li data-reveal>
           <h3>Its own computer</h3>
-          <p>A private Linux desktop — browser, terminal, files — in a microVM. Watch it work live, or take control for sign-ins.</p>
-        </article>
-        <article class="card">
-          <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2.5"/></svg></span>
+          <p>A private Linux desktop with a browser, terminal and files, in a microVM. Watch it work live, or take control for sign-ins.</p>
+        </li>
+        <li data-reveal>
           <h3>Routines</h3>
-          <p>Prompts on a schedule or a webhook. A morning brief, a nightly tidy-up — they run while you're away.</p>
-        </article>
-        <article class="card">
-          <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M3 20c0-2.8 2.2-5 5-5s5 2.2 5 5M11 20c0-2.8 2.2-5 5-5s5 2.2 5 5"/></svg></span>
+          <p>Prompts on a schedule or a webhook. A morning brief, a nightly tidy-up. They run while you're away.</p>
+        </li>
+        <li data-reveal>
           <h3>Group chats</h3>
           <p>Up to six bots in one room. The first leads, @mentions bring others in, and they hand work to each other.</p>
-        </article>
-        <article class="card">
-          <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 4 4 20M4 4l16 16"/><circle cx="12" cy="12" r="9"/></svg></span>
+        </li>
+        <li data-reveal>
           <h3>Local first</h3>
           <p>Runs on Ollama or any OpenAI-compatible server. Cloud providers are optional, and each account brings its own.</p>
-        </article>
-      </div>
+        </li>
+      </ol>
     </section>
 
     <section class="section split" id="computer">
-      <div class="split-copy">
-        <span class="kicker">A screen, not a black box</span>
+      <div class="split-copy" data-reveal>
         <h2>Watch them work.</h2>
-        <p>A bot's computer is a real desktop with a browser, a terminal and files — isolated per bot, with no network until you say so.</p>
+        <p>A bot's computer is a real desktop with a browser, a terminal and files. It is isolated per bot, with no network until you say so.</p>
         <ul class="ticks">
           <li>Sleep freezes it with windows and processes intact.</li>
           <li>Its browser can be limited to a site list.</li>
           <li>Take over only while you hold control.</li>
         </ul>
-        <a class="link" href="https://github.com/ganeshdipdumbare/gbot">See how it works <span>→</span></a>
+        <a class="link" href="https://github.com/ganeshdipdumbare/gbot">See how it works <span aria-hidden="true">→</span></a>
       </div>
-      <div class="split-art">
-        <div class="window">
-          <div class="window-bar"><i></i><i></i><i></i><span>Pixel's computer</span></div>
-          <div class="window-body">
-            <div class="desktop-glow"></div>
-            <div class="desktop-icons">
-              <span class="app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18"/></svg>Browser</span>
-              <span class="app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m5 7 7-4 7 4v10l-7 4-7-4Z"/><path d="m5 7 7 4 7-4M12 11v10"/></svg>Files</span>
-              <span class="app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 10 3 2-3 2M12 14h5"/></svg>Terminal</span>
-            </div>
-            <div class="browser-card">
-              <div class="browser-top"><i></i><span>flights.example</span></div>
-              <div class="browser-lines"><b></b><b></b><b></b><b></b></div>
-              <div class="cursor"></div>
-            </div>
+      <div class="desk" aria-hidden="true" data-reveal>
+        <div class="desk-bar">
+          <span class="desk-title">Pixel's computer</span>
+          <span class="live"><i></i>Live</span>
+        </div>
+        <div class="desk-body">
+          <div class="dock">
+            <span class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18"/></svg></span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 10 3 2-3 2M12 14h5"/></svg></span>
           </div>
+          <div class="page">
+            <div class="page-url"><i></i>google.com/travel/flights</div>
+            <div class="page-title">Berlin → Lisbon, Friday</div>
+            <ul class="fares">
+              <li><b>TAP 541</b><span>07:10 → 09:15</span><em>€149</em></li>
+              <li><b>easyJet 4410</b><span>12:30 → 14:40</span><em>€172</em></li>
+              <li class="pick"><b>Ryanair 8812</b><span>18:05 → 20:10</span><em>€119</em></li>
+            </ul>
+          </div>
+          <div class="pointer"></div>
+        </div>
+        <div class="desk-foot">
+          <span>Read 3 results</span>
+          <span class="take">Take control</span>
         </div>
       </div>
     </section>
 
-    <section class="section crew" id="crew">
-      <div class="crew-art">
-        <img src="assets/screens/hatch.png" width="720" height="1548" alt="Give a bot a name, job, shape and color" loading="lazy" />
+    <section class="section studio" id="crew">
+      <div class="studio-stage" data-reveal>
+        <div class="stage" data-stage="studio"></div>
+        <button type="button" class="surprise" data-surprise>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 9h.01M15 9h.01M9 15h.01M15 15h.01" stroke-width="2.4" stroke-linecap="round"/></svg>
+          Surprise me
+        </button>
+        <p class="mood-note" data-mood-note aria-live="polite">Resting. A slow breath and the odd glance around.</p>
       </div>
-      <div class="crew-copy">
-        <span class="kicker">Not another avatar</span>
+      <div class="studio-copy">
         <h2>A face you can read.</h2>
-        <p>Every bot is a simple character with its own shape, color and eyes. The eyes say what's happening: thinking, working, stuck, done.</p>
-        <div class="faces" aria-hidden="true">
-          <span class="face mint"></span>
-          <span class="face grape cloud"></span>
-          <span class="face coral hex"></span>
-          <span class="face sun arch"></span>
-          <span class="face sky"></span>
-        </div>
-        <p class="small">Shapes, colors and lively eyes are drawn by the same rig on every platform.</p>
+        <p>Every bot is a simple character with its own shape, color and eyes. The eyes say what's happening: thinking, working, stuck, done. Try one.</p>
+        <form class="pickers" data-pickers>
+          <fieldset>
+            <legend>Shape</legend>
+            <div class="opts">
+            <label><input type="radio" name="shape" value="circle" /><span class="tile" data-icon="circle"></span><span class="sr">Circle</span></label>
+            <label><input type="radio" name="shape" value="square" /><span class="tile" data-icon="square"></span><span class="sr">Square</span></label>
+            <label><input type="radio" name="shape" value="triangle" /><span class="tile" data-icon="triangle"></span><span class="sr">Triangle</span></label>
+            <label><input type="radio" name="shape" value="hexagon" /><span class="tile" data-icon="hexagon"></span><span class="sr">Hexagon</span></label>
+            <label><input type="radio" name="shape" value="cloud" /><span class="tile" data-icon="cloud"></span><span class="sr">Cloud</span></label>
+            <label><input type="radio" name="shape" value="pill" /><span class="tile" data-icon="pill"></span><span class="sr">Pill</span></label>
+            <label><input type="radio" name="shape" value="arch" checked /><span class="tile" data-icon="arch"></span><span class="sr">Arch</span></label>
+            <label><input type="radio" name="shape" value="diamond" /><span class="tile" data-icon="diamond"></span><span class="sr">Diamond</span></label>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Color</legend>
+            <div class="opts">
+            <label><input type="radio" name="hue" value="cobalt" /><span class="swatch" data-icon="cobalt"></span><span class="sr">Cobalt</span></label>
+            <label><input type="radio" name="hue" value="coral" /><span class="swatch" data-icon="coral"></span><span class="sr">Coral</span></label>
+            <label><input type="radio" name="hue" value="sun" /><span class="swatch" data-icon="sun"></span><span class="sr">Sun</span></label>
+            <label><input type="radio" name="hue" value="mint" checked /><span class="swatch" data-icon="mint"></span><span class="sr">Mint</span></label>
+            <label><input type="radio" name="hue" value="grape" /><span class="swatch" data-icon="grape"></span><span class="sr">Grape</span></label>
+            <label><input type="radio" name="hue" value="bubblegum" /><span class="swatch" data-icon="bubblegum"></span><span class="sr">Bubblegum</span></label>
+            <label><input type="radio" name="hue" value="sky" /><span class="swatch" data-icon="sky"></span><span class="sr">Sky</span></label>
+            <label><input type="radio" name="hue" value="cream" /><span class="swatch" data-icon="cream"></span><span class="sr">Cream</span></label>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Eyes</legend>
+            <div class="opts">
+            <label><input type="radio" name="eyes" value="dot" checked /><span class="tile" data-icon="dot"></span><span class="sr">Round eyes</span></label>
+            <label><input type="radio" name="eyes" value="pill" /><span class="tile" data-icon="pill"></span><span class="sr">Tall eyes</span></label>
+            <label><input type="radio" name="eyes" value="wide" /><span class="tile" data-icon="wide"></span><span class="sr">Wide eyes</span></label>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Mood</legend>
+            <div class="opts moods">
+            <label><input type="radio" name="mood" value="idle" checked /><span class="mood">Resting</span></label>
+            <label><input type="radio" name="mood" value="thinking" /><span class="mood">Thinking</span></label>
+            <label><input type="radio" name="mood" value="working" /><span class="mood">Working</span></label>
+            <label><input type="radio" name="mood" value="waiting" /><span class="mood">Needs you</span></label>
+            <label><input type="radio" name="mood" value="blocked" /><span class="mood">Stuck</span></label>
+            <label><input type="radio" name="mood" value="sleepy" /><span class="mood">Asleep</span></label>
+            <label><input type="radio" name="mood" value="done" /><span class="mood">Done</span></label>
+            </div>
+          </fieldset>
+        </form>
+        <p class="small">The same rig draws them on web, desktop and Android.</p>
       </div>
     </section>
 
     <section class="section" id="integrations">
       <header class="section-head">
-        <span class="kicker">MCP, built in</span>
         <h2>Plugs into what you already use.</h2>
-        <p>One tap to sign in to 35 apps that publish an MCP server — or add any custom server with a token.</p>
+        <p>One tap to sign in to 35 apps that publish an MCP server, or add any custom server with a token.</p>
       </header>
-      <div class="logos" aria-label="Supported integrations">
-        <span class="logo"><img src="assets/integrations/notion.png" alt="Notion" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/linear.png" alt="Linear" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/jira.png" alt="Jira" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/monday.png" alt="Monday" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/clickup.png" alt="ClickUp" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/airtable.png" alt="Airtable" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/attio.png" alt="Attio" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/zapier.png" alt="Zapier" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/calendly.png" alt="Calendly" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/buffer.png" alt="Buffer" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/canva.png" alt="Canva" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/miro.png" alt="Miro" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/webflow.png" alt="Webflow" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/figma.png" alt="Figma" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/wix.png" alt="Wix" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/gamma.png" alt="Gamma" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/heygen.png" alt="HeyGen" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/excalidraw.png" alt="Excalidraw" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/supabase.png" alt="Supabase" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/amplitude.png" alt="Amplitude" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/mixpanel.png" alt="Mixpanel" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/metricool.png" alt="Metricool" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/parallel.png" alt="Parallel" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/github.png" alt="GitHub" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/sentry.png" alt="Sentry" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/postman.png" alt="Postman" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/vercel.png" alt="Vercel" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/netlify.png" alt="Netlify" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/datadog.png" alt="Datadog" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/stripe.png" alt="Stripe" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/paypal.png" alt="PayPal" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/finary.png" alt="Finary" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/scalable-capital.png" alt="Scalable Capital" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/whop.png" alt="Whop" loading="lazy" /></span>
-        <span class="logo"><img src="assets/integrations/daloopa.png" alt="Daloopa" loading="lazy" /></span>
-      </div>
+      <ul class="logos" aria-label="Supported integrations" data-reveal>
+        <li title="Notion"><img src="assets/integrations/notion.png" alt="Notion" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Linear"><img src="assets/integrations/linear.png" alt="Linear" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Jira"><img src="assets/integrations/jira.png" alt="Jira" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Monday"><img src="assets/integrations/monday.png" alt="Monday" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="ClickUp"><img src="assets/integrations/clickup.png" alt="ClickUp" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Airtable"><img src="assets/integrations/airtable.png" alt="Airtable" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Attio"><img src="assets/integrations/attio.png" alt="Attio" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Zapier"><img src="assets/integrations/zapier.png" alt="Zapier" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Calendly"><img src="assets/integrations/calendly.png" alt="Calendly" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Buffer"><img src="assets/integrations/buffer.png" alt="Buffer" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Canva"><img src="assets/integrations/canva.png" alt="Canva" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Miro"><img src="assets/integrations/miro.png" alt="Miro" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Webflow"><img src="assets/integrations/webflow.png" alt="Webflow" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Figma"><img src="assets/integrations/figma.png" alt="Figma" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Wix"><img src="assets/integrations/wix.png" alt="Wix" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Gamma"><img src="assets/integrations/gamma.png" alt="Gamma" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="HeyGen"><img src="assets/integrations/heygen.png" alt="HeyGen" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Excalidraw"><img src="assets/integrations/excalidraw.png" alt="Excalidraw" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Supabase"><img src="assets/integrations/supabase.png" alt="Supabase" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Amplitude"><img src="assets/integrations/amplitude.png" alt="Amplitude" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Mixpanel"><img src="assets/integrations/mixpanel.png" alt="Mixpanel" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Metricool"><img src="assets/integrations/metricool.png" alt="Metricool" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Parallel"><img src="assets/integrations/parallel.png" alt="Parallel" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="GitHub"><img src="assets/integrations/github.png" alt="GitHub" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Sentry"><img src="assets/integrations/sentry.png" alt="Sentry" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Postman"><img src="assets/integrations/postman.png" alt="Postman" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Vercel"><img src="assets/integrations/vercel.png" alt="Vercel" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Netlify"><img src="assets/integrations/netlify.png" alt="Netlify" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Datadog"><img src="assets/integrations/datadog.png" alt="Datadog" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Stripe"><img src="assets/integrations/stripe.png" alt="Stripe" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="PayPal"><img src="assets/integrations/paypal.png" alt="PayPal" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Finary"><img src="assets/integrations/finary.png" alt="Finary" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Scalable Capital"><img src="assets/integrations/scalable-capital.png" alt="Scalable Capital" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Whop"><img src="assets/integrations/whop.png" alt="Whop" width="40" height="40" loading="lazy" decoding="async" /></li>
+        <li title="Daloopa"><img src="assets/integrations/daloopa.png" alt="Daloopa" width="40" height="40" loading="lazy" decoding="async" /></li>
+      </ul>
     </section>
 
-    <section class="section platforms">
+    <section class="section" id="platforms">
       <header class="section-head">
-        <span class="kicker">One brain, three doors</span>
         <h2>Wherever you are.</h2>
+        <p>One brain, three doors. The phone app can also run with no server at all.</p>
       </header>
-      <div class="platform-grid">
-        <article class="platform">
-          <h3>Web</h3>
+      <div class="screens" tabindex="0" role="group" aria-label="Screens from the app">
+        <figure data-reveal>
+          <div class="phone"><img src="assets/screens/chat.png" width="720" height="1548" alt="A chat with Pixel: its steps, three flights, and an approval card" loading="lazy" decoding="async" /></div>
+          <figcaption><b>Chat</b>Steps, answers and approvals in one thread.</figcaption>
+        </figure>
+        <figure data-reveal>
+          <div class="phone"><img src="assets/screens/group.png" width="720" height="1548" alt="A group chat where Pixel hands a task to Juno" loading="lazy" decoding="async" /></div>
+          <figcaption><b>Group</b>Bots hand work to each other.</figcaption>
+        </figure>
+        <figure data-reveal>
+          <div class="phone"><img src="assets/screens/hatch.png" width="720" height="1548" alt="The new bot screen: name, job, shape, color and eyes" loading="lazy" decoding="async" /></div>
+          <figcaption><b>Hatch</b>A name, a job and a face.</figcaption>
+        </figure>
+        <figure data-reveal>
+          <div class="phone"><img src="assets/screens/integrations.png" width="720" height="1548" alt="The integrations list with Notion connected" loading="lazy" decoding="async" /></div>
+          <figcaption><b>Integrations</b>Each account stays yours.</figcaption>
+        </figure>
+      </div>
+      <div class="platforms">
+        <article data-reveal>
+          <h3>Web <span class="tag">localhost:8080</span></h3>
           <p>The whole app, served by one Go binary. Live updates, no build step for you.</p>
-          <span class="tag">localhost:8080</span>
         </article>
-        <article class="platform">
-          <h3>Desktop</h3>
+        <article data-reveal>
+          <h3>Desktop <span class="tag">macOS</span></h3>
           <p>A 4 MB Tauri shell with native notifications. It is just your server in a window.</p>
-          <span class="tag">macOS</span>
         </article>
-        <article class="platform">
-          <h3>Android</h3>
+        <article data-reveal>
+          <h3>Android <span class="tag">APK</span></h3>
           <p>Native Kotlin and Compose. It can also run with no server at all, entirely on your phone.</p>
-          <span class="tag">APK</span>
         </article>
       </div>
     </section>
 
     <section class="section run" id="run">
-      <div class="run-copy">
-        <span class="kicker">Take it home</span>
+      <div class="run-copy" data-reveal>
         <h2>Run it in a minute.</h2>
         <p>Docker for Postgres, Go, Node and Ollama. No accounts, no keys in a dashboard, no telemetry.</p>
-        <pre><code><span>$</span> git clone https://github.com/ganeshdipdumbare/gbot
-<span>$</span> cd gbot
-<span>$</span> make run</code></pre>
-        <p class="small">Then open <b>http://127.0.0.1:8080</b> and hatch your first bot.</p>
         <div class="cta">
           <a class="btn primary" href="https://github.com/ganeshdipdumbare/gbot">Get the source</a>
           <a class="btn" href="https://ganeshdip--8099.getbb.app/gbot.apk">Download the APK</a>
         </div>
       </div>
-      <div class="run-art" aria-hidden="true">
-        <img src="assets/screens/integrations.png" width="720" height="1548" alt="" loading="lazy" />
+      <div class="term" data-reveal>
+        <div class="term-bar">
+          <span>Terminal</span>
+          <button type="button" data-copy="git clone https://github.com/ganeshdipdumbare/gbot&#10;cd gbot&#10;make run">Copy</button>
+        </div>
+        <pre><code><span>$</span> git clone https://github.com/ganeshdipdumbare/gbot
+<span>$</span> cd gbot
+<span>$</span> make run</code></pre>
+        <p>Then open <b>http://127.0.0.1:8080</b> and hatch your first bot.</p>
       </div>
     </section>
+
     <section class="section trust" aria-label="How it stays yours">
-      <div class="trust-grid">
-        <div>
-          <h3>Your data stays home</h3>
-          <p>Chats, memory and files live on your machine. Cloud models are opt-in, and each account brings its own keys.</p>
-        </div>
-        <div>
-          <h3>Sandboxed computers</h3>
-          <p>Each bot gets an isolated microVM with no network until you allow it, and its browser can be limited to a site list.</p>
-        </div>
-        <div>
-          <h3>You approve what matters</h3>
-          <p>Risky steps arrive as a card. Once outside text enters a run, changes always ask first, even in Auto.</p>
-        </div>
+      <div data-reveal>
+        <h3>Your data stays home</h3>
+        <p>Chats, memory and files live on your machine. Cloud models are opt-in, and each account brings its own keys.</p>
+      </div>
+      <div data-reveal>
+        <h3>Sandboxed computers</h3>
+        <p>Each bot gets an isolated microVM with no network until you allow it, and its browser can be limited to a site list.</p>
+      </div>
+      <div data-reveal>
+        <h3>You approve what matters</h3>
+        <p>Risky steps arrive as a card. Once outside text enters a run, changes always ask first, even in Auto.</p>
       </div>
     </section>
 
     <section class="section faq" id="faq">
-      <header class="section-head">
-        <span class="kicker">Questions</span>
-        <h2>Good to know.</h2>
-      </header>
-      <div class="faq-grid">
+      <h2>Good to know.</h2>
+      <div class="faq-list">
         <details>
           <summary>Does my data leave my machine?</summary>
           <p>Not by default. The bots, chats, memory and their computers run on your hardware. If you connect a cloud model, only the prompt and the model's answer go to that provider, with your own key.</p>
@@ -296,16 +351,12 @@
     </section>
 
     <section class="section final">
-      <div class="final-card">
-        <div>
-          <span class="kicker">Ready when you are</span>
-          <h2>Hatch your first bot tonight.</h2>
-          <p>One command to start the server, or one APK to run it all on your phone.</p>
-        </div>
-        <div class="cta">
-          <a class="btn primary" href="https://ganeshdip--8099.getbb.app/gbot.apk">Download for Android</a>
-          <a class="btn" href="https://github.com/ganeshdipdumbare/gbot">Get the source</a>
-        </div>
+      <div class="lineup" data-lineup aria-hidden="true"></div>
+      <h2>Hatch your first bot tonight.</h2>
+      <p>One command to start the server, or one APK to run it all on your phone.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://ganeshdip--8099.getbb.app/gbot.apk">Download for Android</a>
+        <a class="btn" href="https://github.com/ganeshdipdumbare/gbot">Get the source</a>
       </div>
     </section>
   </main>
