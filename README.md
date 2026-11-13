@@ -1,15 +1,32 @@
 <p align="center">
-  <img src="docs/media/icon.png" width="128" height="128" alt="gbot icon">
+  <img src="docs/media/icon.png" width="104" height="104" alt="gbot" />
 </p>
 
 <h1 align="center">gbot</h1>
 
-<p align="center">Cute, persistent AI teammates that run entirely on your own machine.</p>
+<p align="center"><strong>Cute, persistent AI teammates that run entirely on your own machine.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/ganeshdipdumbare/gbot/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ganeshdipdumbare/gbot/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
+  <img alt="Go 1.27" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white" />
+  <img alt="Node 24" src="https://img.shields.io/badge/Node-24-5FA04E?logo=nodedotjs&logoColor=white" />
+  <img alt="Android 8+" src="https://img.shields.io/badge/Android-8%2B-3DDC84?logo=android&logoColor=white" />
+  <img alt="Web, macOS, Android" src="https://img.shields.io/badge/platforms-web%20%C2%B7%20macOS%20%C2%B7%20Android-444444" />
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#security">Security</a>
+</p>
 
 Each bot is a simple, expressive character with its own name, memory, one
 continuous chat, and its own computer. Bots remember what you tell them,
 show what they're doing through their eyes and motion (thinking, working,
 needs you, stuck, done), and keep working while you keep chatting.
+
+---
 
 ## Screenshots
 
@@ -17,53 +34,64 @@ needs you, stuck, done), and keep working while you keep chatting.
 |---|---|---|---|
 | ![Give a bot a name, job, shape and color](docs/media/hatch.png) | ![A bot answers with results and asks before booking](docs/media/chat.png) | ![Three bots in one chat, handing work to each other](docs/media/group.png) | ![Apps that connect with one sign-in](docs/media/integrations.png) |
 
+---
+
+## Features
+
+### Teammates, not tabs
+
+- **Memory that lasts.** Before a long chat outgrows the model, a rolling
+  summary keeps the facts that matter. A bot can also search its own history
+  for anything older.
 - **Approvals and questions.** Bots ask before risky steps with a card in the
   chat (Ask, Auto or Never ask, plus allow/block lists). They ask you
   questions the same way. Cards never block the chat.
 - **A queue that survives restarts.** Messages run in order; pause, resume
   or cancel any one. If the server restarts, what was waiting runs next
   instead of vanishing.
-- **Memory that lasts.** Before a long chat outgrows the model, a rolling
-  summary keeps the facts that matter, and a bot can search its own history
-  for anything older.
-- **A computer per bot.** A private Linux desktop (browser, terminal, files, and
-  an Activity log of everything the bot runs) in its own microVM via
-  [microsandbox](https://github.com/superradcompany/microsandbox), or a Docker
-  container. No network unless you allow it. Watch it live beside the chat, or
-  take control when it needs you (sign-ins, codes). **Sleep** freezes it with
-  its windows and processes intact; **Wake** resumes them. It sleeps after 20
-  idle minutes and wakes on its next use. This is a suspend, not a disk
-  snapshot: microsandbox cannot full-snapshot a running desktop. Its browser
-  can be limited to a site list, so internet
-  access does not mean the whole internet.
+
+### Its own computer
+
+A private Linux desktop (browser, terminal, files, and an Activity log of
+everything the bot runs) in its own microVM via
+[microsandbox](https://github.com/superradcompany/microsandbox), or a Docker
+container. No network unless you allow it. Watch it live beside the chat, or
+take control when it needs you (sign-ins, codes). **Sleep** freezes it with
+its windows and processes intact; **Wake** resumes them. It sleeps after 20
+idle minutes and wakes on its next use. This is a suspend, not a disk
+snapshot: microsandbox cannot full-snapshot a running desktop. Its browser
+can be limited to a site list, so internet access does not mean the whole
+internet.
+
+### Work while you're away
+
 - **Routines.** Prompts a bot runs on a schedule or when a webhook fires.
   Ask for one in chat, or set it up in the bot's panel.
-- **Integrations.** One-click sign-in to 35 apps that publish an MCP server
-  (Notion, Linear, Jira, Stripe, Figma, Datadog and more), custom MCP servers
-  with tokens, and skills you write once and use anywhere with `/`. Tokens are
-  encrypted at rest and scoped to your account.
-- **Group chats.** Up to six bots in one chat. The first leads, `@mentions`
-  bring others in, and bots hand work to each other.
 - **Slack.** Mention a bot in a channel and it answers in the thread, with
   the same memory, tools and approvals it has in its own chat.
-- **Voice.** Dictation and read-aloud, local by default.
-- **Everywhere.** Web, a 4 MB desktop app (Tauri), and a native Android app
-  (Kotlin + Compose) that also runs with no server at all.
+- **Group chats.** Up to six bots in one chat. The first leads, `@mentions`
+  bring others in, and bots hand work to each other.
+
+### Yours, end to end
 
 - **Local first.** Defaults to models on your machine through
   [Ollama](https://ollama.com) or any OpenAI-compatible local server. No
   API keys, no accounts elsewhere, no telemetry. Cloud providers are optional,
   and each account can connect its own from Settings → Providers.
+- **Everywhere.** Web, a 4 MB desktop app (Tauri), and a native Android app
+  (Kotlin + Compose) that also runs with no server at all.
 - **Built on [kritrim](https://github.com/ganeshdipdumbare/kritrim).** One
   small agent runtime with the secure default policy: Postgres-backed threads
   and memory, retries, limits, context trimming, and per-account model keys.
 - **Fast.** One Go binary serves the API, live updates (SSE) and the
-  precompressed web app (about 130 KB of JS, brotli).
+  precompressed web app (about 190 KB of JS, brotli).
 - **Secure by default.** argon2id passwords, hashed session tokens,
   CSRF and origin checks, strict CSP, rate limits, and spaces as the
   authorization boundary on every query.
 
-## Run it
+---
+
+## Quick start
 
 You need Docker (for Postgres), Go 1.27+, Node 24 with pnpm, and Ollama with
 the small Omni model, which handles tools and images:
@@ -75,7 +103,8 @@ ollama pull lfm3-omni
 Other local models can be much larger than a laptop can hold; gbot picks
 `lfm3-omni` by default when you have not chosen a model.
 
-gbot uses [kritrim](https://github.com/ganeshdipdumbare/kritrim), a Go module that `go mod download` fetches.
+gbot uses [kritrim](https://github.com/ganeshdipdumbare/kritrim), a Go module
+that `go mod download` fetches.
 
 Build the bots' computer image once (optional, about 1 GB, shared by every
 bot). For lightweight microVM computers (boot in under a second, about 75 MB
@@ -84,9 +113,6 @@ image into it:
 
 ```bash
 brew install superradcompany/tap/microsandbox
-```
-
-```bash
 make computer
 ```
 
@@ -96,9 +122,10 @@ Then build and start everything:
 make run
 ```
 
-Open http://127.0.0.1:8080 and hatch your first bot.
+Open <http://127.0.0.1:8080> and hatch your first bot.
 
-For development with hot reload, run `make dev` and open http://127.0.0.1:5173.
+For development with hot reload, run `make dev` and open
+<http://127.0.0.1:5173>.
 
 ### Model providers
 
@@ -120,30 +147,40 @@ at rest, never returned by the API, and scoped to your account: other accounts
 cannot see or select your provider's models. `OLLAMA_HOST` and the API-key
 environment variables below remain server-wide defaults.
 
+### Integrations
+
+Settings → Integrations connects apps that publish an MCP server. The catalog
+has 35 apps (Notion, Linear, Jira, Figma, Stripe, GitHub and more), most with
+one sign-in; GitHub takes a personal token. Any other HTTP MCP server can be
+added with a URL and a token. Tokens are sealed with the server key, scoped to
+your account, and never shown to bots.
+
 ### Slack
 
 A bot can answer in a Slack channel. gbot does not host a Slack app, so you
 create one in your own workspace and paste its two secrets into
-Settings -> Slack; both are encrypted with the server key and never come
-back out of the API.
+Settings → Slack; both are encrypted with the server key and never come back
+out of the API.
 
 1. Create a Slack app, add the `chat:write` bot scope and install it.
 2. Under Event Subscriptions, set the Request URL to
    `$GBOT_PUBLIC_URL/slack/events` and subscribe to `app_mention`.
-3. In Settings -> Slack, paste the workspace (team) ID, the `xoxb-` bot
-   token and the signing secret, then link each channel to a bot.
+3. In Settings → Slack, paste the workspace (team) ID, the `xoxb-` bot token
+   and the signing secret, then link each channel to a bot.
 
-Every inbound request is checked against the signing secret and refused if
-it is more than five minutes old, so a captured one cannot be replayed.
-A Slack message runs as the person who connected the workspace -- their
-approvals, tools and memory apply -- and is marked untrusted, because the
-text came from outside. Messages posted by any bot are ignored, so two
-bots cannot talk to each other in circles.
+Every inbound request is checked against the signing secret and refused if it
+is more than five minutes old, so a captured one cannot be replayed. A Slack
+message runs as the person who connected the workspace — their approvals,
+tools and memory apply — and is marked untrusted, because the text came from
+outside. Messages posted by any bot are ignored, so two bots cannot talk to
+each other in circles.
 
-This needs `GBOT_PUBLIC_URL`: Slack has to reach gbot over the internet, so
-it does not work in the phone-only mode.
+This needs `GBOT_PUBLIC_URL`: Slack has to reach gbot over the internet, so it
+does not work in the phone-only mode.
 
-### Configuration
+---
+
+## Configuration
 
 | Variable | Default | |
 |---|---|---|
@@ -161,14 +198,15 @@ it does not work in the phone-only mode.
 | `GBOT_MAX_STEPS` | `40` | model/tool rounds one run may take (and 4x that in tool calls) |
 | `GBOT_RUN_TIMEOUT` | `30m` | wall-clock cap for one run, e.g. `45m` |
 | `GBOT_CONTEXT_TOKENS` | `24000` | prompt budget before older turns are summarized |
-
 | `GBOT_KEY_FILE` | `~/.config/gbot/secret.key` | key that encrypts integration tokens (or set `GBOT_SECRET_KEY`) |
 | `GBOT_STT_URL`, `GBOT_TTS_URL` | | OpenAI-compatible speech servers (e.g. faster-whisper, Kokoro), or `openai` |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY` | | optional cloud models |
 
+---
+
 ## Layout
 
-```
+```text
 server/               Go: API, auth, store, agent runtime (kritrim), computers, routines
 apps/web/             React 19 + Vite + Tailwind + Motion
 apps/desktop/         Tauri 2 shell with native notifications
@@ -177,18 +215,30 @@ packages/characters/  the gbot character rig: seeded traits, moods, animation
 packages/ui-tokens/   design tokens shared by every surface
 infra/compose/        Postgres (+ optional Ollama and app image)
 infra/sandboxes/      the bots' computer image
+site/                 the landing page (static, deployable to Vercel)
+docs/                 protocol notes and README media
 ```
 
-## Tests
+---
+
+## Tests and CI
 
 ```bash
 make test
 ```
 
-The Go tests run the whole API against a throwaway database with
-kritrim's offline mock model, so they need no network or keys.
+That runs the Go tests against a throwaway Postgres database with kritrim's
+offline mock model, the character package tests, and the web typecheck. The
+Go tests need no network or keys; without a database they skip the
+integration tests.
 
-## Desktop and mobile
+GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on every pull
+request and on `main`: Go tests with a Postgres service, web typecheck and
+build, character tests, and the Android unit tests plus a debug build.
+
+---
+
+## Desktop, mobile, and phone-only
 
 ```bash
 make desktop   # builds apps/desktop/src-tauri/target/release/bundle/macos/gbot.app
@@ -196,11 +246,11 @@ make android   # builds apps/android/app/build/outputs/apk/release/app-release.a
 ```
 
 Both connect to your gbot server; the phone needs its address on your network.
-The Android app is native (Kotlin + Jetpack Compose) and has
-everything the web app has. It keeps a quiet connection to your server in
-the background, so you get alerts when a bot needs you or finishes, with
-Approve and Decline right on the notification, without Google's push
-service. On iPhone, open the web app in Safari and use Add to Home Screen.
+The Android app is native (Kotlin + Jetpack Compose) and has everything the
+web app has. It keeps a quiet connection to your server in the background, so
+you get alerts when a bot needs you or finishes, with Approve and Decline
+right on the notification, without Google's push service. On iPhone, open the
+web app in Safari and use Add to Home Screen.
 
 It also behaves like an Android app rather than a page: share text or a link
 from any app to send it to a bot (it lands in the message box, so nothing is
@@ -240,13 +290,37 @@ provider, notification and voice feature works. Team sharing and spaces stay
 server features, because they exist to share between people.
 
 Phone limits worth knowing: the model download is 2–4 GB and the largest wants
-8 GB of RAM; the first load and a long prompt take seconds; one reply runs at
-a time (the rest wait in the chat queue); the browser has its own cookie jar
+8 GB of RAM; the first load and a long prompt take seconds; one reply runs at a
+time (the rest wait in the chat queue); the browser has its own cookie jar
 (not Chrome's, so sign in inside gbot's window), some sites block WebViews,
 downloads are not handled yet, and routines do not run while gbot is closed.
 The model is unloaded after two idle minutes (or when gbot goes to the
 background), so it isn't holding RAM while you're away — change that window in
 Settings → Models, where each downloaded model can also be removed.
+
+---
+
+## Deployment
+
+### Landing page
+
+`site/` is a self-contained static page (no build step, no external assets).
+The repository root has a `vercel.json` that serves it: import the repo on
+Vercel and keep the default root — it publishes `site/` with long-lived caching
+for assets. It also runs from any static host, or locally:
+
+```bash
+cd site && python3 -m http.server
+```
+
+### Server
+
+Build `bin/gbot` with `make server` and run it behind a reverse proxy that
+terminates TLS. Set `GBOT_PUBLIC_URL` to the public address; it is required for
+integration sign-in from another device and enables secure cookies and HSTS.
+`GBOT_COOKIE_SECURE=false` is only for plain-http LAN access.
+
+---
 
 ## Security notes
 
@@ -265,3 +339,7 @@ Settings → Models, where each downloaded model can also be removed.
   only ever sees its own servers' tools. Integration sign-in sends the browser
   back to `GBOT_PUBLIC_URL` when set, so a server behind a tunnel or on another
   device works; without it, the browser's own origin is used.
+
+---
+
+Built on [kritrim](https://github.com/ganeshdipdumbare/kritrim).
