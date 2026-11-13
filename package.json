@@ -1,7 +1,7 @@
 {
   "name": "gbot",
   "private": true,
-  "packageManager": "pnpm@12.15.0",
+  "packageManager": "pnpm@9.13.2",
   "scripts": {
     "dev:web": "pnpm --filter @gbot/web dev",
     "build:web": "pnpm --filter @gbot/web build",
