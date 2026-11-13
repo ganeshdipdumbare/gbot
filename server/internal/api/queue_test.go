@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,7 +70,8 @@ func TestQueueSurvivesRestart(t *testing.T) {
 		c.do("GET", "/api/bots/"+bot.ID+"/messages", nil, &res)
 		replies = replies[:0]
 		for _, m := range res.Messages {
-			if m.Role == "bot" {
+			// A streaming reply is stored empty and filled as it writes.
+			if m.Role == "bot" && strings.TrimSpace(m.Content) != "" {
 				replies = append(replies, m.Content)
 			}
 		}
