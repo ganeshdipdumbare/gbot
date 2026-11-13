@@ -135,9 +135,13 @@ class Http(context: Context) {
     }
 }
 
-suspend inline fun <reified T> Http.get(path: String): T = json.decodeFromString(call("GET", path))
+// Decoding belongs off the main thread too: a page of messages is easily
+// hundreds of kilobytes, and parsing it in a frame is a visible freeze.
+suspend inline fun <reified T> Http.get(path: String): T =
+    withContext(Dispatchers.IO) { json.decodeFromString(call("GET", path)) }
+
 suspend inline fun <reified T> Http.send(method: String, path: String, body: JsonElement? = null): T =
-    json.decodeFromString(call(method, path, body ?: JsonObject(emptyMap())))
+    withContext(Dispatchers.IO) { json.decodeFromString(call(method, path, body ?: JsonObject(emptyMap()))) }
 
 /** Cookies survive restarts, so you stay signed in. */
 private class PersistentCookies(context: Context) : CookieJar {

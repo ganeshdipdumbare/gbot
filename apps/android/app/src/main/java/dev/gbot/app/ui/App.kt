@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -131,12 +132,16 @@ fun AppRoot(activity: MainActivity) {
         val sharedScope = this
         NavHost(
             nav, start,
-            // Short and decisive: the screen is there before the motion
-            // has finished explaining itself.
+            // Forward: short slide + fade. Back: the roster is already
+            // there, the chat slides away, and the avatar flies home.
+            // Predictive back must match — Navigation's default is
+            // scaleOut(0.7), which shrinks the whole screen from all sides.
             enterTransition = { slideInHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeIn(tween(140)) },
             exitTransition = { fadeOut(tween(110)) },
-            popEnterTransition = { fadeIn(tween(140)) },
+            popEnterTransition = { EnterTransition.None },
             popExitTransition = { slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeOut(tween(150)) },
+            predictivePopEnterTransition = { EnterTransition.None },
+            predictivePopExitTransition = { slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 10 } + fadeOut(tween(150)) },
         ) {
             composable(R.SERVER) { ServerScreen(
                 onDone = {
