@@ -28,9 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -205,23 +203,6 @@ fun Gbot(
             center = Offset(50f, 95.5f), radius = 28f,
         )
     }
-    val haloColor = remember(hue.body) { Glow.halo(hue.body) }
-    val haloPath = remember(path, bounds) {
-        val cx = bounds.center.x; val cy = bounds.center.y
-        val scaled = Path().apply { addPath(path) }
-        val m = Matrix().apply {
-            translate(cx, cy)
-            scale(1.055f, 1.055f)
-            translate(-cx, -cy)
-        }
-        scaled.transform(m)
-        Path().apply {
-            fillType = PathFillType.EvenOdd
-            addPath(scaled)
-            addPath(path)
-        }
-    }
-
     Canvas(shaped.size(size.dp).semantics { contentDescription = "bot" }) {
         val unit = this.size.minDimension / 106f
         withTransform({ scale(unit, unit, Offset.Zero); translate(3f, 3f) }) {
@@ -234,8 +215,6 @@ fun Gbot(
                 translate(0f, ty * bounds.height)
                 scale(sx, sy, pivot)
             }) {
-                // Soft halo ring, then one glowing body — Grok's recipe.
-                if (!simple) drawPath(haloPath, haloColor)
                 drawPath(path, bodyBrush)
                 if (!simple) clipPath(path) {
                     drawRect(formBrush)

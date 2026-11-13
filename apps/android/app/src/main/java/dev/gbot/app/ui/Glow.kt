@@ -58,9 +58,6 @@ internal object Glow {
         return Brush.radialGradient(colorStops = stops, center = center, radius = radius)
     }
 
-    /** Soft even-odd halo colour: rim ink that fades out. */
-    fun halo(tint: Long): Color = Color(mix(tint, 0xFFFFFFFF, 0.35f)).copy(alpha = 0.28f)
-
     /** Specular catch near the top-left. */
     fun sheen(center: Offset, radius: Float): Brush = Brush.radialGradient(
         0f to Color(0x66FFFFFF),

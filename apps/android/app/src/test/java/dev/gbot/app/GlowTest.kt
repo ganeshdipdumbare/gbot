@@ -2,7 +2,6 @@ package dev.gbot.app
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Shader
@@ -21,7 +20,7 @@ import java.io.File
 import kotlin.math.pow
 
 // Grok-style glow on the clean bezier bodies: one sheet so the fill reads
-// as volume without a dark rim.
+// as volume without an outer halo ring.
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w400dp-h860dp-xxhdpi")
@@ -42,15 +41,6 @@ class GlowTest {
             val scale = cell / 106f
             c.translate(3f * scale, 3f * scale)
             c.scale(scale, scale)
-            val halo = android.graphics.Path(path.asAndroidPath())
-            val m = Matrix()
-            m.setScale(1.055f, 1.055f, b.center.x, b.center.y)
-            halo.transform(m)
-            val ring = android.graphics.Path(halo).apply {
-                fillType = android.graphics.Path.FillType.EVEN_ODD
-                addPath(path.asAndroidPath())
-            }
-            c.drawPath(ring, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x38335ecf })
             val cx = b.left + b.width * 0.5f
             val cy = b.top + b.height * 0.18f
             val r = maxOf(b.width, b.height) * 0.98f
@@ -67,9 +57,9 @@ class GlowTest {
                 return out
             }
             fun smooth(t: Float): Float { val x = t.coerceIn(0f, 1f); return x * x * (3f - 2f * x) }
-            val inner = mixLong(tint, 0xFFFFFFFF, 0.42f)
-            val mid = mixLong(tint, 0xFFFFFFFF, 0.06f)
-            val rim = mixLong(tint, 0xFF000000, 0.34f)
+            val inner = mixLong(tint, 0xFFFFFFFF, 0.55f)
+            val mid = mixLong(tint, 0xFFFFFFFF, 0.08f)
+            val rim = mixLong(tint, 0xFF000000, 0.42f)
             fun mix3(u: Float): Long = if (u < 0.5f) mixLong(inner, mid, smooth(u / 0.5f))
             else mixLong(mid, rim, smooth((u - 0.5f) / 0.5f))
             for (k in 0..n) {
