@@ -28,7 +28,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -45,7 +47,8 @@ import kotlin.math.min
 import kotlin.random.Random
 
 private val pathCache = HashMap<String, Path>()
-private fun bodyPath(shape: String): Path = pathCache.getOrPut(shape) { PathParser().parsePathString(bodies.getValue(shape).d).toPath() }
+private fun bodyPath(shape: String): Path =
+    pathCache.getOrPut(shape) { PathParser().parsePathString(bodies.getValue(shape).d).toPath() }
 
 /** 0 → 1 → 0 smoothly over one period. */
 private fun tri(p: Float) = ((1 - cos(2 * PI * p)) / 2).toFloat()
@@ -60,15 +63,9 @@ private fun keys(p: Float, vararg k: Pair<Float, Float>): Float {
 }
 
 /**
- * A gbot: one of eight geometric bodies, a bold color and two eyes. All
- * of its feelings are carried by its eyes and the way its body moves,
- * exactly like the web character.
- */
-/**
- * The scopes a shared element needs, carried in context so every Gbot on
- * the way to a chat does not have to take them as parameters. Null outside
- * a SharedTransitionLayout -- in tests, for instance -- where [Gbot] simply
- * draws itself.
+ * A gbot: one of eight geometric bodies, a bold color and two eyes. Volume
+ * comes from a Grok-style spherical fill on a single clean path — not from
+ * a dark rim or a triangle mesh.
  */
 val LocalSharedScope = compositionLocalOf<SharedTransitionScope?> { null }
 val LocalAnimScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
@@ -82,7 +79,7 @@ fun Gbot(
 ) {
     val t = remember(look, seed) { resolveLook(look, seed) }
     val hue = hues.getValue(t.hue)
-    val body = bodies.getValue(t.shape)
+    val meta = bodies.getValue(t.shape)
     val path = remember(t.shape) { bodyPath(t.shape) }
     val bounds = remember(path) { path.getBounds() }
     val bg = LocalG.current.bg
@@ -90,7 +87,6 @@ fun Gbot(
     val small = size < 48
     val simple = size < 56
 
-    // Blinking, now and then.
     var blink by remember { mutableStateOf(false) }
     if (!happy && mood != "sleepy") LaunchedEffect(lively) {
         while (true) {
@@ -101,7 +97,6 @@ fun Gbot(
     }
     val blinkY by animateFloatAsState(if (blink) 0.1f else 1f, tween(80), label = "blink")
 
-    // At rest the eyes wander: calm, slightly curious.
     var drift by remember { mutableStateOf(Offset.Zero) }
     if (mood == "idle" && !small) LaunchedEffect(lively) {
         while (true) {
@@ -117,7 +112,6 @@ fun Gbot(
     val gx = gazeX * 2.4f; val gy = gazeY * 1.6f
     val px = gazeX * 3f; val py = gazeY * 2f
 
-    // Eye shapes per mood, springing between them.
     val bouncy = spring<Float>(dampingRatio = 0.5f, stiffness = 420f)
     val poses = listOf(-1, 1).map { pose(mood, it, gx, gy) }
     val l = poses[0]; val r = poses[1]
@@ -129,7 +123,6 @@ fun Gbot(
     val rrot by animateFloatAsState(r.rot, bouncy, label = "rrot")
     val happyA by animateFloatAsState(if (happy) 1f else 0f, tween(180), label = "happy")
 
-    // Body motion by mood; small idle bots hold still.
     val period = when {
         mood == "idle" && small -> 0
         mood == "sleepy" && small -> 0
@@ -173,14 +166,11 @@ fun Gbot(
         mood == "blocked" -> rot = keys(phase, 0f to 0f, .7f to 0f, .74f to -5f, .78f to 5f, .82f to -4f, .86f to 3f, .9f to 0f, 1f to 0f)
     }
 
-    val lit = Color(mix(hue.body, 0xFFFFFFFF, 0.2f)); val base = Color(hue.body); val shade = Color(mix(hue.body, 0xFF000000, 0.1f))
     val eye = Color(hue.eye)
     val (ew, eh) = eyeSizes.getValue(t.eyes)
-    val s = body.eyeScale
+    val s = meta.eyeScale
     val w = ew * s; val h = eh * s; val gap = 12 * s
 
-    // The same bot in the roster and in the chat header is one element
-    // that moves and resizes, not two that cross-fade.
     val shared = LocalSharedScope.current
     val anim = LocalAnimScope.current
     val shaped = if (sharedKey != null && shared != null && anim != null) {
@@ -188,32 +178,55 @@ fun Gbot(
     } else {
         modifier
     }
-    // Brushes are built once per look: during a screen transition the
-    // avatar redraws every frame, and allocating gradients per frame is
-    // what makes a pop stutter.
-    val shadowBrush = remember { Brush.radialGradient(0f to Color(0x33000000), 0.6f to Color(0x12000000), 1f to Color.Transparent, center = Offset(50f, 95.5f), radius = 27f) }
-    val sheenBrush = remember {
-        Brush.radialGradient(0f to Color(0x47FFFFFF), 1f to Color.Transparent, center = Offset(42f, 24f), radius = 28f)
+
+    val glowCenter = remember(bounds) {
+        Offset(bounds.left + bounds.width * 0.5f, bounds.top + bounds.height * 0.18f)
     }
-    val rimBrush = remember(bounds) {
+    val glowRadius = remember(bounds) { maxOf(bounds.width, bounds.height) * 0.98f }
+    val bodyBrush = remember(hue.body, glowCenter, glowRadius) {
+        Glow.body(hue.body, glowCenter, glowRadius)
+    }
+    val sheenBrush = remember(glowCenter) {
+        Glow.sheen(Offset(glowCenter.x - 8f, bounds.top + bounds.height * 0.22f), 30f)
+    }
+    val formBrush = remember(bounds) {
         Brush.verticalGradient(
-            0f to Color(0x2EFFFFFF), 0.18f to Color.Transparent, 0.78f to Color.Transparent, 1f to Color(0x24000000),
-            startY = bounds.top, endY = bounds.bottom,
+            0f to Color(0x38FFFFFF),
+            0.16f to Color.Transparent,
+            0.78f to Color.Transparent,
+            1f to Color(0x2A000000),
+            startY = bounds.top,
+            endY = bounds.bottom,
         )
     }
-    val bodyBrush = remember(lit, base, shade, bounds) {
+    val shadowBrush = remember {
         Brush.radialGradient(
-            0f to lit, 0.55f to base, 1f to shade,
-            center = Offset(bounds.left + bounds.width * 0.5f, bounds.top + bounds.height * 0.12f),
-            radius = maxOf(bounds.width, bounds.height) * 0.95f,
+            0f to Color(0x38000000), 0.55f to Color(0x14000000), 1f to Color.Transparent,
+            center = Offset(50f, 95.5f), radius = 28f,
         )
     }
+    val haloColor = remember(hue.body) { Glow.halo(hue.body) }
+    val haloPath = remember(path, bounds) {
+        val cx = bounds.center.x; val cy = bounds.center.y
+        val scaled = Path().apply { addPath(path) }
+        val m = Matrix().apply {
+            translate(cx, cy)
+            scale(1.055f, 1.055f)
+            translate(-cx, -cy)
+        }
+        scaled.transform(m)
+        Path().apply {
+            fillType = PathFillType.EvenOdd
+            addPath(scaled)
+            addPath(path)
+        }
+    }
+
     Canvas(shaped.size(size.dp).semantics { contentDescription = "bot" }) {
         val unit = this.size.minDimension / 106f
         withTransform({ scale(unit, unit, Offset.Zero); translate(3f, 3f) }) {
-            // Contact shadow.
-            withTransform({ scale(1f, 3.4f / 27f, Offset(50f, 95.5f)) }) {
-                drawCircle(shadowBrush, 27f, Offset(50f, 95.5f))
+            withTransform({ scale(1f, 3.4f / 28f, Offset(50f, 95.5f)) }) {
+                drawCircle(shadowBrush, 28f, Offset(50f, 95.5f))
             }
             val pivot = Offset(bounds.center.x, bounds.bottom)
             withTransform({
@@ -221,24 +234,25 @@ fun Gbot(
                 translate(0f, ty * bounds.height)
                 scale(sx, sy, pivot)
             }) {
-                val fill = bodyBrush
-                drawPath(path, fill)
+                // Soft halo ring, then one glowing body — Grok's recipe.
+                if (!simple) drawPath(haloPath, haloColor)
+                drawPath(path, bodyBrush)
                 if (!simple) clipPath(path) {
-                    // Soft edges: a lit rim above, a shaded one below, and a diffuse highlight.
-                    drawRect(rimBrush)
-                    // The highlight slides with the gaze, drawn from one
-                    // cached brush instead of a new one every frame.
-                    withTransform({ translate(-px * 0.3f, -py * 0.3f); scale(1f, 16f / 28f, Offset(42f, 24f)) }) {
-                        drawCircle(sheenBrush, 28f, Offset(42f, 24f))
+                    drawRect(formBrush)
+                    withTransform({
+                        translate(-px * 0.3f, -py * 0.3f)
+                        scale(1f, 0.58f, Offset(glowCenter.x - 8f, bounds.top + bounds.height * 0.22f))
+                    }) {
+                        drawCircle(sheenBrush, 30f, Offset(glowCenter.x - 8f, bounds.top + bounds.height * 0.22f))
                     }
                 }
                 withTransform({
                     translate(px + scan, py)
-                    scale(1f, blinkY, Offset(body.faceX, body.faceY))
+                    scale(1f, blinkY, Offset(meta.faceX, meta.faceY))
                 }) {
                     for ((i, side) in listOf(-1, 1).withIndex()) {
-                        val cx = body.faceX + side * gap
-                        val cy = body.faceY
+                        val cx = meta.faceX + side * gap
+                        val cy = meta.faceY
                         if (happyA < 1f) {
                             val tx = if (i == 0) ltx else rtx; val tyE = if (i == 0) lty else rty
                             val esx = if (i == 0) lsx else rsx; val esy = if (i == 0) lsy else rsy
