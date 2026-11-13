@@ -122,9 +122,12 @@ fun HomeScreen(nav: NavHostController) {
     var showHidden by rememberSaveable { mutableStateOf(false) }
     val clip = LocalClipboardManager.current
 
+    // Coming back from a chat should not refetch the roster: the live
+    // stream keeps it fresh, and a reload mid-transition is what makes a
+    // pop stutter. Only the first visit loads.
     LaunchedEffect(Unit) {
-        runCatching { app.store.loadAll() }.onFailure { if (!app.store.now.loaded) app.toast("Couldn't load your bots", true) }
-        app.store.loadModels()
+        if (!app.store.now.loaded) runCatching { app.store.loadAll() }.onFailure { app.toast("Couldn't load your bots", true) }
+        if (app.store.now.models.isNullOrEmpty()) app.store.loadModels()
     }
 
     val initials = (s.me?.name ?: "").split(Regex("\\s+")).mapNotNull { it.firstOrNull()?.uppercaseChar() }.take(2).joinToString("").ifEmpty { (s.me?.email?.firstOrNull()?.uppercaseChar() ?: '?').toString() }

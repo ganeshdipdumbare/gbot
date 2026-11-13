@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -143,9 +144,14 @@ fun ChatScreen(nav: NavHostController, key: ChatKey, prefill: String = "") {
         else if (p.state == "working" && !p.detail.isNullOrEmpty()) p.detail else presenceText[p.state].orEmpty()
     } else members.joinToString(", ") { it.name }
 
+    // Leaving with the keyboard up makes the pop fight the IME closing, so
+    // the bar's back button puts the keyboard away first.
+    val ime = LocalSoftwareKeyboardController.current
+    val leave = { ime?.hide(); nav.popBackStack(); Unit }
+
     Column(Modifier.fillMaxSize().background(g.bg).imePadding()) {
         TopBar(
-            bot?.name ?: group!!.name, { nav.popBackStack() }, subtitle = job,
+            bot?.name ?: group!!.name, leave, subtitle = job,
             lead = {
                 Box(Modifier.clip(CircleShape).tap { nav.navigate(if (bot != null) R.bot(bot.id) else R.group(group!!.id)) }) {
                     if (bot != null) Gbot(bot.look, bot.id, 34, mood = moodOf(p, bot), sharedKey = "bot:${bot.id}") else Stack(members, 24, presence)
