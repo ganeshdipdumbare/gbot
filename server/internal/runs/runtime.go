@@ -119,6 +119,9 @@ type Config struct {
 	Mock bool
 	// MockScript, when set, scripts the mock model ("mockscript:*").
 	MockScript []any
+	// SessionKey signs stored conversations, so an edited history is
+	// refused instead of replayed. Empty stores them unsigned.
+	SessionKey []byte
 }
 
 // Runtime owns the shared services and one agent per model in use. Bots
@@ -135,7 +138,7 @@ type Runtime struct {
 	routines *routines.Service
 	sealer   *crypto.Sealer
 
-	sessions *store.Sessions
+	sessions kritrim.SessionStore
 	mem      *store.Memory
 
 	mu        sync.Mutex
@@ -166,6 +169,9 @@ func New(cfg Config, st *store.Store, hub *Hub, cat *models.Catalog, log *slog.L
 		sessions: store.NewSessions(st), mem: store.NewMemory(st),
 		agents: map[string]*agentSlot{}, workers: map[string]*worker{}, presence: map[string]Presence{},
 		mcp: map[string]mcpState{}, providers: map[string]providerState{}, rounds: newRounds()}
+	if len(cfg.SessionKey) > 0 {
+		r.sessions = kritrim.SignedSessions(r.sessions, cfg.SessionKey)
+	}
 	r.addSecret(cfg.DatabaseURL)
 	return r, nil
 }
@@ -194,9 +200,10 @@ func (r *Runtime) build(model string) (*kritrim.Agent, error) {
 		Context: &kritrim.ContextConfig{
 			MaxTokens: r.contextTokens(),
 			KeepLast:  20,
-			Summarize: r.summarizer(m),
+			Strategy:  kritrim.Summarize(r.summarizer(m)),
 		},
-		Logger: func(msg string) { r.log.Debug("agent", "msg", msg) },
+		Reasoning: r.reasoningFor(model),
+		Logger:    func(msg string) { r.log.Debug("agent", "msg", msg) },
 	})
 }
 
@@ -1100,6 +1107,8 @@ func (r *Runtime) friendlyError(model string, err error) string {
 		}
 	case errors.Is(err, kritrim.ErrSessionConflict):
 		return "I was busy with another task. Send that again?"
+	case errors.Is(err, kritrim.ErrSessionTampered):
+		return "This chat's history failed its integrity check, so I won't replay it. Clear the chat to start fresh."
 	}
 	if len(s) > 300 {
 		s = s[:300] + "…"

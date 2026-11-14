@@ -32,9 +32,6 @@ func (r *Runtime) contextTokens() int {
 
 func (r *Runtime) summarizer(m kritrim.Model) func(context.Context, []kritrim.Message) ([]kritrim.Message, error) {
 	return func(ctx context.Context, dropped []kritrim.Message) ([]kritrim.Message, error) {
-		if len(dropped) == 0 {
-			return nil, nil
-		}
 		th := threadOf(ctx)
 		if th == "" {
 			return summaryMessages(roughSummary(dropped)), nil

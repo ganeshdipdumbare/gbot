@@ -6,14 +6,27 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
 )
 
-type Sealer struct{ aead cipher.AEAD }
+type Sealer struct {
+	aead cipher.AEAD
+	key  []byte
+}
+
+// Derive is a key for one other purpose, so nothing else ever uses the
+// sealing key itself.
+func (s *Sealer) Derive(label string) []byte {
+	mac := hmac.New(sha256.New, s.key)
+	mac.Write([]byte(label))
+	return mac.Sum(nil)
+}
 
 func Load(keyFile string) (*Sealer, error) {
 	var key []byte
@@ -54,7 +67,7 @@ func Load(keyFile string) (*Sealer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Sealer{aead}, nil
+	return &Sealer{aead: aead, key: key}, nil
 }
 
 func (s *Sealer) Seal(plain []byte) []byte {

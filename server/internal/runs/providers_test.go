@@ -18,3 +18,29 @@ func TestModelForFindsProviderByPrefix(t *testing.T) {
 		t.Fatalf("modelFor by prefix: %v", err)
 	}
 }
+
+func TestReasoningFor(t *testing.T) {
+	r := &Runtime{providers: map[string]providerState{
+		"a": {srv: providerServer{prefix: "mpcodex01", kind: "codex"}},
+		"b": {srv: providerServer{prefix: "mplocal01", kind: "openai", baseURL: "http://127.0.0.1:1/v1"}},
+		"c": {srv: providerServer{prefix: "mpopenai1", kind: "openai", baseURL: "https://api.openai.com/v1"}},
+	}}
+	cases := map[string]bool{
+		"anthropic:claude-sonnet-5-5": true,
+		"anthropic:claude-haiku-5-5":  false,
+		"openai:gpt-4.1":              false,
+		"gemini:gemini-2.5-pro":       true,
+		"ollama:qwq":                  false,
+		"deepseek:deepseek-r1":        false,
+		"mpcodex01:gpt-5-codex":       true,
+		"mplocal01:o3":                false,
+		"mpopenai1:o3":                true,
+		"mpunknown:o3":                false,
+		"mock:any":                    false,
+	}
+	for model, want := range cases {
+		if got := r.reasoningFor(model) != nil; got != want {
+			t.Errorf("reasoningFor(%q) = %v, want %v", model, got, want)
+		}
+	}
+}

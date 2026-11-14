@@ -39,7 +39,7 @@ func TestCards(t *testing.T) {
 		map[string]any{"tool": "ask_user", "args": map[string]any{"question": "Which city?"}},
 		map[string]any{"text": "Got it, moving on."},
 	}
-	rt, err := runs.New(runs.Config{DatabaseURL: dsn, OllamaHost: cat.OllamaHost, MaxSteps: 6, MockScript: script}, st, hub, cat, log)
+	rt, err := runs.New(runs.Config{DatabaseURL: dsn, OllamaHost: cat.OllamaHost, MaxSteps: 6, MockScript: script, SessionKey: []byte("test-session-key")}, st, hub, cat, log)
 	if err != nil {
 		t.Fatal(err)
 	}

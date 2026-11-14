@@ -97,6 +97,12 @@ func run(cmd string, log *slog.Logger) error {
 	}
 	_ = st.FailInterruptedRuns(ctx)
 
+	home, _ := os.UserHomeDir()
+	sealer, err := crypto.Load(env("GBOT_KEY_FILE", filepath.Join(home, ".config", "gbot", "secret.key")))
+	if err != nil {
+		return err
+	}
+
 	cat := models.NewCatalog(env("OLLAMA_HOST", "http://127.0.0.1:11434"))
 	hub := runs.NewHub()
 	rt, err := runs.New(runs.Config{
@@ -105,17 +111,13 @@ func run(cmd string, log *slog.Logger) error {
 		MaxSteps:      envInt("GBOT_MAX_STEPS", 40),
 		RunTimeout:    envDuration("GBOT_RUN_TIMEOUT", 30*time.Minute),
 		ContextTokens: envInt("GBOT_CONTEXT_TOKENS", 24_000),
+		SessionKey:    sealer.Derive("gbot/agent-sessions"),
 	}, st, hub, cat, log)
 	if err != nil {
 		return fmt.Errorf("agent runtime: %w", err)
 	}
 	defer rt.Close()
 
-	home, _ := os.UserHomeDir()
-	sealer, err := crypto.Load(env("GBOT_KEY_FILE", filepath.Join(home, ".config", "gbot", "secret.key")))
-	if err != nil {
-		return err
-	}
 	rt.SetSealer(sealer)
 	rt.SyncProviders(ctx, sealer)
 

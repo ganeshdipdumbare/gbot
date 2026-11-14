@@ -32,7 +32,7 @@ func TestClearChat(t *testing.T) {
 	cat.Extra = []models.Model{{ID: "mockscript:x", Provider: "mockscript", Tools: true}}
 	hub := runs.NewHub()
 	rt, err := runs.New(runs.Config{DatabaseURL: dsn, OllamaHost: cat.OllamaHost, MaxSteps: 4,
-		MockScript: []any{map[string]any{"text": "Hello!"}, map[string]any{"text": "Fresh start."}}}, st, hub, cat, log)
+		MockScript: []any{map[string]any{"text": "Hello!"}, map[string]any{"text": "Fresh start."}}, SessionKey: []byte("test-session-key")}, st, hub, cat, log)
 	if err != nil {
 		t.Fatal(err)
 	}
