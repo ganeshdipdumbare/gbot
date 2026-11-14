@@ -200,6 +200,52 @@ func (r *Runtime) modelFor(model string) (kritrim.Model, error) {
 	}
 }
 
+// reasoningFor asks a reasoning model to think before it answers. Only
+// providers whose wire format kritrim maps natively get it: an arbitrary
+// OpenAI-compatible endpoint may reject reasoning_effort.
+func (r *Runtime) reasoningFor(model string) *kritrim.Reasoning {
+	prefix, name, ok := strings.Cut(model, ":")
+	if !ok {
+		return nil
+	}
+	kind, baseURL := prefix, ""
+	switch prefix {
+	case "anthropic", "gemini", "openai":
+	default:
+		r.mu.Lock()
+		kind = ""
+		for _, st := range r.providers {
+			if st.srv.prefix == prefix {
+				kind, baseURL = st.srv.kind, st.srv.baseURL
+				break
+			}
+		}
+		r.mu.Unlock()
+	}
+	if !reasons(kind, baseURL, name) {
+		return nil
+	}
+	return &kritrim.Reasoning{Effort: "medium"}
+}
+
+func reasons(kind, baseURL, name string) bool {
+	switch kind {
+	case "anthropic", "gemini", "codex":
+	case "openai":
+		if baseURL != "" && !strings.Contains(baseURL, "api.openai.com") {
+			return false
+		}
+	default:
+		return false
+	}
+	for _, c := range models.Capabilities(name) {
+		if c == "reasoning" {
+			return true
+		}
+	}
+	return false
+}
+
 var paidURLs = map[string]string{
 	"deepseek":   "https://api.deepseek.com",
 	"groq":       "https://api.groq.com/openai/v1",

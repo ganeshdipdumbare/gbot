@@ -52,7 +52,7 @@ func TestBotMessagesBot(t *testing.T) {
 		map[string]any{"text": "Done."},
 		map[string]any{"text": "Both answered."},
 	}
-	rt, err := runs.New(runs.Config{DatabaseURL: dsn, OllamaHost: cat.OllamaHost, MaxSteps: 6, MockScript: script}, st, hub, cat, log)
+	rt, err := runs.New(runs.Config{DatabaseURL: dsn, OllamaHost: cat.OllamaHost, MaxSteps: 6, MockScript: script, SessionKey: []byte("test-session-key")}, st, hub, cat, log)
 	if err != nil {
 		t.Fatal(err)
 	}

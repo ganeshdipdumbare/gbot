@@ -5,7 +5,7 @@ go 1.27
 toolchain go1.27.3
 
 require (
-	github.com/ganeshdipdumbare/kritrim v0.8.0
+	github.com/ganeshdipdumbare/kritrim v0.9.0
 	github.com/jackc/pgx/v5 v5.12.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.60.0
