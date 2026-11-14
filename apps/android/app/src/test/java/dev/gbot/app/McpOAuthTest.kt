@@ -113,7 +113,7 @@ class McpOAuthTest {
         valid = "at-rotated" // the server dropped the old token
         issued = 99
         val probed = runBlocking { mcp.probe(s) }
-        assertEquals("ok", probed.status)
+        assertEquals("connected", probed.status)
         assertEquals(listOf("search"), probed.tools)
         assertEquals(valid, mcp.oauth(s.id)!!.access)
         assertEquals("rt-1", mcp.oauth(s.id)!!.refresh)

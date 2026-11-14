@@ -1,13 +1,17 @@
 package dev.gbot.app.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.gbot.app.GbotApp
@@ -44,6 +49,7 @@ import dev.gbot.app.ui.Toggle
 import dev.gbot.app.ui.Variant
 import dev.gbot.app.ui.Chip
 import dev.gbot.app.ui.attempt
+import dev.gbot.app.ui.pressable
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -151,41 +157,65 @@ fun Providers() {
     ErrorText(loadError)
     if (list?.isEmpty() == true && loadError.isEmpty()) Text("No providers yet.", style = T.small, color = g.ink3)
     list?.forEach { p ->
-        Panel {
+        val ready = p.status == "connected"
+        val checking = p.status == "connecting"
+        val tone = when {
+            !p.enabled -> g.ink3
+            ready -> g.live
+            checking -> g.warning
+            p.status.isEmpty() -> g.ink3
+            else -> g.danger
+        }
+        val state = when {
+            !p.enabled -> "Off"
+            ready -> if (p.models.size == 1) "1 model" else "${p.models.size} models"
+            p.status == "no models" -> "No models \u2014 refresh"
+            p.status == "error" || p.status == "unreachable" -> "Can't reach it"
+            checking -> "Checking\u2026"
+            p.status.isEmpty() -> "Not connected yet"
+            else -> p.status
+        }
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(1.dp, g.line, RoundedCornerShape(16.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon("plug", color = if (p.enabled) g.live else g.ink2)
+                Icon("plug", color = if (p.enabled) g.live else g.ink3)
                 Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).then(if (p.kind != "codex") Modifier.background(g.bg.copy(alpha = 0f)) else Modifier)) {
+                Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(p.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
-                        Text("  " + p.kind.uppercase(), style = T.tiny.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, fontSize = 10.5.sp), color = g.ink3)
+                        Text(p.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        Spacer(Modifier.width(6.dp))
+                        Text(p.kind.uppercase(), style = T.tiny.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, fontSize = 10.sp), color = g.ink3)
                     }
-                    Text(if (p.kind == "codex") "Uses the server's Codex sign-in" else p.baseUrl, style = T.tiny, color = g.ink2, maxLines = 1)
+                    Text(
+                        if (p.kind == "codex") "Uses the server's Codex sign-in" else shortEndpoint(p.baseUrl),
+                        style = T.tiny, color = g.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
                 }
+                Spacer(Modifier.width(8.dp))
                 Toggle(p.enabled, { v -> scope.attempt(if (v) "${p.name} on" else "${p.name} off") { app.api.updateProvider(p.id, buildJsonObject { put("enabled", v) }); load() } })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    when (p.status) {
-                        "connected" -> "${p.models.size} models · ready"
-                        "no models" -> "No models found — press refresh"
-                        "error", "unreachable" -> "Couldn't reach it — check the endpoint and key"
-                        "connecting" -> "Checking…"
-                        "" -> "Not connected yet"
-                        else -> p.status
-                    },
-                    style = T.small,
-                    color = if (p.status == "connected") g.ink2 else if (p.status == "off") g.ink3 else g.danger,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 2,
-                )
-                if (p.models.isNotEmpty()) GButton(if (open == p.id) "Hide" else "Show", { open = if (open == p.id) null else p.id }, variant = Variant.Ghost, small = true)
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(tone.copy(alpha = 0.12f))
+                        .pressable(p.models.isNotEmpty()) { open = if (open == p.id) null else p.id }
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(tone))
+                    Spacer(Modifier.width(6.dp))
+                    Text(state, style = T.tiny, color = tone, maxLines = 1)
+                    if (p.models.isNotEmpty()) { Spacer(Modifier.width(5.dp)); Icon(if (open == p.id) "up" else "down", size = 11.dp, color = tone) }
+                }
+                Spacer(Modifier.weight(1f))
                 if (p.kind != "codex") IconBtn("pencil", "Edit ${p.name}", {
                     error = ""; notice = ""
                     edit = Edit(p.id, p.name, p.kind, p.baseUrl, "", false, p.local, p.models, p.caps.orEmpty())
-                }, size = 34.dp)
-                IconBtn("refresh", "Refresh ${p.name} models", { scope.attempt("Models refreshed") { app.api.refreshProvider(p.id); load() } }, size = 34.dp)
-                IconBtn("trash", "Remove ${p.name}", { removing = p }, size = 34.dp, tint = g.danger)
+                }, size = 32.dp)
+                IconBtn("refresh", "Refresh ${p.name} models", { scope.attempt("Models refreshed") { app.api.refreshProvider(p.id); load() } }, size = 32.dp)
+                IconBtn("trash", "Remove ${p.name}", { removing = p }, size = 32.dp, tint = g.ink3)
             }
             if (open == p.id) ModelList(p.models, p.caps)
         }
@@ -196,4 +226,11 @@ fun Providers() {
             scope.attempt("${p.name} removed") { app.api.deleteProvider(p.id); load() }
         }, onDismiss = { removing = null })
     }
+}
+
+/** An endpoint as a person reads it: the host, without the scheme noise. */
+private fun shortEndpoint(url: String): String {
+    val t = url.trim()
+    if (t.isEmpty()) return "Default endpoint"
+    return t.removePrefix("https://").removePrefix("http://").trimEnd('/')
 }

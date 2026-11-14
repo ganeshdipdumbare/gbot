@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import dev.gbot.app.GbotApp
 import dev.gbot.app.data.keyOf
+import dev.gbot.app.local.choiceLines
+import dev.gbot.app.local.plainText
 import dev.gbot.app.net.Bot
 import dev.gbot.app.net.Message
 import dev.gbot.app.net.json
@@ -297,12 +299,19 @@ fun Card(m: Message, bot: Bot, onTakeover: () -> Unit) {
             Text(cardStatus[st] ?: st, style = T.small, color = g.ink)
             Spacer(Modifier.width(6.dp))
             val answerText = m.str("answer")
-            Text(if (kind == "question" && !answerText.isNullOrEmpty()) "“$answerText”" else m.content, style = T.small, color = g.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 240.dp))
+            val said = if (kind == "question" && !answerText.isNullOrEmpty()) plainText(answerText) else plainText(m.content)
+            Text(if (kind == "question" && !answerText.isNullOrEmpty()) "“$said”" else said, style = T.small, color = g.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 240.dp))
         }
         return
     }
 
-    val options = (m.data?.get("options") as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+    // A model may pack every choice into one string. Whatever arrived, the
+    // person sees one choice per row.
+    val options = (m.data?.get("options") as? JsonArray).orEmpty()
+        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        .flatMap { choiceLines(it, 4) }
+        .distinct()
+        .take(4)
     val preview = if (kind == "approval") argsPreview(m.str("tool").orEmpty(), m.data?.get("args") as? JsonObject) else null
     val label = when (kind) { "approval" -> "Needs approval"; "question" -> "Question"; else -> "Needs you" }
 
@@ -317,7 +326,7 @@ fun Card(m: Message, bot: Bot, onTakeover: () -> Unit) {
                 Text(label, style = T.tiny, color = g.warning)
             }
         }
-        Text(m.content.ifEmpty { "Take over for a moment" }, style = T.body.copy(fontSize = 14.5.sp), color = g.ink)
+        Text(plainText(m.content).ifEmpty { "Take over for a moment" }, style = T.body.copy(fontSize = 14.5.sp), color = g.ink)
         if (preview != null) Box(Modifier.fillMaxWidth().heightIn(max = 180.dp).clip(RoundedCornerShape(10.dp)).background(g.bg).border(1.dp, g.line, RoundedCornerShape(10.dp)).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(10.dp)) {
             Text(preview, style = T.tiny.copy(fontFamily = FontFamily.Monospace, lineHeight = 18.sp), color = g.ink2)
         }

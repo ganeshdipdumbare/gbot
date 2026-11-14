@@ -590,7 +590,7 @@ class LocalApi(
                 val probed = mcp.probe(m)
                 db.putMcp(probed)
                 forgetMcp()
-                if (probed.status == "ok") toast("${p.name} connected") else toast("Signed in to ${p.name}, but it isn't answering yet")
+                if (probed.status == "connected") toast("${p.name} connected") else toast("Signed in to ${p.name}, but it isn't answering yet")
             } catch (e: Exception) {
                 toast("Couldn't finish signing in to ${p.name}: ${e.message}")
             }
@@ -638,7 +638,7 @@ class LocalApi(
             val probed = mcp.probe(m)
             db.putMcp(probed)
             forgetMcp()
-            if (probed.status == "ok") toast("${probed.name} connected")
+            if (probed.status == "connected") toast("${probed.name} connected")
         }
         m
     }

@@ -52,7 +52,7 @@ the same data:
 - At most 6 messages (asks and tells) for each request from the person.
 - A bot answering an ask can't message the bot that asked it: its answer is
   the reply.
-- Round timeout: 10 minutes on the server, 15 on the phone (runs wait in line
+- Round timeout: 10 minutes on the server, 20 on the phone (runs wait in line
   there).
 
 ## Recovery

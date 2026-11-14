@@ -415,7 +415,8 @@ class LocalBrain(
                                 execute = { call -> executeTool(tools, bot, group, call.name, call.arguments.toJson(), ::stage) },
                             )
                         } ?: throw IllegalStateException(
-                            "${model.provider.name} didn't answer in time. Check the endpoint and key in Settings → Models.",
+                            "${model.provider.name} was still going after ${PROVIDER_TIMEOUT_MS / 60000} minutes, so I stopped. " +
+                                "Check the endpoint and key in Settings → Models.",
                         )
                     }
                     null -> if (api.providers.list().isNotEmpty()) {
@@ -831,7 +832,7 @@ class LocalBrain(
             appendLine("- task_contract, task_verify: for a task with a deliverable, agree a goal and 3-6 checks first, do the work, then verify before you say it's done. Never claim success against a failed check.")
             if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots something; asks' answers come back to you together.")
             if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot itself can't be archived.")
-            if (api.localMcp().any { it.enabled && it.status == "ok" }) appendLine("- Tools starting with mc… come from connected integrations; they work like the others.")
+            if (api.localMcp().any { it.enabled && it.status == "connected" }) appendLine("- Tools starting with mc… come from connected integrations; they work like the others.")
             appendLine()
             appendLine("Rules:")
             appendLine("- Do not invent facts about the person. Use profile for forms and personal details.")
@@ -971,7 +972,21 @@ class LocalBrain(
 
     private fun report(bot: Bot, group: Group?, e: Throwable) {
         log("run failed", e)
-        reply(bot, group, "I couldn't finish: ${e.message ?: e::class.simpleName}")
+        reply(bot, group, "I couldn't finish: " + why(e))
+    }
+
+    /** A network failure in words the person can act on, not the library's. */
+    private fun why(e: Throwable): String {
+        val raw = e.message?.trim().orEmpty()
+        val timedOut = e is java.net.SocketTimeoutException ||
+            (e is java.io.InterruptedIOException && raw.contains("timeout", ignoreCase = true)) ||
+            raw.equals("timeout", ignoreCase = true) || raw.contains("timed out", ignoreCase = true)
+        return when {
+            timedOut -> "the model took too long to answer. If it is a big model, give it a smaller task or pick a faster one in Settings → Models."
+            e is java.net.UnknownHostException -> "I couldn't reach that endpoint. Check the connection and the address in Settings → Models."
+            raw.isNotEmpty() -> raw
+            else -> e::class.simpleName.orEmpty().ifEmpty { "something went wrong" }
+        }
     }
 
     /** Save and show an answer, even if the database write fails. */
@@ -1044,16 +1059,26 @@ class LocalBrain(
 
     private companion object {
         const val TAG = "gbot-local"
-        const val MAX_STEPS = 8
-        const val RUN_TIMEOUT_MS = 5 * 60 * 1000L
+
+        /** Model/tool rounds for a model running on the phone itself. */
+        const val MAX_STEPS = 12
+
+        /**
+         * How long one run may take, matching the server's own bound. Real
+         * work — reading pages, filling forms, waiting on an integration —
+         * takes minutes, so the clock only stops a run that is truly stuck.
+         */
+        const val RUN_TIMEOUT_MS = 30 * 60 * 1000L
 
         /** How long a round waits for its slowest answer; runs wait in line here. */
-        const val ROUND_TIMEOUT_MS = 15 * 60 * 1000L
-        const val PROVIDER_TIMEOUT_MS = 120_000L
-        const val MCP_TIMEOUT_MS = 8_000L
+        const val ROUND_TIMEOUT_MS = 20 * 60 * 1000L
+
+        /** A whole conversation with a provider, tool steps and all. */
+        const val PROVIDER_TIMEOUT_MS = 25 * 60 * 1000L
+        const val MCP_TIMEOUT_MS = 20_000L
 
         /** A plan that takes longer than this is not worth blocking the answer. */
-        const val PLAN_TIMEOUT_MS = 45_000L
+        const val PLAN_TIMEOUT_MS = 90_000L
     }
 }
 

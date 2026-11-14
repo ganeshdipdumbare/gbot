@@ -31,8 +31,10 @@ class Mcp(private val ctx: Context) {
     private val prefs = ctx.getSharedPreferences("gbot", Context.MODE_PRIVATE)
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(20, TimeUnit.SECONDS)
+        // Some integrations search or render before they answer; a tool
+        // call is allowed to take a while.
+        .readTimeout(3, TimeUnit.MINUTES)
+        .callTimeout(3, TimeUnit.MINUTES)
         .build()
     private val ids = AtomicLong(1)
 
@@ -70,7 +72,7 @@ class Mcp(private val ctx: Context) {
             val listed = session.rpc("tools/list", buildJsonObject { }) ?: JsonObject(emptyMap())
             val tools = (listed["tools"] as? JsonArray).orEmpty()
                 .mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull }
-            server.copy(status = "ok", enabled = true, tools = tools)
+            server.copy(status = "connected", enabled = true, tools = tools)
         }.getOrElse {
             server.copy(status = "unreachable", tools = emptyList())
         }
@@ -78,7 +80,7 @@ class Mcp(private val ctx: Context) {
 
     /** Every tool from the enabled servers, named so a call can be routed back. */
     suspend fun schemas(servers: List<McpServer>): List<ToolSchema> = withContext(Dispatchers.IO) {
-        servers.filter { it.enabled && it.status == "ok" }.flatMap { s ->
+        servers.filter { it.enabled && it.status == "connected" }.flatMap { s ->
             val prefix = prefix(s.id)
             val session = runCatching {
                 Session(s).also { it.initialize() }

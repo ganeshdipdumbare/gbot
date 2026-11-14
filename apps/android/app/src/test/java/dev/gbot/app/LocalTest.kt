@@ -6,8 +6,10 @@ import dev.gbot.app.local.Cron
 import dev.gbot.app.local.Mentions
 import dev.gbot.app.local.LocalProviders
 import dev.gbot.app.local.ModelMemory
+import dev.gbot.app.local.choiceLines
 import dev.gbot.app.local.normalizeName
 import dev.gbot.app.local.pickPeer
+import dev.gbot.app.local.plainText
 import dev.gbot.app.local.unquote
 import dev.gbot.app.local.usesComputer
 import kotlinx.serialization.json.contentOrNull
@@ -58,6 +60,25 @@ class LocalTest {
         assertEquals("Jokes on demand", unquote(" 'Jokes on demand' "))
         assertEquals("Joker", unquote("Joker"))
         assertEquals("He said \"hi\"", unquote("He said \"hi\""))
+    }
+
+    @Test
+    fun `an escaped tool value reads as plain text`() {
+        assertEquals("Who's travelling?", plainText("\"Who's travelling?\""))
+        assertEquals("Just me\n2 people", plainText("\"Just me\\n2 people\""))
+        assertEquals("line one\nline two", plainText("line one\\nline two"))
+        assertEquals("already plain", plainText("  already plain  "))
+        assertEquals("keeps real\nnewlines", plainText("keeps real\nnewlines"))
+    }
+
+    @Test
+    fun `choices come back one per line however they were packed`() {
+        val packed = "\"Just me\\n2 people\\n3-4 people\\nLarger group\""
+        assertEquals(listOf("Just me", "2 people", "3-4 people", "Larger group"), choiceLines(packed, 4))
+        assertEquals(listOf("Tea", "Coffee"), choiceLines("[\"Tea\", \"Coffee\"]", 4))
+        assertEquals(listOf("Tea", "Coffee"), choiceLines("- Tea\n- Coffee", 4))
+        assertEquals(listOf("Tea"), choiceLines("Tea\nTea\n\n", 4))
+        assertEquals(2, choiceLines("a1\nb2\nc3\nd4", 2).size)
     }
 
     @Test

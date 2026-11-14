@@ -42,10 +42,13 @@ data class Turn(val text: String, val calls: List<ToolCall>)
  */
 class LocalProviders(private val ctx: Context, private val db: LocalDb) {
     private val prefs = ctx.getSharedPreferences("gbot", Context.MODE_PRIVATE)
+    // A reasoning model can think for minutes before the first byte, and a
+    // long answer keeps arriving after that: give one request room rather
+    // than cutting the task short. The run's own clock is the real bound.
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(110, TimeUnit.SECONDS)
-        .callTimeout(110, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.MINUTES)
+        .callTimeout(12, TimeUnit.MINUTES)
         .build()
 
     fun list(): List<Provider> = db.providers().map { it.copy(hasKey = key(it.id)?.isNotEmpty() == true) }
@@ -361,7 +364,12 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
     }
 
     companion object {
-        const val MAX_STEPS = 8
+        /**
+         * Model/tool rounds in one answer. A real task — search, read,
+         * compare, write — is many rounds; the server allows 40, so the
+         * phone should not stop a task at eight.
+         */
+        const val MAX_STEPS = 24
 
         /** "api.openai.com" means /v1; a path the person typed is kept as is. */
         fun normalizeBase(kind: String?, raw: String): String {

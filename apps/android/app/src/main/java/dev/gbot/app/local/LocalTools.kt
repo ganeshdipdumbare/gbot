@@ -25,7 +25,43 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 /** Models sometimes wrap a value in quotes; keep the words, not the quotes. */
-internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").removeSurrounding("'").trim()
+internal fun unquote(s: String): String = plainText(s).removeSurrounding("'").trim()
+
+/**
+ * A value as the person should read it. A model sometimes hands one back
+ * still encoded — wrapped in quotes, or with \n where the line breaks
+ * belong, or JSON-encoded a second time. Unwrap it here, so nothing the
+ * person reads is left carrying the escapes.
+ */
+fun plainText(raw: String): String {
+    var s = raw.trim()
+    repeat(2) {
+        if (s.length < 2 || s.first() != '"' || s.last() != '"') return@repeat
+        val inner = runCatching {
+            (kotlinx.serialization.json.Json.parseToJsonElement(s) as? JsonPrimitive)?.takeIf { it.isString }?.content
+        }.getOrNull() ?: return@repeat
+        s = inner.trim()
+    }
+    if (!s.contains('\n')) s = s.replace("\\r\\n", "\n").replace("\\n", "\n")
+    return s.replace("\\t", "\t").trim()
+}
+
+/**
+ * The lines of a list a model wrote: the choices for a question, the
+ * checks of a contract. One per line, however it packed them — as lines,
+ * as a JSON array, or as one escaped string.
+ */
+fun choiceLines(raw: String, max: Int): List<String> {
+    val text = plainText(raw)
+    val parsed = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(text) }.getOrNull()
+    val array = parsed as? kotlinx.serialization.json.JsonArray
+    val parts = array?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: text.split("\n")
+    return parts
+        .map { plainText(it).trimStart('-', '*', '•', '·', ' ').trim().removeSurrounding("\"").trim() }
+        .filter { line -> line.any { it.isLetterOrDigit() } }
+        .distinct()
+        .take(max)
+}
 
 /**
  * What a bot can do on this phone. Small on purpose: a window on the web,
@@ -76,7 +112,7 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
     private var watchPosted = false
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
         .build()
 
     val schemas: List<ToolSchema> = listOf(
@@ -270,9 +306,9 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
         "routine_update" -> (if (args.str("active") == "true") "Turn on “" else "Pause “") + args.str("name") + "”"
         "routine_delete" -> "Delete the routine “${args.str("name")}”"
         "routine_run" -> "Run “${args.str("name")}” now"
-        "task_contract" -> "Agree on the task: ${args.str("goal")}\n" + args.str("checks").lines().filter { it.isNotBlank() }.joinToString("\n") { "• ${it.trim().trimStart('-', '•', '*', ' ')}" }
+        "task_contract" -> "Agree on the task: ${plainText(args.str("goal"))}\n" + choiceLines(args.str("checks"), 6).joinToString("\n") { "• $it" }
         "task_verify" -> "Check the work"
-        "ask_user" -> args.str("question")
+        "ask_user" -> plainText(args.str("question"))
         "file_write" -> "Write ${args.str("path")}"
         "message_bot" -> (if (args.str("expect").lowercase() == "tell") "Tell " else "Ask ") + "${args.str("to")}: ${args.str("message").take(120)}"
         "plan" -> "Plan the task"
@@ -419,7 +455,7 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
         "browser_reload" -> browser.reload().also(::noteLabels)
         "browser_scroll" -> browser.scroll(args.str("direction").lowercase() != "up").also(::noteLabels)
         "browser_wait" -> browser.waitFor(args.int("seconds").takeIf { it > 0 } ?: 3).also(::noteLabels)
-        "ask_user" -> host?.ask(args.str("question").trim(), args.str("options").lines().map { it.trim().trimStart('-', '•', '*', ' ') }.filter { it.isNotEmpty() }.take(4))
+        "ask_user" -> host?.ask(plainText(args.str("question")), choiceLines(args.str("options"), 4))
             ?: "Asking isn't available here."
         "file_list" -> folder.walkTopDown().filter { it.isFile }.map { it.relativeTo(folder).path + " (${it.length()} bytes)" }.toList()
             .ifEmpty { listOf("Your folder is empty.") }.joinToString("\n")
@@ -432,7 +468,7 @@ internal fun unquote(s: String): String = s.trim().removeSurrounding("\"").remov
             f.writeText(content)
             "Saved ${f.relativeTo(folder).path} (${content.length} characters)."
         } ?: "Use a plain file name inside your folder, like notes/trip.md."
-        "task_contract" -> host?.contract(args.str("goal").trim(), args.str("checks").lines().map { it.trim().trimStart('-', '•', '*', ' ') }.filter { it.isNotEmpty() }.take(6))
+        "task_contract" -> host?.contract(plainText(args.str("goal")), choiceLines(args.str("checks"), 6))
             ?: "Contracts aren't available here."
         "task_verify" -> host?.verify() ?: "Checking isn't available here."
         "routine_list" -> host?.routines()?.let { list ->
@@ -596,7 +632,7 @@ fun noBotNamed(raw: String): String = "No bot named " + normalizeName(raw).ifEmp
  * The steps of a plan, from the model's one-per-line answer. Numbering and
  * bullets are decoration; the order is what matters.
  */
-fun planSteps(raw: String): List<String> = raw.lines()
+fun planSteps(raw: String): List<String> = plainText(raw).lines()
     .map { it.trim().trimStart('-', '*', '•', '·', ' ', '—', '–').trim() }
     .map { it.replace(Regex("^\\d+[.):]\\s*"), "") }
     .filter { line -> line.any { it.isLetterOrDigit() } }

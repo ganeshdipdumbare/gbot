@@ -2,8 +2,10 @@ package runs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ganeshdipdumbare/kritrim"
 
@@ -31,12 +33,12 @@ func (r *Runtime) addCard(ctx context.Context, c convo, b *store.Bot, runID, thr
 		data["args"] = in.Args
 		msg = describeCall(in.Tool, in.Args)
 	case "question":
-		msg, _ = in.Args["question"].(string)
-		if opts, ok := in.Args["options"].([]any); ok && len(opts) > 0 {
+		msg = plainText(in.Args["question"])
+		if opts := choices(in.Args["options"]); len(opts) > 0 {
 			data["options"] = opts
 		}
 	case "takeover":
-		msg, _ = in.Args["reason"].(string)
+		msg = plainText(in.Args["reason"])
 	}
 	m := &store.Message{BotID: b.ID, GroupID: c.GroupID, ChatUser: c.User, Role: "card", Content: msg, Data: data, RunID: &runID}
 	if err := r.store.AddMessage(ctx, m, nil); err != nil {
@@ -44,6 +46,74 @@ func (r *Runtime) addCard(ctx context.Context, c convo, b *store.Bot, runID, thr
 		return
 	}
 	r.chat(c, Event{Type: "message", BotID: b.ID, GroupID: c.GroupID, Data: m})
+}
+
+// plainText is an argument as the person should read it. A model
+// sometimes hands one back still encoded: wrapped in quotes, with \n
+// where the line breaks belong, or JSON-encoded a second time. Unwrap it,
+// so a card never shows the escapes.
+func plainText(v any) string {
+	s, _ := v.(string)
+	s = strings.TrimSpace(s)
+	for i := 0; i < 2; i++ {
+		if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
+			break
+		}
+		var inner string
+		if err := json.Unmarshal([]byte(s), &inner); err != nil {
+			break
+		}
+		s = strings.TrimSpace(inner)
+	}
+	if !strings.Contains(s, "\n") {
+		s = strings.ReplaceAll(s, "\\r\\n", "\n")
+		s = strings.ReplaceAll(s, "\\n", "\n")
+	}
+	return strings.TrimSpace(strings.ReplaceAll(s, "\\t", "\t"))
+}
+
+// choices are a question's options, however the model packed them: a
+// list, a JSON array inside a string, or one string with a choice per
+// line. At most four, since that is what a card shows.
+func choices(v any) []any {
+	var raw []string
+	switch t := v.(type) {
+	case []any:
+		for _, o := range t {
+			if s, ok := o.(string); ok {
+				raw = append(raw, s)
+			} else if o != nil {
+				raw = append(raw, fmt.Sprint(o))
+			}
+		}
+	case string:
+		text := plainText(t)
+		var arr []string
+		if err := json.Unmarshal([]byte(text), &arr); err == nil {
+			raw = arr
+		} else {
+			raw = strings.Split(text, "\n")
+		}
+	default:
+		return nil
+	}
+	var out []any
+	seen := map[string]bool{}
+	for _, r := range raw {
+		for _, line := range strings.Split(plainText(r), "\n") {
+			line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "-*\u2022\u00b7 "))
+			line = strings.TrimSpace(strings.Trim(line, `"`))
+			if line == "" || seen[line] {
+				continue
+			}
+			seen[line] = true
+			out = append(out, line)
+			if len(out) == 4 {
+				return out
+			}
+		}
+	}
+	return out
 }
 
 var (

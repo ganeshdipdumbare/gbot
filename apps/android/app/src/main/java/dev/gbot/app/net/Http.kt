@@ -47,7 +47,7 @@ class Http(context: Context) {
     val client: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookies)
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.MINUTES)
         .build()
 
     /** For long-lived streams: no read timeout. */

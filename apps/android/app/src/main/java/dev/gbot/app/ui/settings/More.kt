@@ -37,6 +37,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.gbot.app.GbotApp
@@ -161,19 +162,19 @@ private val catalog = listOf(
     CatalogApp("Supabase", "Projects, tables and SQL", "https://mcp.supabase.com/mcp", 0xFF1F9D6B, "Data"),
     CatalogApp("Amplitude", "Events, charts and cohorts", "https://mcp.amplitude.com/mcp", 0xFF1E61F0, "Data"),
     CatalogApp("Mixpanel", "Query product analytics", "https://mcp.mixpanel.com/mcp", 0xFF7856FF, "Data"),
-    CatalogApp("Metricool", "Track social and ad analytics", "https://ai.metricool.com/mcp", 0xFF6F4EF2, "Data"),
+    CatalogApp("Metricool", "Social and ad analytics", "https://ai.metricool.com/mcp", 0xFF6F4EF2, "Data"),
     CatalogApp("Parallel", "Web search and research", "https://mcp.parallel.ai/mcp", 0xFF1F2937, "Data", open = true),
-    CatalogApp("GitHub", "Repos, issues and pull requests", "https://api.githubcopilot.com/mcp/", 0xFF24292F, "Developer", token = true),
+    CatalogApp("GitHub", "Repos, issues and PRs", "https://api.githubcopilot.com/mcp/", 0xFF24292F, "Developer", token = true),
     CatalogApp("Sentry", "Errors, projects and releases", "https://mcp.sentry.dev/mcp", 0xFF362D59, "Developer"),
-    CatalogApp("Postman", "Collections, APIs and environments", "https://mcp.postman.com/mcp", 0xFFFF6C37, "Developer"),
+    CatalogApp("Postman", "Collections and APIs", "https://mcp.postman.com/mcp", 0xFFFF6C37, "Developer"),
     CatalogApp("Vercel", "Manage your deploys", "https://mcp.vercel.com/", 0xFF000000, "Developer"),
     CatalogApp("Netlify", "Manage your deploys", "https://mcp.netlify.com/mcp", 0xFF00C7B7, "Developer"),
-    CatalogApp("Datadog", "Query metrics and logs", "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp", 0xFF632CA6, "Developer"),
+    CatalogApp("Datadog", "Metrics and logs", "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp", 0xFF632CA6, "Developer"),
     CatalogApp("Stripe", "Payments, customers and invoices", "https://mcp.stripe.com", 0xFF635BFF, "Finance"),
     CatalogApp("PayPal", "Transactions and invoices", "https://mcp.paypal.com/mcp", 0xFF003087, "Finance"),
     CatalogApp("Finary", "Track your portfolio", "https://public-api.finary.com/mcp", 0xFF1A1A2E, "Finance"),
     CatalogApp("Scalable Capital", "Track your investments", "https://mcp.scalable.capital/mcp", 0xFF00B389, "Finance"),
-    CatalogApp("Whop", "Manage your communities and payments", "https://mcp.whop.com/mcp", 0xFFFF6243, "Finance"),
+    CatalogApp("Whop", "Communities and payments", "https://mcp.whop.com/mcp", 0xFFFF6243, "Finance"),
     CatalogApp("Daloopa", "Financial model data", "https://mcp.daloopa.com/mcp", 0xFF1F3A93, "Finance"),
 )
 private fun sameUrl(a: String, b: String) = a.trimEnd('/') == b.trimEnd('/')
@@ -251,13 +252,31 @@ fun Integrations(back: () -> Unit) {
                 val waiting = connecting?.name == a.name
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(1.dp, g.line, RoundedCornerShape(16.dp)).background(if (on) g.surface2 else Color.Transparent)
-                        .pressable(!on && connecting == null) { connect(a) }.padding(10.dp),
+                        .pressable(!on && connecting == null) { connect(a) }.padding(horizontal = 10.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    AppIcon(a.name, a.tint, 38.dp)
+                    AppIcon(a.name, a.tint, 34.dp)
                     Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) { Text(a.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink); Text(a.blurb, style = T.tiny, color = g.ink2, maxLines = 1) }
-                    if (on) Icon("check", color = g.live) else Text(if (waiting) "Signing in…" else "Connect", style = T.tiny.copy(fontWeight = FontWeight.Medium), color = g.ink3)
+                    Column(Modifier.weight(1f)) {
+                        Text(a.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(a.blurb, style = T.tiny, color = g.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    when {
+                        on -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon("check", size = 14.dp, color = g.live)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Added", style = T.tiny, color = g.ink3)
+                        }
+                        waiting -> Text("Signing in…", style = T.tiny, color = g.ink3)
+                        else -> Text(
+                            "Connect",
+                            style = T.tiny.copy(fontWeight = FontWeight.Medium),
+                            color = g.ink,
+                            modifier = Modifier.clip(RoundedCornerShape(50)).background(g.surface).border(1.dp, g.line, RoundedCornerShape(50))
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                        )
+                    }
                 }
             }
         }
@@ -319,33 +338,76 @@ private fun ConnectedServer(m: McpServer, reload: () -> Unit) {
     val g = LocalG.current
     val scope = rememberCoroutineScope()
     var removing by remember { mutableStateOf(false) }
-    Panel {
+    var open by remember { mutableStateOf(false) }
+
+    // "connected" on the server, "ok" on the phone: both mean working.
+    val live = m.status == "connected" || m.status == "ok"
+    val waiting = m.enabled && !live && (m.status.isEmpty() || m.status == "connecting" || m.status == "off")
+    val tone = when {
+        !m.enabled -> g.ink3
+        live -> g.live
+        waiting -> g.warning
+        else -> g.danger
+    }
+    val state = when {
+        !m.enabled -> "Off"
+        live -> if (m.tools.size == 1) "1 tool" else "${m.tools.size} tools"
+        waiting -> "Connecting\u2026"
+        m.status == "unreachable" -> "Not answering"
+        else -> m.status
+    }
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(1.dp, g.line, RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon("plug", color = if (m.status == "connected") g.live else g.ink2)
+            AppIcon(m.name, 0xFF6B7280, 32.dp)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(m.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1)
-                    if (m.oauth) Text("  Signed in", style = T.tiny, color = g.ink2)
-                }
-                Text(m.url, style = T.tiny, color = g.ink2, maxLines = 1)
+                Text(m.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    shortUrl(m.url) + if (m.oauth) " \u00b7 signed in" else "",
+                    style = T.tiny, color = g.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
+            Spacer(Modifier.width(8.dp))
             Toggle(m.enabled, { v -> scope.attempt(if (v) "${m.name} on" else "${m.name} off") { app.api.toggleMcp(m.id, v); reload() } })
-            IconBtn("trash", "Remove ${m.name}", { removing = true }, size = 34.dp, tint = g.danger)
         }
-        Column(Modifier.fillMaxWidth().heightIn(max = 110.dp).clip(RoundedCornerShape(12.dp)).background(g.bg).verticalScroll(rememberScrollState()).padding(10.dp)) {
-            when {
-                m.status == "connected" -> {
-                    Text("${m.tools.size} tools", style = T.tiny, color = g.ink3)
-                    m.tools.forEach { Text(it.replace(Regex("^m[0-9a-f]{8}__"), ""), style = T.tiny, color = g.ink2, maxLines = 1) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val showTools = live && m.tools.isNotEmpty()
+            Row(
+                Modifier.clip(RoundedCornerShape(50)).background(tone.copy(alpha = 0.12f))
+                    .pressable(showTools) { open = !open }.padding(horizontal = 9.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(6.dp).clip(CircleShape).background(tone))
+                Spacer(Modifier.width(6.dp))
+                Text(state, style = T.tiny, color = tone, maxLines = 1)
+                if (showTools) { Spacer(Modifier.width(5.dp)); Icon(if (open) "up" else "down", size = 11.dp, color = tone) }
+            }
+            Spacer(Modifier.weight(1f))
+            IconBtn("trash", "Remove ${m.name}", { removing = true }, size = 32.dp, tint = g.ink3)
+        }
+        if (open && m.tools.isNotEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 160.dp).clip(RoundedCornerShape(12.dp)).background(g.bg)
+                    .verticalScroll(rememberScrollState()).padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                m.tools.forEach {
+                    Text(it.replace(Regex("^m[0-9a-f]{8}__"), ""), style = T.tiny, color = g.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                !m.enabled -> Text("Off", style = T.tiny, color = g.ink2)
-                m.status == "connecting" || m.status == "off" -> Text("Connecting…", style = T.tiny, color = g.ink2)
-                else -> Text(m.status, style = T.tiny, color = g.danger)
             }
         }
     }
     if (removing) Confirm("Remove ${m.name}?", "Bots lose its tools.", "Remove", onConfirm = { scope.attempt("${m.name} removed") { app.api.deleteMcp(m.id); reload() } }, onDismiss = { removing = false })
+}
+
+/** The part of a server address worth showing: its host and little else. */
+private fun shortUrl(url: String): String {
+    val host = runCatching { java.net.URI(url).host.orEmpty() }.getOrDefault("").removePrefix("www.")
+    return host.ifEmpty { url.removePrefix("https://").removePrefix("http://").trimEnd('/') }
 }
 
 // ---- Vault --------------------------------------------------------------
