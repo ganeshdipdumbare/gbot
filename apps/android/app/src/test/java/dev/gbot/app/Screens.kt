@@ -13,6 +13,7 @@ import dev.gbot.app.ui.screens.BotSettingsScreen
 import dev.gbot.app.ui.screens.ComputerScreen
 import dev.gbot.app.ui.screens.HatchScreen
 import dev.gbot.app.ui.screens.HomeScreen
+import dev.gbot.app.ui.screens.LocalComputerScreen
 import dev.gbot.app.ui.screens.LoginScreen
 import dev.gbot.app.ui.settings.SettingsHome
 import dev.gbot.app.ui.settings.SettingsTab
@@ -107,10 +108,26 @@ class Screens {
         )
     }
 
+    /** Flipped by the running-computer shot, so b1's computer answers "on". */
+    private var computerState = "asleep"
+
+    /** A real 1280x800 frame off a bot's microVM, so the preview isn't a grey box. */
+    private val screenFrame: ByteArray by lazy {
+        javaClass.getResourceAsStream("/screen.jpg")!!.use { it.readBytes() }
+    }
+
     @Before fun setUp() {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.url.encodedPath
+                if (path.endsWith("/computer/screen")) {
+                    return MockResponse.Builder().code(200).addHeader("Content-Type", "image/jpeg")
+                        .body(okio.Buffer().write(screenFrame)).build()
+                }
+                if (path == "/api/bots/b1/computer") {
+                    return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json")
+                        .body("""{"state":"$computerState","controller":"bot","network":true,"available":true,"backend":"microsandbox"}""").build()
+                }
                 val body = routes[path] ?: return MockResponse.Builder().code(404).body("""{"error":"not found"}""").build()
                 return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(body).build()
             }
@@ -146,6 +163,27 @@ class Screens {
     @Test fun general() = shot("general") { SettingsTab(rememberNavController(), "general") }
     @Test fun integrations() = shot("integrations") { SettingsTab(rememberNavController(), "integrations") }
     @Test fun computer() = shot("computer") { ComputerScreen(rememberNavController(), "b1", false) }
+
+    /** The same screen once the computer is awake: a live preview of the bot's desktop. */
+    @Test fun computerRunning() {
+        computerState = "on"
+        shot("computer-running") { ComputerScreen(rememberNavController(), "b1", false) }
+    }
+
+    /**
+     * Phone-only mode has no microVM: the bot drives a browser window on the
+     * phone. `load = false` keeps the roster the fake server already loaded,
+     * so the screen has a bot to belong to.
+     */
+    @Test fun localComputer() {
+        val app = GbotApp.instance
+        app.useLocal(load = false)
+        try {
+            shot("local-computer") { LocalComputerScreen(rememberNavController(), "b1") }
+        } finally {
+            app.useServer()
+        }
+    }
     @Test fun hatch() = shot("hatch") { HatchScreen(rememberNavController()) }
     @Test fun login() = shot("login") { LoginScreen({}, {}) }
     @Test fun appearance() = shot("appearance") { SettingsTab(rememberNavController(), "appearance") }

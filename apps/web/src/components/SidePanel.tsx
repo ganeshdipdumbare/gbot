@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CompositionEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type TouchEvent as RTouchEvent, type WheelEvent } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
@@ -316,7 +317,10 @@ function ComputerView({ bot, open, control, onClose }: {
     send({ type, ...pos(e) });
   };
 
-  return (
+  // Through a portal, like Modal: nested in the side panel the overlay sits
+  // in the panel's own stacking context, and the chat header (its own
+  // backdrop-blur layer) paints straight through the top of it.
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div className="fixed inset-0 z-50 bg-[#0E0B12]/90 backdrop-blur-sm flex flex-col" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade}>
@@ -381,7 +385,8 @@ function ComputerView({ bot, open, control, onClose }: {
           {error && <p className="text-center text-red-300 text-sm pb-3">{error}</p>}
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
 

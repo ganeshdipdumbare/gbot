@@ -5,6 +5,7 @@ import { Gbot } from "@gbot/characters";
 import { api, type ApprovalMode, type CodexLogin, type MCPServer, type Provider, type ProviderKind, type Skill, type ToolRule, type VaultSecret, type VoiceInfo } from "../lib/api";
 import { set, useStore } from "../lib/store";
 import { voiceInfo } from "../lib/voice";
+import { getTheme, setTheme, themes, type Theme } from "../lib/theme";
 import { attempt, toast, toastError } from "../lib/toast";
 import { Modal } from "./Modal";
 import { ModelSelect, useModels } from "./ModelSelect";
@@ -14,7 +15,7 @@ import { Toggle } from "./SidePanel";
 import { TeamSection } from "./Sharing";
 import { bouncy, Button, Icon, Input, Label, PasswordInput, TextArea } from "./ui";
 
-type Tab = "general" | "providers" | "team" | "integrations" | "vault" | "skills" | "voice";
+type Tab = "general" | "appearance" | "providers" | "team" | "integrations" | "vault" | "skills" | "voice";
 export type SettingsTab = Tab;
 
 /** Drop our internal MCP prefix; keep the server's own tool name otherwise. */
@@ -23,6 +24,7 @@ function toolLabel(name: string) {
 }
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
+  { id: "appearance", label: "Appearance" },
   { id: "providers", label: "Models" },
   { id: "team", label: "Team" },
   { id: "integrations", label: "Integrations" },
@@ -35,7 +37,7 @@ export function Settings({ open, onClose, initialTab = "general" }: { open: bool
   const [tab, setTab] = useState<Tab>(initialTab);
   useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
   return (
-    <Modal open={open} onClose={onClose} title="Settings" width={600}>
+    <Modal open={open} onClose={onClose} title="Settings" width={680}>
       <div className="px-5">
         <div className="flex gap-1 border-b border-line -mx-5 px-5 pb-2 overflow-x-auto">
           {tabs.map((t) => (
@@ -49,6 +51,7 @@ export function Settings({ open, onClose, initialTab = "general" }: { open: bool
       </div>
       <div key={tab} className="px-5 py-5 min-h-[420px] fade-in">
         {tab === "general" && <General />}
+        {tab === "appearance" && <Appearance />}
         {tab === "providers" && <Providers />}
         {tab === "team" && <TeamSection />}
         {tab === "integrations" && <Integrations />}
@@ -111,6 +114,34 @@ function General() {
         <Button variant="ghost" onClick={async () => { await api.logout(); set(() => ({ me: null, bots: [], groups: [], messages: {}, presence: {} })); }}>
           <Icon.logout /> Sign out
         </Button>
+      </section>
+    </div>
+  );
+}
+
+// Light or dark, like the Android app's Appearance screen. The choice lives
+// on this device, not on the account, so one person's laptop and phone can
+// differ.
+function Appearance() {
+  const [theme, setPick] = useState<Theme>(getTheme);
+  const choose = (t: Theme) => { setTheme(t); setPick(t); };
+  return (
+    <div className="space-y-6">
+      <section>
+        <Label>Theme</Label>
+        <ul className="rounded-2xl border border-line divide-y divide-line">
+          {themes.map((t) => (
+            <li key={t.id}>
+              <button onClick={() => choose(t.id)} aria-pressed={theme === t.id}
+                className="w-full flex items-center gap-3 px-3.5 h-12 text-left text-[14px] font-medium cursor-pointer hover:bg-hover transition-colors duration-[120ms] first:rounded-t-2xl last:rounded-b-2xl">
+                <span className="flex-1">{t.label}</span>
+                {theme === t.id && <span className="text-live [&_svg]:size-4.5"><Icon.check /></span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[13px] text-ink-2 mt-2">{themes.find((t) => t.id === theme)?.blurb}</p>
+        <p className="text-[12.5px] text-ink-3 mt-1">gbot keeps its own palette either way, so your bots look the same everywhere.</p>
       </section>
     </div>
   );

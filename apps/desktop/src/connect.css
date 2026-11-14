@@ -1,18 +1,77 @@
-:root { --bg: #FFF9F3; --ink: #2B2135; --ink2: #6E6378; --line: #F0E3D8; --surface: #fff; color-scheme: light dark; }
-@media (prefers-color-scheme: dark) { :root { --bg: #17131F; --ink: #F6EEF9; --ink2: #B3A7BF; --line: #342B42; --surface: #211B2B; } }
+/* The connect window is the first gbot a Mac user sees, so it uses the same
+   tokens as packages/ui-tokens: neutral grays, hairline borders, system type,
+   and purple kept for the bot itself. */
+:root {
+  --bg: #fcfcfc;
+  --surface: rgba(16, 16, 0, 0.04);
+  --surface-2: rgba(16, 16, 0, 0.07);
+  --ink: #0a0a0a;
+  --ink-2: rgba(0, 0, 0, 0.55);
+  --ink-3: rgba(0, 0, 0, 0.35);
+  --line: rgba(0, 0, 0, 0.1);
+  --emphasis: #111110;
+  --on-emphasis: #ffffff;
+  --accent: #0a84ff;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1f1f1f;
+    --surface: rgba(255, 255, 255, 0.06);
+    --surface-2: rgba(255, 255, 255, 0.1);
+    --ink: #f2f2f2;
+    --ink-2: rgba(255, 255, 255, 0.58);
+    --ink-3: rgba(255, 255, 255, 0.36);
+    --line: rgba(255, 255, 255, 0.12);
+    --emphasis: #f0f0f0;
+    --on-emphasis: #141414;
+    --accent: #64b5ff;
+  }
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; display: grid; place-items: center; -webkit-user-select: none; user-select: none; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/20px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  letter-spacing: -0.15px;
+  -webkit-font-smoothing: antialiased;
+  display: grid;
+  place-items: center;
+  -webkit-user-select: none;
+  user-select: none;
+}
 main { text-align: center; padding: 24px; width: min(420px, 100%); }
-.bot { width: 112px; height: 112px; animation: breathe 4s ease-in-out infinite; transform-origin: 50% 100%; }
+.bot { width: 72px; height: 72px; animation: breathe 4s ease-in-out infinite; transform-origin: 50% 100%; }
 .eyes { transform-origin: 50px 47px; transform-box: view-box; animation: blink 5s infinite; }
-h1 { font: 800 26px/1.2 ui-rounded, -apple-system, system-ui; margin: 20px 0 6px; letter-spacing: -.01em; }
-p { color: var(--ink2); margin: 0 0 18px; }
+h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; margin: 18px 0 4px; }
+p { color: var(--ink-2); font-size: 13px; margin: 0 0 16px; }
 form { display: flex; gap: 8px; }
-input { flex: 1; height: 44px; border-radius: 16px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); padding: 0 14px; font: inherit; outline: none; }
-input:focus { border-color: #8B5CF6; }
-button { height: 44px; padding: 0 18px; border: 0; border-radius: 999px; background: var(--ink); color: var(--bg); font: 700 15px ui-rounded, system-ui; cursor: pointer; }
-code { display: inline-block; margin-top: 14px; padding: 6px 12px; border-radius: 10px; background: var(--line); font-size: 13px; }
-@keyframes breathe { 50% { transform: scale(1.012, .985); } }
-@keyframes blink { 0%, 46%, 50%, 100% { transform: scaleY(1); } 48% { transform: scaleY(.1); } }
-@media (prefers-reduced-motion: reduce) { .bot, .eyes { animation: none; } }
+input {
+  flex: 1; height: 36px; border: 0; border-radius: 10px;
+  background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--line);
+  color: var(--ink); padding: 0 12px; font: inherit; outline: none;
+  transition: box-shadow 0.12s;
+}
+input::placeholder { color: var(--ink-3); }
+input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
+button {
+  height: 36px; padding: 0 14px; border: 0; border-radius: 999px;
+  background: var(--emphasis); color: var(--on-emphasis);
+  font: 500 13px/1 system-ui, -apple-system, sans-serif; cursor: pointer;
+  transition: opacity 0.12s;
+}
+button:hover { opacity: 0.9; }
+button:active { transform: scale(0.97); }
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+code {
+  display: inline-block; margin-top: 14px; padding: 4px 10px; border-radius: 6px;
+  background: var(--surface-2); color: var(--ink-2);
+  font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 0;
+}
+@keyframes breathe { 50% { transform: scale(1.012, 0.985); } }
+@keyframes blink { 0%, 46%, 50%, 100% { transform: scaleY(1); } 48% { transform: scaleY(0.1); } }
+@media (prefers-reduced-motion: reduce) {
+  .bot, .eyes { animation: none; }
+  button:active { transform: none; }
+}

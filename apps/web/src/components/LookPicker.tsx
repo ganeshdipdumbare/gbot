@@ -74,7 +74,7 @@ export function SurpriseButton({ onPick }: { onPick: (l: Look) => void }) {
       onClick={() => onPick({ seed: randomSeed() })}
       className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-surface text-[12px] text-ink-2 hover:text-ink cursor-pointer transition-colors duration-[120ms]"
     >
-      <Icon.dice /> Shuffle
+      <Icon.dice /> Surprise me
     </motion.button>
   );
 }
