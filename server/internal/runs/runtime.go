@@ -652,11 +652,11 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch e.Type {
-		case "step_start", "reasoning":
+		case kritrim.EventStepStart, kritrim.EventReasoning:
 			if cur == nil {
 				r.setPresenceOnce(c, b, Presence{State: "thinking"})
 			}
-		case "text":
+		case kritrim.EventText:
 			if e.Text == "" {
 				return
 			}
@@ -684,17 +684,17 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 			text.WriteString(e.Text)
 			final.WriteString(e.Text)
 			r.chat(c, Event{Type: "delta", BotID: b.ID, GroupID: c.GroupID, Data: map[string]string{"id": cur.ID, "text": e.Text}})
-		case "step_end":
+		case kritrim.EventStepEnd:
 			flush()
 			release()
-		case "tool_call":
+		case kritrim.EventToolCall:
 			flush()
 			release()
 			if e.ToolCall != nil {
 				calls[e.ToolCall.ID] = e.ToolCall
 				r.setPresence(c, b, Presence{State: "working", Detail: toolLabel(e.ToolCall.Name)})
 			}
-		case "tool_result":
+		case kritrim.EventToolResult:
 			if e.ToolResult == nil {
 				return
 			}
@@ -787,7 +787,17 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		_ = r.store.FinishRun(bg, runID, "error", r.redact(err.Error()), tokens)
 		outcome = b.Name + " couldn't reply: " + r.friendlyError(model, err)
 		r.botError(c, b, r.friendlyError(model, err))
-	case res != nil && res.Stop == "interrupt":
+	case res != nil && res.Stop == kritrim.StopGuardrail:
+		// The provider blocked the reply (Anthropic refusal, OpenAI
+		// content filter, Gemini safety, a Bedrock guardrail). The text
+		// is empty and its tool calls were dropped, so say so instead
+		// of settling as a normal answer.
+		// status stays "failed": a blocked reply is not an answer.
+		qStatus, qErr = "error", "the model provider blocked the reply"
+		_ = r.store.FinishRun(bg, runID, "error", qErr, tokens)
+		outcome = b.Name + " couldn't reply: the model provider blocked it."
+		r.botError(c, b, "The model provider blocked this reply. Try asking a different way.")
+	case res != nil && res.Stop == kritrim.StopInterrupt:
 		qStatus = "waiting"
 		_ = r.store.FinishRun(bg, runID, "waiting", "", tokens)
 		status, outcome = "needs_you", b.Name+" needs the person before it can reply; it asked in its own chat."

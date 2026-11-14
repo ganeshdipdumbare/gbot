@@ -59,6 +59,9 @@ func (s *Service) Create(ctx context.Context, botID, userID, name, prompt, kind,
 			return nil, "", errors.Join(ErrInvalid, err)
 		}
 		next := sc.Next(time.Now())
+		if next.IsZero() {
+			return nil, "", errors.Join(ErrInvalid, errors.New("that schedule never comes round; check the day and month"))
+		}
 		r.Schedule, r.NextRunAt = strings.TrimSpace(schedule), &next
 	case "webhook":
 		b := make([]byte, 24)
@@ -100,6 +103,9 @@ func (s *Service) Update(ctx context.Context, botID, userID, id, name, prompt, s
 			return nil, errors.Join(ErrInvalid, err)
 		}
 		n := sc.Next(time.Now())
+		if n.IsZero() {
+			return nil, errors.Join(ErrInvalid, errors.New("that schedule never comes round; check the day and month"))
+		}
 		next = &n
 	}
 	out, err := s.Store.UpdateRoutineFields(ctx, botID, userID, id, name, prompt, schedule, next)
@@ -131,6 +137,9 @@ func (s *Service) tick(ctx context.Context) {
 			return nil
 		}
 		n := sc.Next(now)
+		if n.IsZero() {
+			return nil // never comes round again; stop rescheduling it
+		}
 		return &n
 	})
 	if err != nil {

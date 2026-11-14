@@ -6,8 +6,9 @@ import (
 	"github.com/ganeshdipdumbare/kritrim"
 )
 
-// mockTurns turns the test script ({"tool": "name", "args": {...}} or
-// {"text": "..."} per turn) into the offline model's turns.
+// mockTurns turns the test script ({"tool": "name", "args": {...}},
+// {"text": "..."} or {"stop": "guardrail"} per turn) into the offline
+// model's turns.
 func mockTurns(script []any) []kritrim.Turn {
 	out := make([]kritrim.Turn, 0, len(script))
 	for i, raw := range script {
@@ -17,6 +18,9 @@ func mockTurns(script []any) []kritrim.Turn {
 		}
 		turn := kritrim.Turn{}
 		turn.Text, _ = m["text"].(string)
+		// A scripted stop reason, so tests can cover a provider that
+		// blocks a reply ("guardrail") or runs out of steps.
+		turn.Stop, _ = m["stop"].(string)
 		if name, _ := m["tool"].(string); name != "" {
 			args, _ := m["args"].(map[string]any)
 			turn.ToolCalls = []kritrim.ToolCall{{ID: fmt.Sprintf("call_%s_%d", name, i), Name: name, Args: args}}
