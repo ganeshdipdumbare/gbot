@@ -17,6 +17,7 @@ import (
 
 	"gbot/internal/computer"
 	"gbot/internal/cron"
+	"gbot/internal/crypto"
 	"gbot/internal/routines"
 	"gbot/internal/runs"
 	"gbot/internal/store"
@@ -543,7 +544,7 @@ func (s *Server) createMCP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		raw, _ := json.Marshal(map[string]string{"Authorization": "Bearer " + t})
-		sealed = s.Sealer.Seal(raw)
+		sealed = s.Sealer.Seal(raw, crypto.Owner("mcp-headers", userFrom(r).ID))
 	}
 	m, err := s.Store.CreateMCP(r.Context(), userFrom(r).ID, body.Name, u.String(), sealed)
 	if err != nil {

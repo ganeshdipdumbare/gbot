@@ -102,8 +102,10 @@ func run(cmd string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	opens := func(sealed []byte) bool { _, err := sealer.Open(sealed); return err == nil }
-	if err := st.CheckSecretKey(ctx, sealer.Derive("gbot/key-check"), opens); err != nil {
+	keyAAD := crypto.Owner("key-check", "instance")
+	seal := func(b []byte) []byte { return sealer.Seal(b, keyAAD) }
+	open := func(b []byte) ([]byte, error) { return sealer.Open(b, keyAAD) }
+	if err := st.CheckSecretKey(ctx, seal, open); err != nil {
 		return fmt.Errorf("%w. Restore the original GBOT_SECRET_KEY (or secret.key file) before starting", err)
 	}
 

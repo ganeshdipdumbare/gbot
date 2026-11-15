@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gbot/internal/crypto"
 	mcpoauth "gbot/internal/mcp"
 	"gbot/internal/store"
 )
@@ -151,7 +152,7 @@ func (s *Server) mcpOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw, _ := json.Marshal(tokens)
-	sealed := s.Sealer.Seal(raw)
+	sealed := s.Sealer.Seal(raw, crypto.Owner("mcp-oauth", p.user))
 	// Reconnecting an app replaces its tokens instead of adding a
 	// second copy of the same server.
 	var m *store.MCPServer

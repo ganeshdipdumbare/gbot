@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"gbot/internal/crypto"
 	"gbot/internal/runs"
 	"gbot/internal/slack"
 	"gbot/internal/store"
@@ -107,7 +108,7 @@ func (s *Server) slackPost(t slackTarget, text string) {
 	if err != nil || s.Sealer == nil {
 		return
 	}
-	token, err := s.Sealer.Open(in.BotToken)
+	token, err := s.Sealer.Open(in.BotToken, crypto.Owner("slack-bot-token", in.OwnerID))
 	if err != nil {
 		s.Log.Warn("slack: cannot open bot token", "install", t.installID)
 		return
@@ -161,7 +162,7 @@ func (s *Server) slackEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, "unauthorized")
 		return
 	}
-	secret, err := s.Sealer.Open(in.SigningKey)
+	secret, err := s.Sealer.Open(in.SigningKey, crypto.Owner("slack-signing-key", in.OwnerID))
 	if err != nil {
 		writeErr(w, 401, "unauthorized")
 		return
@@ -265,7 +266,8 @@ func (s *Server) connectSlack(w http.ResponseWriter, r *http.Request) {
 	}
 	in, err := s.Store.SaveSlackInstall(r.Context(), &store.SlackInstall{
 		SpaceID: u.SpaceID, OwnerID: u.ID, TeamID: body.TeamID, TeamName: strings.TrimSpace(body.TeamName),
-		BotToken: s.Sealer.Seal([]byte(body.BotToken)), SigningKey: s.Sealer.Seal([]byte(body.SigningSecret)),
+		BotToken:   s.Sealer.Seal([]byte(body.BotToken), crypto.Owner("slack-bot-token", u.ID)),
+		SigningKey: s.Sealer.Seal([]byte(body.SigningSecret), crypto.Owner("slack-signing-key", u.ID)),
 	})
 	if err != nil {
 		// The unique key is the workspace, so a clash means another

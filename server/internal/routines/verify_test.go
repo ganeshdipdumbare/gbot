@@ -40,8 +40,8 @@ func TestVerifyTimestampWindow(t *testing.T) {
 	if Verify(r, body, good, strconv.FormatInt(now.Unix()+1, 10), "", now) {
 		t.Fatal("signature accepted with a different timestamp")
 	}
-	// Legacy body-only signatures still verify, without a timestamp.
-	if !Verify(r, body, sign(key, body), "", "", now) {
-		t.Fatal("legacy body signature rejected")
+	// A body-only signature, with no timestamp, is refused.
+	if Verify(r, body, sign(key, body), "", "", now) {
+		t.Fatal("signature without a timestamp accepted")
 	}
 }

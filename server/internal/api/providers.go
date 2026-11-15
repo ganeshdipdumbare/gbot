@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"gbot/internal/codex"
+	"gbot/internal/crypto"
 	"gbot/internal/models"
 	"gbot/internal/runs"
 	"gbot/internal/store"
@@ -98,7 +99,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	if b.APIKey != nil {
 		key = strings.TrimSpace(*b.APIKey)
 	}
-	sealed, ok := s.sealKey(key)
+	sealed, ok := s.sealKey(key, userFrom(r).ID)
 	if !ok {
 		writeErr(w, 503, "secret storage is not configured")
 		return
@@ -187,7 +188,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	} else if b.APIKey != nil && strings.TrimSpace(*b.APIKey) != "" {
 		key = strings.TrimSpace(*b.APIKey)
 		var ok bool
-		sealed, ok = s.sealKey(key)
+		sealed, ok = s.sealKey(key, u.ID)
 		if !ok {
 			writeErr(w, 503, "secret storage is not configured")
 			return
@@ -348,21 +349,21 @@ func (s *Server) userProviders(ctx context.Context, userID string) []models.Prov
 	return runs.ProviderModels(list)
 }
 
-func (s *Server) sealKey(key string) ([]byte, bool) {
+func (s *Server) sealKey(key, ownerID string) ([]byte, bool) {
 	if key == "" {
 		return nil, true
 	}
 	if s.Sealer == nil {
 		return nil, false
 	}
-	return s.Sealer.Seal([]byte(key)), true
+	return s.Sealer.Seal([]byte(key), crypto.Owner("provider-key", ownerID)), true
 }
 
 func (s *Server) openKey(p *store.Provider) string {
 	if len(p.Sealed) == 0 || s.Sealer == nil {
 		return ""
 	}
-	raw, err := s.Sealer.Open(p.Sealed)
+	raw, err := s.Sealer.Open(p.Sealed, crypto.Owner("provider-key", p.UserID))
 	if err != nil {
 		return ""
 	}

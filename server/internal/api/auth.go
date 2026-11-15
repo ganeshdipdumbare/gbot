@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"errors"
+	"net"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -28,6 +29,31 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// firstAccountAllowed decides who may create the first account on a fresh
+// server. With GBOT_SETUP_TOKEN set, only someone with the token. Without
+// it, only a direct connection from this machine, never one that came
+// through a proxy, so a stranger who reaches a new server first can't
+// claim it.
+func (s *Server) firstAccountAllowed(r *http.Request, token string) bool {
+	if s.SetupToken != "" {
+		return subtle.ConstantTimeCompare([]byte(token), []byte(s.SetupToken)) == 1
+	}
+	if s.TrustProxy {
+		return false
+	}
+	for _, h := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded"} {
+		if r.Header.Get(h) != "" {
+			return false
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 type credentials struct {
 	Email      string `json:"email"`
 	Password   string `json:"password"`
@@ -49,8 +75,8 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "sign-ups are closed on this server")
 		return
 	}
-	if n == 0 && s.SetupToken != "" && subtle.ConstantTimeCompare([]byte(c.SetupToken), []byte(s.SetupToken)) != 1 {
-		writeErr(w, http.StatusForbidden, "enter the setup token from this server's GBOT_SETUP_TOKEN to create the first account")
+	if n == 0 && !s.firstAccountAllowed(r, c.SetupToken) {
+		writeErr(w, http.StatusForbidden, "this server is new: create the first account from the machine it runs on, or enter the setup token from GBOT_SETUP_TOKEN")
 		return
 	}
 	c.Email = strings.ToLower(strings.TrimSpace(c.Email))

@@ -11,6 +11,7 @@ import (
 	"github.com/ganeshdipdumbare/kritrim"
 
 	"gbot/internal/cron"
+	"gbot/internal/crypto"
 )
 
 // Tools a bot gets for one run. They're built per run so each closes
@@ -358,7 +359,7 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 					if err != nil {
 						return "", fmt.Errorf("no saved secret named %q. Ask the person to add it in Settings → Vault", name)
 					}
-					raw, err := r.sealer.Open(v.Sealed)
+					raw, err := r.sealer.Open(v.Sealed, crypto.Owner("vault", j.user()))
 					if err != nil {
 						return "", errors.New("couldn't open that saved secret; ask the person to set it again")
 					}

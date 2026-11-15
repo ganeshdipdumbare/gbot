@@ -48,7 +48,7 @@ func decodeProvider(p *store.Provider, sealer *crypto.Sealer) providerServer {
 	key := ""
 	broken := false
 	if len(p.Sealed) > 0 {
-		raw, err := sealerOpen(sealer, p.Sealed)
+		raw, err := sealerOpen(sealer, p.Sealed, crypto.Owner("provider-key", p.UserID))
 		if err != nil {
 			broken = true
 		} else {
@@ -324,9 +324,9 @@ func geminiRoot(base string) string {
 }
 
 // sealerOpen opens a sealed value, failing when there is no sealer.
-func sealerOpen(sealer *crypto.Sealer, sealed []byte) ([]byte, error) {
+func sealerOpen(sealer *crypto.Sealer, sealed, aad []byte) ([]byte, error) {
 	if sealer == nil {
 		return nil, fmt.Errorf("secret storage is not configured")
 	}
-	return sealer.Open(sealed)
+	return sealer.Open(sealed, aad)
 }

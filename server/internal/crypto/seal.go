@@ -70,16 +70,23 @@ func Load(keyFile string) (*Sealer, error) {
 	return &Sealer{aead: aead, key: key}, nil
 }
 
-func (s *Sealer) Seal(plain []byte) []byte {
-	nonce := make([]byte, s.aead.NonceSize())
-	_, _ = rand.Read(nonce)
-	return s.aead.Seal(nonce, nonce, plain, nil)
+// Owner is the additional authenticated data for a value: what it is for
+// and whose it is. A sealed value only opens under the same purpose and
+// owner, so a blob copied to another row or account fails to open.
+func Owner(purpose, ownerID string) []byte {
+	return []byte("gbot:" + purpose + ":" + ownerID)
 }
 
-func (s *Sealer) Open(sealed []byte) ([]byte, error) {
+func (s *Sealer) Seal(plain, aad []byte) []byte {
+	nonce := make([]byte, s.aead.NonceSize())
+	_, _ = rand.Read(nonce)
+	return s.aead.Seal(nonce, nonce, plain, aad)
+}
+
+func (s *Sealer) Open(sealed, aad []byte) ([]byte, error) {
 	n := s.aead.NonceSize()
 	if len(sealed) < n {
 		return nil, errors.New("sealed value too short")
 	}
-	return s.aead.Open(nil, sealed[:n], sealed[n:], nil)
+	return s.aead.Open(nil, sealed[:n], sealed[n:], aad)
 }

@@ -159,35 +159,27 @@ func (s *Service) tick(ctx context.Context) {
 // webhookWindow is how far a signed timestamp may drift from our clock.
 const webhookWindow = 5 * time.Minute
 
-// Verify checks a webhook call: the caller proves it knows the secret by
-// signing the body (X-GBot-Signature: sha256=<hex hmac>) or sending it as
-// a bearer token over HTTPS.
-//
-// A caller that sends X-GBot-Timestamp signs "<timestamp>.<body>" and is
-// refused outside a five-minute window, so a captured request cannot be
-// replayed later. Callers that sign only the body are still accepted for
-// compatibility; they stay replayable until they send a timestamp.
+// Verify checks a webhook call. The caller either signs the request
+// (X-GBot-Signature: sha256=<hex hmac>, over "<X-GBot-Timestamp>.<body>")
+// or sends the secret as a bearer token over HTTPS. The signature is bound
+// to a timestamp within five minutes, so a captured request cannot be
+// replayed later. The secret is never stored: signatures use sha256(secret).
 func Verify(r *store.Routine, body []byte, signature, timestamp, bearer string, now time.Time) bool {
 	if r.Kind != "webhook" || len(r.SecretHash()) == 0 {
 		return false
 	}
-	// The secret itself isn't stored, so a signature is checked against
-	// a key derived from it: callers sign with sha256(secret).
 	if strings.HasPrefix(signature, "sha256=") {
-		material := body
-		if timestamp != "" {
-			ts, err := strconv.ParseInt(timestamp, 10, 64)
-			if err != nil {
-				return false
-			}
-			drift := now.Sub(time.Unix(ts, 0))
-			if drift < -webhookWindow || drift > webhookWindow {
-				return false
-			}
-			material = append([]byte(timestamp+"."), body...)
+		ts, err := strconv.ParseInt(timestamp, 10, 64)
+		if err != nil {
+			return false
+		}
+		drift := now.Sub(time.Unix(ts, 0))
+		if drift < -webhookWindow || drift > webhookWindow {
+			return false
 		}
 		mac := hmac.New(sha256.New, r.SecretHash())
-		mac.Write(material)
+		mac.Write([]byte(timestamp + "."))
+		mac.Write(body)
 		want := mac.Sum(nil)
 		got, err := hex.DecodeString(strings.TrimPrefix(signature, "sha256="))
 		return err == nil && hmac.Equal(got, want)

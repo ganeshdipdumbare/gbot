@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gbot/internal/crypto"
 	"gbot/internal/store"
 )
 
@@ -83,7 +84,7 @@ func (s *Server) createVault(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.Store.CreateVaultSecret(r.Context(), &store.VaultSecret{
 		UserID: userFrom(r).ID, Name: strings.TrimSpace(body.Name), Origins: hosts,
-		Sealed: s.Sealer.Seal([]byte(body.Value)),
+		Sealed: s.Sealer.Seal([]byte(body.Value), crypto.Owner("vault", userFrom(r).ID)),
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") {
@@ -135,7 +136,7 @@ func (s *Server) updateVault(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 503, "secret storage is not configured")
 			return
 		}
-		sealed = s.Sealer.Seal([]byte(value))
+		sealed = s.Sealer.Seal([]byte(value), crypto.Owner("vault", u.ID))
 	}
 	v, err := s.Store.UpdateVaultSecret(r.Context(), u.ID, cur.ID, &name, &hosts, sealed)
 	if err != nil {
