@@ -420,8 +420,9 @@ func (s *Server) updateRoutine(w http.ResponseWriter, r *http.Request) {
 	if body.Active != nil && *body.Active {
 		if rt, err := s.Store.GetRoutine(r.Context(), b.ID, userFrom(r).ID, r.PathValue("rid")); err == nil && rt.Kind == "schedule" {
 			if sc, err := cron.Parse(rt.Schedule); err == nil {
-				n := sc.Next(time.Now())
-				next = &n
+				if n := sc.Next(time.Now()); !n.IsZero() {
+					next = &n
+				}
 			}
 		}
 	}
