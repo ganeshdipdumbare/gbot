@@ -248,7 +248,9 @@ integration tests.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on every pull
 request and on `main`: Go tests with a Postgres service, web typecheck and
-build, character tests, and the Android unit tests plus a debug build.
+build, character tests, and the Android unit tests plus a signed release APK,
+kept as the run's `gbot-apk` artifact. Pushing a `v*` tag also attaches that
+APK to the tag's GitHub release.
 
 ---
 
