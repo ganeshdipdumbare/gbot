@@ -102,6 +102,10 @@ func run(cmd string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	opens := func(sealed []byte) bool { _, err := sealer.Open(sealed); return err == nil }
+	if err := st.CheckSecretKey(ctx, sealer.Derive("gbot/key-check"), opens); err != nil {
+		return fmt.Errorf("%w. Restore the original GBOT_SECRET_KEY (or secret.key file) before starting", err)
+	}
 
 	cat := models.NewCatalog(env("OLLAMA_HOST", "http://127.0.0.1:11434"))
 	hub := runs.NewHub()
@@ -196,6 +200,8 @@ func run(cmd string, log *slog.Logger) error {
 		SecureCookies: secureCookies,
 		PublicURL:     strings.TrimRight(env("GBOT_PUBLIC_URL", ""), "/"),
 		AllowSignup:   env("GBOT_SIGNUP", "open") == "open",
+		SetupToken:    env("GBOT_SETUP_TOKEN", ""),
+		TrustProxy:    env("GBOT_TRUST_PROXY", "") != "",
 	}
 	hs := &http.Server{
 		Addr:              addr,

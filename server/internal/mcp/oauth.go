@@ -17,6 +17,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"gbot/internal/netguard"
 )
 
 const timeout = 20 * time.Second
@@ -55,7 +57,9 @@ func (t *Tokens) Expired() bool {
 	return t.ExpiresAt > 0 && time.Now().Add(time.Minute).Unix() >= t.ExpiresAt
 }
 
-func httpClient() *http.Client { return &http.Client{Timeout: timeout} }
+// httpClient refuses redirects and link-local addresses: the URLs it
+// fetches come from the remote server's own metadata.
+func httpClient() *http.Client { return netguard.Client(timeout) }
 
 func getJSON(ctx context.Context, c *http.Client, u string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -87,6 +91,9 @@ func Discover(ctx context.Context, serverURL string) (*Config, error) {
 	if metaURL == "" {
 		metaURL = wellKnown(u, "oauth-protected-resource")
 	}
+	if err := netguard.Endpoint(metaURL); err != nil {
+		return nil, fmt.Errorf("this app's sign-in metadata is unusable: %w", err)
+	}
 	var resource struct {
 		Resource             string   `json:"resource"`
 		AuthorizationServers []string `json:"authorization_servers"`
@@ -107,6 +114,10 @@ func Discover(ctx context.Context, serverURL string) (*Config, error) {
 			continue
 		}
 		seen[as] = true
+		if err := netguard.Endpoint(as); err != nil {
+			last = err
+			continue
+		}
 		cfg, err := authMetadata(ctx, c, as)
 		if err == nil {
 			cfg.Resource = resource.Resource
@@ -194,6 +205,14 @@ func authMetadata(ctx context.Context, c *http.Client, issuer string) (*Config, 
 		if doc.AuthorizationEndpoint == "" || doc.TokenEndpoint == "" {
 			continue
 		}
+		for _, ep := range []string{doc.AuthorizationEndpoint, doc.TokenEndpoint, doc.RegistrationEndpoint} {
+			if ep == "" {
+				continue
+			}
+			if err := netguard.Endpoint(ep); err != nil {
+				return nil, err
+			}
+		}
 		return &Config{
 			AuthorizationEndpoint: doc.AuthorizationEndpoint,
 			TokenEndpoint:         doc.TokenEndpoint,
@@ -212,6 +231,9 @@ func authMetadata(ctx context.Context, c *http.Client, issuer string) (*Config, 
 func Register(ctx context.Context, cfg *Config, redirect string) (*Client, error) {
 	if cfg.RegistrationEndpoint == "" {
 		return nil, errors.New("this app needs a pre-registered client; add it with a token instead")
+	}
+	if err := netguard.Endpoint(cfg.RegistrationEndpoint); err != nil {
+		return nil, err
 	}
 	body, _ := json.Marshal(map[string]any{
 		"client_name":                      "gbot",

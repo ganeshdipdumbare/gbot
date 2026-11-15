@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -20,17 +21,22 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "database unavailable")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"fresh": n == 0, "signup": n == 0 || s.AllowSignup})
+	writeJSON(w, 200, map[string]any{
+		"fresh":      n == 0,
+		"signup":     n == 0 || s.AllowSignup,
+		"setupToken": n == 0 && s.SetupToken != "",
+	})
 }
 
 type credentials struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name,omitempty"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	Name       string `json:"name,omitempty"`
+	SetupToken string `json:"setupToken,omitempty"`
 }
 
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimit.Allow(clientIP(r)) {
+	if !s.authLimit.Allow(s.clientIP(r)) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 		return
 	}
@@ -38,8 +44,13 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &c) {
 		return
 	}
-	if n, _ := s.Store.CountUsers(r.Context()); n > 0 && !s.AllowSignup {
+	n, _ := s.Store.CountUsers(r.Context())
+	if n > 0 && !s.AllowSignup {
 		writeErr(w, http.StatusForbidden, "sign-ups are closed on this server")
+		return
+	}
+	if n == 0 && s.SetupToken != "" && subtle.ConstantTimeCompare([]byte(c.SetupToken), []byte(s.SetupToken)) != 1 {
+		writeErr(w, http.StatusForbidden, "enter the setup token from this server's GBOT_SETUP_TOKEN to create the first account")
 		return
 	}
 	c.Email = strings.ToLower(strings.TrimSpace(c.Email))
@@ -80,7 +91,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimit.Allow(clientIP(r)) {
+	if !s.authLimit.Allow(s.clientIP(r)) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 		return
 	}

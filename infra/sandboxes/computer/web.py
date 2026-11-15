@@ -31,6 +31,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlparse
 
@@ -63,6 +64,8 @@ CLOSE = re.compile(r"(close|dismiss|×|✕)", re.I)
 SNAPSHOT_JS = r"""(start) => {
   const CAP = 300 - start;
   if (CAP <= 0) return { items: [], more: 0, consentCount: 0 };
+  const fingerprint = (el) => [el.tagName, el.getAttribute('role') || '', el.getAttribute('type') || '',
+    (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80), el.getAttribute('href') || ''].join('|');
   const sel = 'a[href],button,input:not([type=hidden]),select,textarea,summary,' +
     '[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],' +
     '[role=textbox],[role=combobox],[role=switch],[role=option],[contenteditable=""],[contenteditable=true]';
@@ -125,7 +128,9 @@ SNAPSHOT_JS = r"""(start) => {
       const name = (el.getAttribute('aria-label') || labelText || el.getAttribute('placeholder') ||
         el.getAttribute('title') || el.getAttribute('alt') || buttonValue || el.innerText || el.textContent || '')
         .replace(/\s+/g, ' ').trim().slice(0, 100);
-      const item = { ref, role, name };
+      // A fingerprint of what the element was, checked again before every
+      // action, so a page that re-labels a ref cannot redirect the action.
+      const item = { ref, role, name, fp: fingerprint(el) };
       if (tag === 'a' && el.getAttribute('href')) item.href = el.href.slice(0, 160);
       if (type === 'checkbox' || type === 'radio') item.checked = el.checked;
       else if (type === 'password') item.value = el.value ? '(filled)' : '(empty)';
@@ -157,6 +162,11 @@ SNAPSHOT_JS = r"""(start) => {
 }"""
 
 
+# Must match `fingerprint` in SNAPSHOT_JS exactly.
+FINGERPRINT_JS = r"""(el) => [el.tagName, el.getAttribute('role') || '', el.getAttribute('type') || '',
+  (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80), el.getAttribute('href') || ''].join('|')"""
+
+
 def shown(url):
     """The URL as the model may see it: query strings often hold tokens, so they are cut."""
     base, q, _ = re.sub(r"#.*", "", url).partition("?")
@@ -185,16 +195,20 @@ def host_allowed(url):
     if not ALLOWED:
         return True
     host = (urlparse(url).hostname or "").lower()
-    if not host:  # about:blank and data: pages have no site
-        return True
+    if not host:
+        # about:blank and srcdoc frames load nothing of their own. data:,
+        # blob: and file: URLs carry content with no site behind them.
+        return url in ("about:blank", "about:srcdoc")
     return any(host == a or host.endswith("." + a) for a in ALLOWED)
 
 
 def guard_page(page):
-    """Close a page that left the allowlist, by a click, redirect or script."""
-    if host_allowed(page.url):
+    """Close a page if it, or any frame in it, left the allowlist, by a
+    click, redirect, script or embedded iframe."""
+    bad = next((f.url for f in page.frames if not host_allowed(f.url)), None)
+    if bad is None:
         return
-    host = urlparse(page.url).hostname or "another site"
+    host = urlparse(bad).hostname or "another site"
     try:
         page.goto("about:blank", wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
     except Exception:
@@ -254,13 +268,40 @@ def settle(page):
     time.sleep(0.3)
 
 
+def pinned_handle(page, ref):
+    """The element as a handle to one DOM node. Checks and actions done on
+    it cannot be redirected to a different node the page swaps in later,
+    which a locator re-resolving on every call would allow."""
+    loc = element(page, ref)
+    expected = (read_state().get("fps") or {}).get(str(ref))
+    try:
+        handle = loc.element_handle(timeout=ACTION_TIMEOUT)
+        same = handle.evaluate(FINGERPRINT_JS) == expected
+    except Exception:
+        same = False
+    if not same:
+        fail(f"[{ref}] changed since the snapshot. Take a new browser_snapshot.")
+    return handle
+
+
 def element(page, ref):
+    # The page can rewrite the data-gbot-ref attributes, so the element must
+    # still look the way it did when the snapshot was taken.
+    expected = (read_state().get("fps") or {}).get(str(ref))
+    if expected is None:
+        fail(f"No element [{ref}] on this page. Numbers change when the page changes: take a new browser_snapshot.")
     # Refs are numbered across the page and every iframe, so look in each.
     for frame in page.frames:
         try:
             loc = frame.locator(f'[data-gbot-ref="{ref}"]')
             if loc.count() > 0:
                 found = loc.first
+                try:
+                    same = found.evaluate(FINGERPRINT_JS) == expected
+                except Exception:
+                    same = False
+                if not same:
+                    fail(f"[{ref}] changed since the snapshot. Take a new browser_snapshot.")
                 try:
                     found.scroll_into_view_if_needed(timeout=ACTION_TIMEOUT)
                 except Exception:
@@ -281,7 +322,8 @@ def action_error(what, ref, e):
 def describe_item(i):
     parts = [f'[{i["ref"]}] {i["role"]} "{i["name"]}"']
     if "href" in i:
-        parts.append(f"-> {i['href']}")
+        # Query strings often carry tokens; show the link the way the URL is shown.
+        parts.append(f"-> {shown(i['href'])}")
     if "value" in i:
         parts.append(f'value="{i["value"]}"')
     if "checked" in i:
@@ -371,9 +413,13 @@ def dismiss_consent(page):
         time.sleep(0.25)
     if not candidates:
         return ""
+    # Only the least-permissive choice or a close button is ever clicked
+    # automatically. A page must not get "Accept" or "Allow" pressed for it.
     least = [c for c in candidates if LEAST.search(c[1])]
     close = [c for c in candidates if CLOSE.search(c[1])]
-    loc, label = (least or close or candidates)[0]
+    if not (least or close):
+        return ""
+    loc, label = (least or close)[0]
     try:
         loc.click(timeout=ACTION_TIMEOUT)
     except Exception:
@@ -428,23 +474,53 @@ def snapshot_sig(data):
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
-def remember(data):
-    """Counts how many snapshots in a row showed the same page, so the
-    model can tell it's stuck instead of clicking the same thing forever."""
-    sig = snapshot_sig(data)
-    count = 1
+def read_state():
+    """The last snapshot's state. Refuses a symlink planted at the path."""
     try:
-        with open(STATE, encoding="utf-8") as f:
-            prev = json.load(f)
-        if prev.get("sig") == sig:
-            count = int(prev.get("count", 0)) + 1
+        fd = os.open(STATE, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        pass
+        return {}
+
+
+def write_state(obj):
+    """Writes the state atomically: a fresh private file, then renamed over
+    the old one, so a planted symlink is replaced rather than followed."""
+    d = os.path.dirname(STATE)
+    tmp = None
     try:
-        with open(STATE, "w", encoding="utf-8") as f:
-            json.dump({"sig": sig, "count": count}, f)
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".web-last-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(obj, f)
+        os.replace(tmp, STATE)
+        tmp = None
     except OSError:
         pass
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def remember(data):
+    """Counts how many snapshots in a row showed the same page, so the
+    model can tell it's stuck instead of clicking the same thing forever.
+    Also records each element's fingerprint for element() to check."""
+    sig = snapshot_sig(data)
+    prev = read_state()
+    count = 1
+    if prev.get("sig") == sig:
+        try:
+            count = int(prev.get("count", 0)) + 1
+        except (TypeError, ValueError):
+            count = 1
+    fps = {str(i["ref"]): i["fp"] for i in data["items"] if "fp" in i}
+    write_state({"sig": sig, "count": count, "fps": fps})
     return count
 
 
@@ -602,7 +678,9 @@ def cmd_type(page, ref, text, submit, accept, secret=False, allow_origins=""):
             fail(f"This page ({shown(page.url)}) isn't allowed for that saved secret.")
     elif text is None:
         fail("text is required")
-    el = element(page, ref)
+    # Every check and the action below use this one pinned node, so the
+    # origin and field-type checks apply to the element that gets the secret.
+    el = pinned_handle(page, ref)
     if secret:
         try:
             kind = el.evaluate("e => e.tagName === 'INPUT' ? (e.type || '').toLowerCase() : ''")

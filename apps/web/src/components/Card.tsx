@@ -33,6 +33,7 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [confirmAlways, setConfirmAlways] = useState(false);
 
   async function answer(decision: "approve" | "reject" | "answer", value?: string, always?: boolean) {
     setBusy(true);
@@ -88,17 +89,25 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
           <div className="flex flex-wrap items-center gap-1.5">
             <Pill primary disabled={busy} onClick={() => answer("approve")}>Approve</Pill>
             <Pill disabled={busy} onClick={() => answer("reject")}>Decline</Pill>
-            <button disabled={busy} onClick={() => answer("approve", undefined, true)}
-              className="ml-auto text-[12px] text-ink-3 hover:text-ink transition-colors duration-[120ms] cursor-pointer disabled:opacity-40">
-              Always allow
-            </button>
+            {!confirmAlways ? (
+              <button disabled={busy} onClick={() => setConfirmAlways(true)}
+                className="ml-auto text-[12px] text-ink-3 hover:text-ink transition-colors duration-[120ms] cursor-pointer disabled:opacity-40">
+                Always allow
+              </button>
+            ) : (
+              <div className="ml-auto flex flex-wrap items-center gap-1.5 text-[12px] text-ink-2">
+                <span>Allow {String(d.tool)} for every future request, without asking?</span>
+                <Pill primary disabled={busy} onClick={() => answer("approve", undefined, true)}>Always allow</Pill>
+                <Pill disabled={busy} onClick={() => setConfirmAlways(false)}>Cancel</Pill>
+              </div>
+            )}
           </div>
         )}
 
         {kind === "question" && (
           <div className="space-y-1.5">
-            {options.map((o) => (
-              <button key={o} disabled={busy} onClick={() => answer("answer", o)}
+            {options.map((o, i) => (
+              <button key={`${i}:${o}`} disabled={busy} onClick={() => answer("answer", o)}
                 className="w-full text-left rounded-[10px] bg-bg hairline px-2.5 py-2 text-[14px] hover:bg-hover transition-colors duration-[120ms] cursor-pointer disabled:opacity-40">
                 {o}
               </button>
@@ -113,7 +122,7 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
 
         {kind === "takeover" && (
           <div className="flex flex-wrap gap-1.5">
-            <Pill primary onClick={onTakeover}>Take control</Pill>
+            <Pill primary disabled={busy} onClick={onTakeover}>Take control</Pill>
             <Pill disabled={busy} onClick={() => answer("answer")}>I'm done</Pill>
           </div>
         )}

@@ -121,7 +121,7 @@ func (s *Server) slackPost(t slackTarget, text string) {
 // slackEvents is Slack's inbound webhook. It carries no session, so the
 // signature is the only thing that makes it trustworthy.
 func (s *Server) slackEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.hookLimit.Allow(clientIP(r)) {
+	if !s.hookLimit.Allow(s.clientIP(r)) {
 		writeErr(w, 429, "slow down")
 		return
 	}

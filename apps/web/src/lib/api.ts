@@ -64,8 +64,8 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 const bot = (id: string) => `/api/bots/${id}`;
 
 export const api = {
-  setup: () => req<{ fresh: boolean; signup: boolean }>("GET", "/api/setup"),
-  signup: (b: { email: string; password: string; name?: string }) => req<User>("POST", "/api/auth/signup", b),
+  setup: () => req<{ fresh: boolean; signup: boolean; setupToken?: boolean }>("GET", "/api/setup"),
+  signup: (b: { email: string; password: string; name?: string; setupToken?: string }) => req<User>("POST", "/api/auth/signup", b),
   login: (b: { email: string; password: string }) => req<User>("POST", "/api/auth/login", b),
   logout: () => req("POST", "/api/auth/logout", {}),
   me: () => req<User>("GET", "/api/me"),
@@ -132,7 +132,7 @@ export const api = {
   updateVault: (id: string, b: { name?: string; value?: string; origins?: string[] }) => req<VaultSecret>("PATCH", `/api/vault/${id}`, b),
   deleteVault: (id: string) => req("DELETE", `/api/vault/${id}`, {}),
   skills: () => req<{ skills: Skill[] }>("GET", "/api/skills"),
-  saveSkill: (b: { name: string; description: string; body: string }) => req<Skill>("POST", "/api/skills", b),
+  saveSkill: (b: { id?: string; name: string; description: string; body: string }) => req<Skill>("POST", "/api/skills", b),
   deleteSkill: (id: string) => req("DELETE", `/api/skills/${id}`),
 
   groups: () => req<{ groups: Group[] }>("GET", "/api/groups"),

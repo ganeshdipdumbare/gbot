@@ -173,6 +173,15 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	sealed := []byte(nil)
 	key := s.openKey(cur)
+	// A stored key belongs to the address it was saved for. Moving the
+	// provider to another kind or address needs the key entered again, or
+	// the old key would be sent to the new endpoint.
+	moved := kind != cur.Kind || base != cur.BaseURL
+	newKey := b.APIKey != nil && strings.TrimSpace(*b.APIKey) != ""
+	if moved && cur.HasKey && !newKey && !b.RemoveKey {
+		writeErr(w, 400, "enter the API key again when you change the provider's address or kind")
+		return
+	}
 	if b.RemoveKey {
 		key = ""
 	} else if b.APIKey != nil && strings.TrimSpace(*b.APIKey) != "" {
@@ -208,6 +217,10 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.probeLimit.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "too many model lookups, try again in a minute")
+		return
+	}
 	u := userFrom(r)
 	cur, err := s.Store.GetProvider(r.Context(), u.ID, r.PathValue("id"))
 	if err != nil {
@@ -250,6 +263,10 @@ func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 // discoverProvider lists models for an endpoint without saving it, so the
 // person can check a key before connecting.
 func (s *Server) discoverProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.probeLimit.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "too many model lookups, try again in a minute")
+		return
+	}
 	var b providerBody
 	if !readJSON(w, r, &b) {
 		return
@@ -268,22 +285,25 @@ func (s *Server) discoverProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	// Editing an existing provider: fill in what the form left blank from
 	// what is stored, including the sealed key, so Discover works.
+	var cur *store.Provider
 	if b.ID != nil && *b.ID != "" {
-		if cur, err := s.Store.GetProvider(r.Context(), userFrom(r).ID, *b.ID); err == nil {
+		if c, err := s.Store.GetProvider(r.Context(), userFrom(r).ID, *b.ID); err == nil {
+			cur = c
 			if b.Kind == nil {
 				kind = cur.Kind
 			}
 			if b.BaseURL == nil {
 				base = cur.BaseURL
 			}
-			if key == "" {
-				key = s.openKey(cur)
-			}
 		}
 	}
 	if msg := validProviderFields("probe", kind, &base); msg != "" {
 		writeErr(w, 400, msg)
 		return
+	}
+	// The stored key is only ever sent to the address it was saved for.
+	if cur != nil && key == "" && kind == cur.Kind && base == cur.BaseURL {
+		key = s.openKey(cur)
 	}
 	if codexDenied(w, r, kind) {
 		return

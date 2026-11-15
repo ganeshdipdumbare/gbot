@@ -57,7 +57,10 @@ function useScreen(botId: string, on: boolean, fps = 1.2) {
           try {
             const res = await fetch(api.screenUrl(botId), { credentials: "same-origin" });
             if (res.ok) {
-              const url = URL.createObjectURL(await res.blob());
+              const blob = await res.blob();
+              // Unmounted or turned off while the frame was loading: create no URL.
+              if (stop) break;
+              const url = URL.createObjectURL(blob);
               setSrc(url);
               if (last) URL.revokeObjectURL(last);
               last = url;
@@ -177,29 +180,45 @@ function ComputerView({ bot, open, control, onClose }: {
     } catch (e) { setError(e instanceof Error ? e.message : "Couldn't take control"); }
   }
 
-  useEffect(() => {
-    if (!open) { setHolding(false); return; }
-    // A takeover card opens straight into control; watching stays passive.
-    if (control) take();
-    else setHolding(false);
-  }, [open, control]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function release() {
-    flush();
-    flushScroll();
-    // Let the last input land before handing control back, or the server
-    // may reject it as "take control first".
-    await chain.current.catch(() => {});
-    if (holding) {
-      try { update(await api.computerAction(bot.id, "control", { user: false })); } catch { /* closing anyway */ }
-    }
-    setHolding(false);
-    onClose();
-  }
+  // Mirrors `holding` for cleanup code, which runs after the state is gone.
+  const holdingRef = useRef(false);
+  holdingRef.current = holding;
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   // Inputs go one at a time, in order. Firing every scroll tick at once
   // queues dozens of execs inside the computer and makes it feel stuck.
   const chain = useRef<Promise<unknown>>(Promise.resolve());
+
+  // Hands control back to the bot. Pending input goes out first, in order,
+  // so nothing lands after the release. Safe to call after unmount.
+  async function releaseControl() {
+    flush();
+    flushScroll();
+    const wasHolding = holdingRef.current;
+    holdingRef.current = false;
+    // Let the last input land before handing control back, or the server
+    // may reject it as "take control first".
+    await chain.current.catch(() => {});
+    if (wasHolding) {
+      try { update(await api.computerAction(bot.id, "control", { user: false })); } catch { /* closing anyway */ }
+    }
+    if (mounted.current) setHolding(false);
+  }
+
+  async function release() {
+    await releaseControl();
+    onClose();
+  }
+
+  // A takeover card opens straight into control; watching stays passive.
+  // Any way of leaving the view, including the panel's own Close button,
+  // gives control back.
+  useEffect(() => {
+    if (open && control) { take(); return; }
+    if (holdingRef.current) void releaseControl();
+  }, [open, control]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const send = (body: Record<string, unknown>) => {
     const p = chain.current.then(() => api.computerAction(bot.id, "input", body));
     chain.current = p.catch((e) => setError(e instanceof Error ? e.message : "Input failed"));
@@ -247,9 +266,11 @@ function ComputerView({ bot, open, control, onClose }: {
     s.y = y;
     if (s.timer === null) s.timer = window.setTimeout(flushScroll, 55);
   };
+  // Leaving the screen (unmount or bot switch) must not leave the bot locked
+  // out of its own computer, and must not send input after the release.
   useEffect(() => () => {
     if (scroll.current.timer !== null) window.clearTimeout(scroll.current.timer);
-    flush();
+    void releaseControl();
   }, [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const posAt = (el: HTMLElement, clientX: number, clientY: number) => {

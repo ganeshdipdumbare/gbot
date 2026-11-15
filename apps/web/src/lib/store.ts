@@ -302,7 +302,12 @@ export function connectLive() {
   };
   es.onerror = () => { hadError = true; if (gotHello) set(() => ({ connected: false })); };
   es.onmessage = (ev) => {
-    const e = JSON.parse(ev.data) as LiveEvent | { type: "hello" };
+    let e: LiveEvent | { type: "hello" };
+    try {
+      e = JSON.parse(ev.data) as LiveEvent | { type: "hello" };
+    } catch {
+      return; // a malformed frame is dropped; the next catch-up resyncs
+    }
     if (e.type === "hello") {
       gotHello = true;
       set(() => ({ connected: true }));
@@ -316,6 +321,11 @@ export function connectLive() {
     while (!stopped) {
       try {
         const res = await fetch(`/api/events/poll?after=${after}`, { credentials: "same-origin" });
+        if (res.status === 401) {
+          // Same as every other request: an expired session signs the person out.
+          window.dispatchEvent(new Event("gbot:signed-out"));
+          return;
+        }
         if (!res.ok) throw new Error(String(res.status));
         const { events, next, reset } = (await res.json()) as { events: LiveEvent[]; next: number; reset: boolean };
         set(() => ({ connected: true }));

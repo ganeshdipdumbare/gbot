@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"gbot/internal/computer"
 	"gbot/internal/cron"
 	"gbot/internal/routines"
@@ -465,7 +467,7 @@ func (s *Server) runRoutine(w http.ResponseWriter, r *http.Request) {
 // webhook starts a webhook routine. Its body is outside text, so the run
 // is marked untrusted and changes need approval.
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
-	if !s.hookLimit.Allow(clientIP(r)) {
+	if !s.hookLimit.Allow(s.clientIP(r)) {
 		writeErr(w, 429, "slow down")
 		return
 	}
@@ -476,7 +478,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 	}
 	rt, err := s.Store.RoutineByID(r.Context(), r.PathValue("rid"))
 	bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if err != nil || !rt.Active || !routines.Verify(rt, body, r.Header.Get("X-GBot-Signature"), bearer) {
+	if err != nil || !rt.Active || !routines.Verify(rt, body, r.Header.Get("X-GBot-Signature"), r.Header.Get("X-GBot-Timestamp"), bearer, time.Now()) {
 		writeErr(w, 401, "unauthorized")
 		return
 	}
@@ -643,8 +645,24 @@ func (s *Server) saveSkill(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "a skill needs a short name, a one-line description and instructions")
 		return
 	}
-	k, err := s.Store.UpsertSkill(r.Context(), userFrom(r).ID, &body)
-	if err != nil {
+	var k *store.Skill
+	var err error
+	if body.ID != "" {
+		// Editing an existing skill: update its row, so a rename does not
+		// leave the old name behind as a second skill.
+		k, err = s.Store.UpdateSkill(r.Context(), userFrom(r).ID, body.ID, &body)
+	} else {
+		k, err = s.Store.UpsertSkill(r.Context(), userFrom(r).ID, &body)
+	}
+	var pg *pgconn.PgError
+	switch {
+	case errors.As(err, &pg) && pg.Code == "23505":
+		writeErr(w, 409, "you already have a skill with that name")
+		return
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(w, 404, "skill not found")
+		return
+	case err != nil:
 		writeErr(w, 500, "could not save")
 		return
 	}

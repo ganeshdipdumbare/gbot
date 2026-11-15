@@ -68,7 +68,8 @@ export function resolveLook(look: Look | undefined, fallbackSeed: string): Trait
   const hue = look?.hue && (otherHues[look.hue] ?? look.hue);
   const eyes = look?.eyes && (otherEyes[look.eyes] ?? look.eyes);
   if (shape && shapes.includes(shape)) t.shape = shape;
-  if (hue && hue in hues) t.hue = hue;
+  // Own keys only: `in` also matches Object.prototype names like "constructor".
+  if (hue && Object.prototype.hasOwnProperty.call(hues, hue)) t.hue = hue as Traits["hue"];
   if (eyes && eyeStyles.includes(eyes)) t.eyes = eyes;
   return t;
 }

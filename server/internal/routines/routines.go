@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -155,18 +156,38 @@ func (s *Service) tick(ctx context.Context) {
 	}
 }
 
+// webhookWindow is how far a signed timestamp may drift from our clock.
+const webhookWindow = 5 * time.Minute
+
 // Verify checks a webhook call: the caller proves it knows the secret by
 // signing the body (X-GBot-Signature: sha256=<hex hmac>) or sending it as
 // a bearer token over HTTPS.
-func Verify(r *store.Routine, body []byte, signature, bearer string) bool {
+//
+// A caller that sends X-GBot-Timestamp signs "<timestamp>.<body>" and is
+// refused outside a five-minute window, so a captured request cannot be
+// replayed later. Callers that sign only the body are still accepted for
+// compatibility; they stay replayable until they send a timestamp.
+func Verify(r *store.Routine, body []byte, signature, timestamp, bearer string, now time.Time) bool {
 	if r.Kind != "webhook" || len(r.SecretHash()) == 0 {
 		return false
 	}
 	// The secret itself isn't stored, so a signature is checked against
 	// a key derived from it: callers sign with sha256(secret).
 	if strings.HasPrefix(signature, "sha256=") {
+		material := body
+		if timestamp != "" {
+			ts, err := strconv.ParseInt(timestamp, 10, 64)
+			if err != nil {
+				return false
+			}
+			drift := now.Sub(time.Unix(ts, 0))
+			if drift < -webhookWindow || drift > webhookWindow {
+				return false
+			}
+			material = append([]byte(timestamp+"."), body...)
+		}
 		mac := hmac.New(sha256.New, r.SecretHash())
-		mac.Write(body)
+		mac.Write(material)
 		want := mac.Sum(nil)
 		got, err := hex.DecodeString(strings.TrimPrefix(signature, "sha256="))
 		return err == nil && hmac.Equal(got, want)

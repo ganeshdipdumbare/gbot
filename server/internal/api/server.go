@@ -43,10 +43,17 @@ type Server struct {
 	// AllowSignup lets new accounts register; the first account can
 	// always register so a fresh install is usable.
 	AllowSignup bool
+	// SetupToken, when set, must be presented to create the first account,
+	// so a fresh install reached by a stranger cannot be claimed by them.
+	SetupToken string
+	// TrustProxy says a reverse proxy in front of this server sets
+	// X-Forwarded-For. Only then are client addresses read from it.
+	TrustProxy bool
 
-	authLimit *auth.Limiter
-	msgLimit  *auth.Limiter
-	hookLimit *auth.Limiter
+	authLimit  *auth.Limiter
+	msgLimit   *auth.Limiter
+	hookLimit  *auth.Limiter
+	probeLimit *auth.Limiter
 
 	// mcpWake coalesces integration changes onto one background worker,
 	// so adding or removing a server never waits on a slow one.
@@ -73,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 	s.authLimit = auth.NewLimiter(10, time.Minute)
 	s.msgLimit = auth.NewLimiter(60, time.Minute)
 	s.hookLimit = auth.NewLimiter(120, time.Minute)
+	// Provider discovery makes outbound requests on the server's behalf.
+	s.probeLimit = auth.NewLimiter(20, time.Minute)
 	mux := http.NewServeMux()
 	// Allow the desktop shell (Tauri custom-protocol origin) to discover us.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +201,23 @@ func (s *Server) authed(fn http.HandlerFunc) http.Handler {
 	})
 }
 
-func clientIP(r *http.Request) string {
+// clientIP names the caller for rate limits. Behind a proxy every request
+// shares the proxy's address, so the limits would lock everyone out at
+// once; with TrustProxy the proxy's forwarded address is used instead.
+func (s *Server) clientIP(r *http.Request) string {
+	if s.TrustProxy {
+		// A trusted proxy appends the address it received from, so the
+		// last entry is the one it can vouch for.
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+				return ip
+			}
+		}
+		if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
+			return ip
+		}
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
