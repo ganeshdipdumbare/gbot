@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gbot-ganeshdipdumbares-projects.vercel.app">Website</a> ·
+  <a href="https://gbot-ai.vercel.app/">Website</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#features">Features</a> ·
   <a href="#configuration">Configuration</a> ·
@@ -321,7 +321,7 @@ Settings → Models, where each downloaded model can also be removed.
 
 ### Landing page
 
-Live at **<https://gbot-ganeshdipdumbares-projects.vercel.app>**.
+Live at **<https://gbot-ai.vercel.app/>**.
 
 `site/` is a self-contained static page (no build step, no external assets).
 The repository root has a `vercel.json` that publishes `site/` with long-lived
