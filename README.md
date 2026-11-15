@@ -31,9 +31,20 @@ needs you, stuck, done), and keep working while you keep chatting.
 
 ## Screenshots
 
-| New bot | Chat and approvals | Group chat | Integrations |
-|---|---|---|---|
-| ![Give a bot a name, job, shape and color](docs/media/hatch.png) | ![A bot answers with results and asks before booking](docs/media/chat.png) | ![Three bots in one chat, handing work to each other](docs/media/group.png) | ![Apps that connect with one sign-in](docs/media/integrations.png) |
+<table>
+  <tr>
+    <th>New bot</th>
+    <th>Chat and approvals</th>
+    <th>Group chat</th>
+    <th>Integrations</th>
+  </tr>
+  <tr>
+    <td><img src="docs/media/hatch.png" width="240" height="516" alt="Give a bot a name, job, shape and color" /></td>
+    <td><img src="docs/media/chat.png" width="240" height="516" alt="A bot answers with results and asks before booking" /></td>
+    <td><img src="docs/media/group.png" width="240" height="516" alt="Three bots in one chat, handing work to each other" /></td>
+    <td><img src="docs/media/integrations.png" width="240" height="516" alt="Apps that connect with one sign-in" /></td>
+  </tr>
+</table>
 
 ---
 
