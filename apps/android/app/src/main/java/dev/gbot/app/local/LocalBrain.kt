@@ -599,17 +599,39 @@ class LocalBrain(
             maxOutputToken = 700,
         )
 
+        val schemas = tools.schemas + mcpTools
         e.createConversation(config).use { conv ->
             var next: Message = Message.user(prompt.take(4000))
             var answer = ""
+            var rescues = 0
             repeat(MAX_STEPS) { step ->
                 // The flow emits deltas, so the step's text is their sum.
                 onStage("Thinking")
                 val text = StringBuilder()
                 var calls: List<ToolCall> = emptyList()
-                conv.sendMessageAsync(next).collect { m ->
-                    text.append(textOf(m))
-                    if (m.toolCalls.isNotEmpty()) calls = m.toolCalls
+                val failure = runCatching {
+                    conv.sendMessageAsync(next).collect { m ->
+                        text.append(textOf(m))
+                        if (m.toolCalls.isNotEmpty()) calls = m.toolCalls
+                    }
+                }.exceptionOrNull()
+                if (failure != null) {
+                    // A small model writing a tool call slightly wrong is a
+                    // typo, not the end of the task: read the call out of the
+                    // text it wrote, or ask it to write the call again.
+                    if (!isToolCallSyntaxFailure(failure) || rescues++ >= MAX_RESCUES) throw failure
+                    val rescued = salvageToolCall(throwableText(failure), schemas)
+                    log("step ${step + 1}: tool call unreadable, rescued ${rescued?.name ?: "nothing"}")
+                    next = if (rescued == null) {
+                        Message.user(WRITE_THE_CALL_AGAIN)
+                    } else {
+                        // The engine's own turn did not survive the parse, so
+                        // the result goes back as plain text rather than as a
+                        // reply to a tool call it never recorded.
+                        val out = executeTool(tools, bot, group, rescued.name, rescued.arguments, onStage)
+                        Message.user("Result of ${rescued.name}:\n$out")
+                    }
+                    return@repeat
                 }
                 log("step ${step + 1}: ${text.length} chars, ${calls.size} calls")
                 answer = text.toString()
@@ -982,6 +1004,9 @@ class LocalBrain(
             (e is java.io.InterruptedIOException && raw.contains("timeout", ignoreCase = true)) ||
             raw.equals("timeout", ignoreCase = true) || raw.contains("timed out", ignoreCase = true)
         return when {
+            isToolCallSyntaxFailure(e) ->
+                "the model on this phone kept writing its tool calls in a way I couldn't read. Ask again in " +
+                    "smaller steps, or pick a bigger model in Settings → Models."
             timedOut -> "the model took too long to answer. If it is a big model, give it a smaller task or pick a faster one in Settings → Models."
             e is java.net.UnknownHostException -> "I couldn't reach that endpoint. Check the connection and the address in Settings → Models."
             raw.isNotEmpty() -> raw
@@ -1062,6 +1087,14 @@ class LocalBrain(
 
         /** Model/tool rounds for a model running on the phone itself. */
         const val MAX_STEPS = 12
+
+        /** How many unreadable tool calls one run forgives before it stops. */
+        const val MAX_RESCUES = 3
+
+        /** Said to a model whose tool call could not be read at all. */
+        const val WRITE_THE_CALL_AGAIN =
+            "Your last tool call could not be read. Write it again: one tool, one value per field, " +
+                "and several items in a single field as one line each. If no tool is needed, just answer in words."
 
         /**
          * How long one run may take, matching the server's own bound. Real
