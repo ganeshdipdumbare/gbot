@@ -144,11 +144,16 @@ async function startStudio() {
 
 if (heroEl) startHero();
 if (studioEl) {
-  // The second scene waits until it is nearly on screen.
-  const io = new IntersectionObserver((entries) => {
-    if (!entries.some((e) => e.isIntersecting)) return;
-    io.disconnect();
+  // The second scene waits until it is nearly on screen. Browsers without
+  // IntersectionObserver start it straight away, as the reveal code does.
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      startStudio();
+    }, { rootMargin: "600px 0px" });
+    io.observe(studioEl);
+  } else {
     startStudio();
-  }, { rootMargin: "600px 0px" });
-  io.observe(studioEl);
+  }
 }

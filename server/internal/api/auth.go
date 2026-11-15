@@ -41,6 +41,15 @@ func (s *Server) firstAccountAllowed(r *http.Request, token string) bool {
 	if s.TrustProxy {
 		return false
 	}
+	// A proxy usually passes the public host name through, so the Host must
+	// also be a local name.
+	host := r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = h
+	}
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return false
+	}
 	for _, h := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded"} {
 		if r.Header.Get(h) != "" {
 			return false
@@ -70,7 +79,11 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &c) {
 		return
 	}
-	n, _ := s.Store.CountUsers(r.Context())
+	n, err := s.Store.CountUsers(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
 	if n > 0 && !s.AllowSignup {
 		writeErr(w, http.StatusForbidden, "sign-ups are closed on this server")
 		return
@@ -102,11 +115,17 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		Title: "your first teammate",
 		Look:  store.Look{"seed": auth.NewToken()[:10]},
 	}
-	u, err := s.Store.CreateUser(r.Context(), c.Email, c.Name, hash, s.Models.Pick(r.Context()), first)
+	u, err := s.Store.CreateUser(r.Context(), c.Email, c.Name, hash, s.Models.Pick(r.Context()), first, n == 0)
+	if errors.Is(err, store.ErrNotFirst) {
+		writeErr(w, http.StatusForbidden, "this server already has accounts")
+		return
+	}
 	if err != nil {
 		var pg *pgconn.PgError
 		if errors.As(err, &pg) && pg.Code == "23505" {
-			writeErr(w, 409, "that email already has an account")
+			// The same answer whether or not the email is registered, so
+			// sign-up can't be used to find out who has an account.
+			writeErr(w, http.StatusBadRequest, "couldn't create an account with those details. Try signing in instead.")
 			return
 		}
 		s.Log.Error("signup", "err", err)

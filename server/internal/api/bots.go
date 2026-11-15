@@ -221,13 +221,17 @@ func (s *Server) archiveBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	audience := s.Runtime.Audience(b.ID)
+	// Everyone who could have a computer with this bot. Adopted computers
+	// do not remember their owner, so their keys are derived from these.
+	people, _ := s.Store.SpaceMemberIDs(r.Context(), b.SpaceID)
+	people = append(people, b.OwnerID)
 	if err := s.Store.ArchiveBot(r.Context(), b.SpaceID, b.ID); err != nil {
 		writeErr(w, 404, "bot not found")
 		return
 	}
 	s.Runtime.StopBot(b.ID)
 	if s.Computer != nil {
-		s.Computer.StopBot(r.Context(), b.ID)
+		s.Computer.StopBot(r.Context(), b.ID, people)
 	}
 	s.Hub.Publish(b.SpaceID, audience, runs.Event{Type: "bot_removed", BotID: b.ID})
 	writeJSON(w, 200, map[string]bool{"ok": true})

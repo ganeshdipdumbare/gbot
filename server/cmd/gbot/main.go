@@ -22,6 +22,7 @@ import (
 	"gbot/internal/computer"
 	"gbot/internal/crypto"
 	"gbot/internal/models"
+	"gbot/internal/netguard"
 	"gbot/internal/routines"
 	"gbot/internal/runs"
 	"gbot/internal/store"
@@ -196,6 +197,7 @@ func run(cmd string, log *slog.Logger) error {
 	if v := env("GBOT_COOKIE_SECURE", ""); v != "" {
 		secureCookies = v == "true"
 	}
+	netguard.BlockPrivate = env("GBOT_BLOCK_PRIVATE_NETWORK", "") == "true"
 	srv := &api.Server{
 		Store: st, Runtime: rt, Hub: hub, Models: cat, Log: log,
 		Computer: comp, Routines: rs, Sealer: sealer, Voice: api.VoiceFromEnv(),

@@ -1,6 +1,9 @@
 package netguard
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestEndpoint(t *testing.T) {
 	ok := []string{
@@ -25,5 +28,13 @@ func TestEndpoint(t *testing.T) {
 		if err := Endpoint(u); err == nil {
 			t.Errorf("Endpoint(%q) accepted; want rejection", u)
 		}
+	}
+}
+
+func TestDialBlocksPrivateWhenHosted(t *testing.T) {
+	BlockPrivate = true
+	defer func() { BlockPrivate = false }()
+	if _, err := Dial(context.Background(), "tcp", "127.0.0.1:9"); err == nil {
+		t.Fatal("loopback dial allowed while BlockPrivate is set")
 	}
 }

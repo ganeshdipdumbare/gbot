@@ -14,6 +14,12 @@ import (
 	"time"
 )
 
+// BlockPrivate, set for hosted installs, also refuses loopback and private
+// network addresses, so a user-supplied address cannot reach the server's
+// own network. Self-hosted installs leave it off, since local model and
+// tool servers are the point of running gbot at home.
+var BlockPrivate bool
+
 // Dial refuses link-local addresses, which include cloud metadata services
 // (169.254.169.254, fd00:ec2::254). Loopback and LAN addresses stay
 // reachable, because local and home-network model and tool servers are a
@@ -30,6 +36,9 @@ func Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	for _, ip := range ips {
 		if ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() || ip.IP.IsUnspecified() {
 			return nil, fmt.Errorf("%s is not a server address", host)
+		}
+		if BlockPrivate && (ip.IP.IsLoopback() || ip.IP.IsPrivate()) {
+			return nil, fmt.Errorf("%s is on this server's network, which this install does not reach", host)
 		}
 	}
 	var d net.Dialer

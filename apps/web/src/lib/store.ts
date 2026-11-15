@@ -75,8 +75,11 @@ export function addMessage(m: Message) {
     const list = s.messages[k];
     if (!list) return {};
     if (list.some((x) => x.id === m.id)) return {};
-    // Swap an optimistic copy for the real one.
-    const i = m.role === "user" ? list.findIndex((x) => x.pending && x.content === m.content) : -1;
+    // Swap an optimistic copy for the real one, but only when it is
+    // unambiguous: two identical in-flight sends could otherwise be paired
+    // with the wrong one. The send's own response reconciles the rest.
+    const candidates = m.role === "user" ? list.filter((x) => x.pending && x.content === m.content) : [];
+    const i = candidates.length === 1 ? list.indexOf(candidates[0]) : -1;
     const next = i >= 0 ? list.map((x, j) => (j === i ? m : x)) : [...list, m];
     return { messages: { ...s.messages, [k]: next } };
   });
@@ -192,7 +195,11 @@ export async function sendMessage(k: ChatKey, text: string) {
     set((s) => {
       const list = s.messages[k] ?? [];
       const has = list.some((m) => m.id === real.id);
-      return { messages: { ...s.messages, [k]: has ? list.filter((m) => m.id !== tmp.id) : list.map((m) => (m.id === tmp.id ? real : m)) } };
+      const placeholder = list.some((m) => m.id === tmp.id);
+      if (has) return { messages: { ...s.messages, [k]: list.filter((m) => m.id !== tmp.id) } };
+      // The placeholder may already have been swapped for another copy.
+      if (!placeholder) return { messages: { ...s.messages, [k]: [...list, real] } };
+      return { messages: { ...s.messages, [k]: list.map((m) => (m.id === tmp.id ? real : m)) } };
     });
     loadQueue(k).catch(() => {});
   } catch (e) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,9 +24,29 @@ func (u *User) PasswordHash() string { return u.passwordHash }
 
 // CreateUser makes the user, their first space, and their first bot in
 // one transaction, so a new account always lands on a bot to talk to.
-func (s *Store) CreateUser(ctx context.Context, email, name, hash, model string, firstBot NewBot) (*User, error) {
+// ErrNotFirst means the server already has accounts, so the first-account
+// path is closed.
+var ErrNotFirst = errors.New("this server already has accounts")
+
+// CreateUser makes an account with its first bot. When firstOnly is set, it
+// only succeeds if no accounts exist yet. The count and the insert run in
+// one transaction under a lock, so two simultaneous first sign-ups cannot
+// both succeed.
+func (s *Store) CreateUser(ctx context.Context, email, name, hash, model string, firstBot NewBot, firstOnly bool) (*User, error) {
 	u := &User{Email: email, Name: name, DefaultModel: model, ApprovalMode: "auto"}
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('gbot-create-user'))`); err != nil {
+			return err
+		}
+		if firstOnly {
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&n); err != nil {
+				return err
+			}
+			if n > 0 {
+				return ErrNotFirst
+			}
+		}
 		if err := tx.QueryRow(ctx, `INSERT INTO users(email,name,password_hash,default_model) VALUES($1,$2,$3,$4) RETURNING id`,
 			email, name, hash, model).Scan(&u.ID); err != nil {
 			return err

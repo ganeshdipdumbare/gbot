@@ -154,8 +154,11 @@ func (s *Server) secure(next http.Handler) http.Handler {
 		if s.SecureCookies {
 			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") && r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if r.Header.Get("X-GBot") != "1" || !sameOrigin(r) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			// Signed machine callers (Slack events, webhook hooks) check their
+			// own signatures instead of the browser header.
+			machine := r.URL.Path == "/slack/events" || strings.HasPrefix(r.URL.Path, "/hooks/")
+			if !machine && (r.Header.Get("X-GBot") != "1" || !sameOrigin(r)) {
 				writeErr(w, http.StatusForbidden, "cross-site request blocked")
 				return
 			}
@@ -207,15 +210,14 @@ func (s *Server) authed(fn http.HandlerFunc) http.Handler {
 func (s *Server) clientIP(r *http.Request) string {
 	if s.TrustProxy {
 		// A trusted proxy appends the address it received from, so the
-		// last entry is the one it can vouch for.
+		// last entry is the one it can vouch for. Only X-Forwarded-For is
+		// read: X-Real-IP is set by whoever sends the request unless the
+		// proxy overwrites it.
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
 				return ip
 			}
-		}
-		if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
-			return ip
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

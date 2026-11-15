@@ -45,14 +45,8 @@ func Load(keyFile string) (*Sealer, error) {
 				return nil, errors.New("secret key file is corrupt: " + keyFile)
 			}
 		case os.IsNotExist(err):
-			key = make([]byte, 32)
-			if _, err := rand.Read(key); err != nil {
-				return nil, err
-			}
-			if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
-				return nil, err
-			}
-			if err := os.WriteFile(keyFile, []byte(base64.StdEncoding.EncodeToString(key)), 0o600); err != nil {
+			key, err = createKeyFile(keyFile)
+			if err != nil {
 				return nil, err
 			}
 		default:
@@ -89,4 +83,53 @@ func (s *Sealer) Open(sealed, aad []byte) ([]byte, error) {
 		return nil, errors.New("sealed value too short")
 	}
 	return s.aead.Open(nil, sealed[:n], sealed[n:], aad)
+}
+
+// createKeyFile makes a new key file without ever replacing one. The key is
+// written to a private temp file and hard-linked into place, which fails if
+// another process created the file first; that process's key is then used.
+func createKeyFile(keyFile string) ([]byte, error) {
+	dir := filepath.Dir(keyFile)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp(dir, ".secret-key-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write([]byte(base64.StdEncoding.EncodeToString(key))); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		return nil, err
+	}
+	if err := os.Link(tmp.Name(), keyFile); err != nil {
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		// Lost the race: read the key that won.
+		raw, rerr := os.ReadFile(keyFile)
+		if rerr != nil {
+			return nil, rerr
+		}
+		k, derr := base64.StdEncoding.DecodeString(string(raw))
+		if derr != nil || len(k) != 32 {
+			return nil, errors.New("secret key file is corrupt: " + keyFile)
+		}
+		return k, nil
+	}
+	return key, nil
 }

@@ -68,6 +68,10 @@ func codexDenied(w http.ResponseWriter, r *http.Request, kind string) bool {
 }
 
 func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.probeLimit.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "too many model lookups, try again in a minute")
+		return
+	}
 	var b providerBody
 	if !readJSON(w, r, &b) {
 		return
@@ -114,7 +118,8 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	discovered, derr := models.Discover(r.Context(), kind, base, key)
 	if derr != nil && len(manual) == 0 {
-		writeErr(w, 400, "couldn't list models from that endpoint: "+derr.Error()+". Add model names manually.")
+		s.Log.Warn("list models", "err", derr)
+		writeErr(w, 400, "couldn't list models from that endpoint. Check the address and key, or add model names manually.")
 		return
 	}
 	p, err := s.Store.CreateProvider(r.Context(), &store.Provider{
@@ -131,6 +136,10 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.probeLimit.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "too many model lookups, try again in a minute")
+		return
+	}
 	u := userFrom(r)
 	cur, err := s.Store.GetProvider(r.Context(), u.ID, r.PathValue("id"))
 	if err != nil {
@@ -230,7 +239,8 @@ func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := models.Discover(r.Context(), cur.Kind, cur.BaseURL, s.openKey(cur))
 	if err != nil {
-		writeErr(w, 400, "couldn't list models: "+err.Error())
+		s.Log.Warn("list models", "err", err)
+		writeErr(w, 400, "couldn't list models from that endpoint. Check the address and key.")
 		return
 	}
 	// Drop non-chat leftovers from earlier discovers so the picker stays usable.
@@ -311,7 +321,8 @@ func (s *Server) discoverProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := models.Discover(r.Context(), kind, base, key)
 	if err != nil {
-		writeErr(w, 400, "couldn't list models: "+err.Error())
+		s.Log.Warn("list models", "err", err)
+		writeErr(w, 400, "couldn't list models from that endpoint. Check the address and key.")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"models": list, "caps": models.ModelCaps(list)})

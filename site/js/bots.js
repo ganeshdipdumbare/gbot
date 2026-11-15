@@ -446,6 +446,8 @@ class Stage {
       this.pointer.at = performance.now();
       this.pointer.type = e.pointerType;
       this.dirty = true;
+      // Wake the loop: with motion reduced, a dirty frame is only drawn when it runs.
+      this.wake();
     };
     window.addEventListener("pointermove", this.onMove, { passive: true });
     window.addEventListener("pointerdown", this.onMove, { passive: true });
@@ -465,6 +467,25 @@ class Stage {
       down = null;
     });
     this.canvas.addEventListener("pointerleave", () => this.setHover(null));
+  }
+
+  // Stops everything the stage started: the frame loop, observers, document
+  // and window listeners, and the WebGL context. Safe to call once.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.ro.disconnect();
+    this.io.disconnect();
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    window.removeEventListener("pointermove", this.onMove);
+    window.removeEventListener("pointerdown", this.onMove);
+    for (const bot of this.bots) bot.dispose();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+    this.canvas.remove();
+    this.el.classList.remove("is-live");
   }
 
   add(bot) {
@@ -508,6 +529,7 @@ class Stage {
     if (bot) bot.hovered = true;
     this.canvas.style.cursor = bot ? "pointer" : "";
     this.dirty = true;
+    this.wake();
   }
 
   // Where a point in the scene lands on the stage, in CSS pixels.
@@ -798,5 +820,7 @@ class Studio extends Stage {
   }
 }
 
-export function mountHero(el, opts) { return new Hero(el, opts); }
-export function mountStudio(el, opts) { return new Studio(el, opts); }
+// Mounting twice on one element would stack two canvases and loops; the
+// second call gets the stage that is already there.
+export function mountHero(el, opts) { return el.__gbotStage ??= new Hero(el, opts); }
+export function mountStudio(el, opts) { return el.__gbotStage ??= new Studio(el, opts); }

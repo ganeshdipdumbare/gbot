@@ -151,9 +151,13 @@ func (m *Manager) Ensure(ctx context.Context, o Owner, network bool) error {
 			m.changed(o)
 			return nil
 		}
+		// Network setting changed: recreate. Mark it as busy while it stops,
+		// so no one else uses or replaces it in the meantime.
+		b.starting = true
 		m.mu.Unlock()
-		m.stopKey(context.Background(), k) // network setting changed: recreate
+		m.stopKey(context.Background(), k)
 		m.mu.Lock()
+		delete(m.boxes, k)
 	}
 	if b := m.boxes[k]; b != nil && b.starting {
 		m.mu.Unlock()
@@ -161,10 +165,15 @@ func (m *Manager) Ensure(ctx context.Context, o Owner, network bool) error {
 			time.Sleep(100 * time.Millisecond)
 			m.mu.Lock()
 			ok := m.boxes[k] != nil && !m.boxes[k].starting
+			matches := ok && m.boxes[k].network == network
 			gone := m.boxes[k] == nil
 			m.mu.Unlock()
-			if ok {
+			if matches {
 				return nil
+			}
+			if ok {
+				// Ready, but with the other network setting: ask again.
+				return m.Ensure(ctx, o, network)
 			}
 			if gone {
 				return errors.New("the computer failed to start")
@@ -290,16 +299,27 @@ func (m *Manager) Wake(ctx context.Context, o Owner) error {
 func (m *Manager) Stop(ctx context.Context, o Owner) { m.stopKey(ctx, o.Key()) }
 
 // StopBot turns off every person's computer with a bot, e.g. when the bot
-// is deleted.
-func (m *Manager) StopBot(ctx context.Context, botID string) {
+// is deleted. people are the users who might have one; a computer adopted
+// after a restart has no recorded owner, so it is matched by key.
+func (m *Manager) StopBot(ctx context.Context, botID string, people []string) {
 	m.mu.Lock()
+	seen := map[string]bool{}
 	var keys []string
-	for k, b := range m.boxes {
-		if b.owner.Bot == botID {
+	add := func(k string) {
+		if !seen[k] {
+			seen[k] = true
 			keys = append(keys, k)
 		}
 	}
+	for k, b := range m.boxes {
+		if b.owner.Bot == botID {
+			add(k)
+		}
+	}
 	m.mu.Unlock()
+	for _, u := range people {
+		add(Owner{Bot: botID, User: u}.Key())
+	}
 	for _, k := range keys {
 		m.stopKey(ctx, k)
 	}

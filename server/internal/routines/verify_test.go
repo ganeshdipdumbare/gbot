@@ -34,6 +34,9 @@ func TestVerifyTimestampWindow(t *testing.T) {
 	if !Verify(r, body, good, ts, "", now) {
 		t.Fatal("fresh timestamped signature rejected")
 	}
+	if Verify(r, body, good, ts, "", now) {
+		t.Fatal("the same signed request was accepted twice")
+	}
 	if Verify(r, body, good, ts, "", now.Add(10*time.Minute)) {
 		t.Fatal("replay outside the window accepted")
 	}

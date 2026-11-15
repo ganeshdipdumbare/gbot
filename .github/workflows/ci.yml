@@ -85,32 +85,34 @@ jobs:
       - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
 
       # Tagged releases must be signed with the release key, which lives only
-      # in the repository secrets. Decode it into the runner's temp directory
-      # and expose its location to Gradle. Refuse to continue without it.
-      - name: Load the release signing key
-        if: startsWith(github.ref, 'refs/tags/v')
+      # in the repository secrets. The key and passwords are scoped to the one
+      # build step below (not exported to later steps), and the decoded key is
+      # removed again afterwards. A tag without the secrets fails here.
+      - name: Test and build
+        working-directory: apps/android
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_B64 }}
           STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_B64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
-            echo "::error::Release signing secrets are missing; refusing to publish an unsigned or debug-signed APK."
-            exit 1
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [ -z "$KEYSTORE_B64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+              echo "::error::Release signing secrets are missing; refusing to publish an unsigned or debug-signed APK."
+              exit 1
+            fi
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+            export GBOT_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
+            export GBOT_RELEASE_STORE_PASSWORD="$STORE_PASSWORD"
+            export GBOT_RELEASE_KEY_ALIAS="$KEY_ALIAS"
+            export GBOT_RELEASE_KEY_PASSWORD="$KEY_PASSWORD"
           fi
-          keystore="$RUNNER_TEMP/release.keystore"
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$keystore"
-          {
-            echo "GBOT_RELEASE_KEYSTORE=$keystore"
-            echo "GBOT_RELEASE_STORE_PASSWORD=$STORE_PASSWORD"
-            echo "GBOT_RELEASE_KEY_ALIAS=$KEY_ALIAS"
-            echo "GBOT_RELEASE_KEY_PASSWORD=$KEY_PASSWORD"
-          } >> "$GITHUB_ENV"
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease
 
-      - name: Test and build
-        working-directory: apps/android
-        run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
+      - name: Remove the release signing key
+        if: always() && startsWith(github.ref, 'refs/tags/v')
+        run: rm -f "$RUNNER_TEMP/release.keystore"
 
       # Only tagged builds keep their APK, and only one signed with the
       # release key reaches the release job.

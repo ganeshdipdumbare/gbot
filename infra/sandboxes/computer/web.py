@@ -421,7 +421,8 @@ def dismiss_consent(page):
         return ""
     loc, label = (least or close)[0]
     try:
-        loc.click(timeout=ACTION_TIMEOUT)
+        # Pin the node before clicking, so the click cannot land elsewhere.
+        loc.element_handle(timeout=500).click(timeout=ACTION_TIMEOUT)
     except Exception:
         return ""
     settle(page)
@@ -648,7 +649,7 @@ def cmd_snapshot(page):
 
 
 def cmd_click(page, ref, accept):
-    el = element(page, ref)
+    el = pinned_handle(page, ref)
     box, handler = arm_dialog(page, accept)
     try:
         el.click(timeout=ACTION_TIMEOUT)
@@ -729,7 +730,7 @@ def cmd_press(page, key, accept):
 
 
 def cmd_hover(page, ref):
-    el = element(page, ref)
+    el = pinned_handle(page, ref)
     try:
         el.hover(timeout=ACTION_TIMEOUT)
     except Exception as e:
@@ -739,7 +740,7 @@ def cmd_hover(page, ref):
 
 
 def cmd_check(page, ref, off):
-    el = element(page, ref)
+    el = pinned_handle(page, ref)
     try:
         if off:
             el.uncheck(timeout=ACTION_TIMEOUT)
@@ -852,6 +853,10 @@ def main():
             fail(f"Couldn't reach the browser: {str(e).splitlines()[0]}")
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
         page = current_page(ctx)
+        # Every command, not only some, refuses a page that has left the
+        # allowlist. guard_page resets it to about:blank first, so the next
+        # call starts from a safe page.
+        guard_page(page)
         if args.cmd == "navigate":
             cmd_navigate(page, args.url)
         elif args.cmd == "snapshot":
