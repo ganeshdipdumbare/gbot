@@ -181,20 +181,33 @@ func (m *Manager) Ensure(ctx context.Context, o Owner, network bool) error {
 		}
 		return errors.New("the computer is taking too long to start")
 	}
-	m.boxes[k] = &box{owner: o, starting: true, network: network, controller: "bot", lastUsed: time.Now()}
+	nb := &box{owner: o, starting: true, network: network, controller: "bot", lastUsed: time.Now()}
+	m.boxes[k] = nb
 	m.mu.Unlock()
 	m.changed(o)
 
 	id, err := m.start(ctx, k, network)
 	m.mu.Lock()
 	if err != nil {
-		delete(m.boxes, k)
-	} else {
-		m.boxes[k].id, m.boxes[k].starting = id, false
+		if m.boxes[k] == nb {
+			delete(m.boxes, k)
+		}
+		m.mu.Unlock()
+		m.changed(o)
+		return err
 	}
+	if m.boxes[k] != nb {
+		// Stopped while it was starting: nothing is tracking this container,
+		// so stop it here rather than leave it running.
+		m.mu.Unlock()
+		m.d.stop(context.Background(), id)
+		m.changed(o)
+		return errors.New("the computer was stopped while it was starting")
+	}
+	nb.id, nb.starting = id, false
 	m.mu.Unlock()
 	m.changed(o)
-	return err
+	return nil
 }
 
 func (m *Manager) start(ctx context.Context, k string, network bool) (string, error) {

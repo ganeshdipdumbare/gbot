@@ -33,7 +33,8 @@ export function Modal({ open, onClose, children, title, width = 520, side }: {
       if (openStack[openStack.length - 1] !== token) return;
       if (e.key === "Escape") { e.stopPropagation(); close.current(); return; }
       if (e.key !== "Tab" || !panel.current) return;
-      const items = [...panel.current.querySelectorAll<HTMLElement>(focusable)].filter((x) => x.offsetParent !== null);
+      // offsetParent is null inside position:fixed, so use the layout boxes.
+      const items = [...panel.current.querySelectorAll<HTMLElement>(focusable)].filter((x) => x.getClientRects().length > 0);
       if (!items.length) return;
       const [first, last] = [items[0], items[items.length - 1]];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }

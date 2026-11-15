@@ -62,6 +62,10 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
     );
   }
 
+  // A blanket rule is never offered for tools that act on the machine,
+  // accounts or secrets (the server enforces the same list).
+  const noBlanket = ["computer_shell", "computer_write_file", "vault_type", "browser_navigate", "routine_create", "task_contract"];
+  const canAlways = kind === "approval" && !noBlanket.includes(String(d.tool));
   const preview = kind === "approval" ? argsPreview(String(d.tool), d.args as Record<string, unknown>) : null;
   const options = (d.options as string[] | undefined) ?? [];
   const label = kind === "approval" ? "Needs approval" : kind === "question" ? "Question" : "Needs you";
@@ -89,7 +93,7 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
           <div className="flex flex-wrap items-center gap-1.5">
             <Pill primary disabled={busy} onClick={() => answer("approve")}>Approve</Pill>
             <Pill disabled={busy} onClick={() => answer("reject")}>Decline</Pill>
-            {!confirmAlways ? (
+            {!canAlways ? null : !confirmAlways ? (
               <button disabled={busy} onClick={() => setConfirmAlways(true)}
                 className="ml-auto text-[12px] text-ink-3 hover:text-ink transition-colors duration-[120ms] cursor-pointer disabled:opacity-40">
                 Always allow

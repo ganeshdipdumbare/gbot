@@ -335,6 +335,12 @@ function build(): Rig {
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = ATLAS;
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+  // A lost context takes the whole rig with it. Drop it, so the next paint
+  // builds a fresh one instead of drawing into a dead renderer.
+  canvas.addEventListener("webglcontextlost", (e) => {
+    e.preventDefault();
+    if (rig && rig.renderer === renderer) rig = null;
+  });
   renderer.setPixelRatio(1);
   renderer.setSize(ATLAS, ATLAS, false);
   renderer.setClearColor(0x000000, 0);

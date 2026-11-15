@@ -65,11 +65,19 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
 
   if (!bot) return null;
   // Owners and managers change how a bot works; collaborators only chat with it.
-  const role = bot.role ?? "owner";
+  // A bot without a role is treated as the least we know; the server still
+  // enforces what the person may actually change.
+  const role = bot.role ?? "collaborator";
   const canManage = role === "owner" || role === "manager";
 
   async function save() {
     setError("");
+    // The bot changed elsewhere since this form loaded. Saving now would
+    // overwrite that change, so the person reloads first.
+    if (stale) {
+      setError("This bot changed while you were editing. Reload it, then apply your changes again.");
+      return;
+    }
     const hostList = hosts.split("\n").map((s) => s.trim()).filter(Boolean);
     // Check the list here, so one bad line is named and nothing is lost.
     const bad = hostList.find((h) => !looksLikeSite(h));

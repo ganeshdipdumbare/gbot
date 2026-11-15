@@ -13,18 +13,22 @@ export function NewGroup({ open, onClose, onCreated }: { open: boolean; onClose:
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => { if (open) { setName(""); setPicked([]); setError(""); } }, [open]);
   const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length >= 6 ? p : [...p, id]));
   const chosen = picked.map((id) => bots.find((b) => b.id === id)!).filter(Boolean);
 
   async function create() {
+    if (busy) return; // a second click must not create a second group
+    setBusy(true);
     setError("");
     try {
       const g = await api.createGroup({ name: name.trim() || chosen.map((b) => b.name).join(", "), botIds: picked });
       upsertGroup(g);
       onCreated(g);
     } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -58,7 +62,7 @@ export function NewGroup({ open, onClose, onCreated }: { open: boolean; onClose:
         {error && <p className="text-danger text-sm">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={create} disabled={picked.length < 2}>Create group</Button>
+          <Button onClick={create} disabled={picked.length < 2 || busy}>Create group</Button>
         </div>
       </div>
     </Modal>

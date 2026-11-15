@@ -22,9 +22,9 @@ var roundTimeout = 10 * time.Minute
 
 type rounds struct {
 	mu     sync.Mutex
-	open   map[string]bool   // rounds whose sender is still running
-	joined map[string]bool   // rounds already handed back in this process
-	roots  map[string]*trace // per request from the person
+	open   map[string]bool      // rounds whose sender is still running
+	joined map[string]time.Time // rounds already handed back in this process, and when
+	roots  map[string]*trace    // per request from the person
 }
 
 // trace is what one request from the person set off.
@@ -38,7 +38,7 @@ type trace struct {
 }
 
 func newRounds() *rounds {
-	return &rounds{open: map[string]bool{}, joined: map[string]bool{}, roots: map[string]*trace{}}
+	return &rounds{open: map[string]bool{}, joined: map[string]time.Time{}, roots: map[string]*trace{}}
 }
 
 func newID(prefix string) string {
@@ -59,6 +59,11 @@ func (rs *rounds) startRun(j *Job) {
 		for id, t := range rs.roots {
 			if now.Sub(t.seen) > 6*time.Hour {
 				delete(rs.roots, id)
+			}
+		}
+		for id, when := range rs.joined {
+			if now.Sub(when) > 6*time.Hour {
+				delete(rs.joined, id)
 			}
 		}
 	}
@@ -161,7 +166,7 @@ func (r *Runtime) maybeJoin(round string) bool {
 		r.rounds.mu.Unlock()
 		return false
 	}
-	if r.rounds.joined[round] {
+	if _, done := r.rounds.joined[round]; done {
 		r.rounds.mu.Unlock()
 		return true
 	}
@@ -188,11 +193,11 @@ func (r *Runtime) maybeJoin(round string) bool {
 		return false
 	}
 	r.rounds.mu.Lock()
-	if r.rounds.joined[round] {
+	if _, done := r.rounds.joined[round]; done {
 		r.rounds.mu.Unlock()
 		return true
 	}
-	r.rounds.joined[round] = true
+	r.rounds.joined[round] = time.Now()
 	r.rounds.mu.Unlock()
 
 	first := outs[0]

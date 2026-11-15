@@ -64,8 +64,10 @@ CLOSE = re.compile(r"(close|dismiss|×|✕)", re.I)
 SNAPSHOT_JS = r"""(start) => {
   const CAP = 300 - start;
   if (CAP <= 0) return { items: [], more: 0, consentCount: 0 };
-  const fingerprint = (el) => [el.tagName, el.getAttribute('role') || '', el.getAttribute('type') || '',
-    (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80), el.getAttribute('href') || ''].join('|');
+  const fingerprint = (el) => { const r = el.getBoundingClientRect(); return [el.tagName, el.getAttribute('role') || '', el.getAttribute('type') || '',
+    (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80), el.getAttribute('href') || '',
+    el.id || '', el.getAttribute('name') || '', Math.round(r.left + window.scrollX), Math.round(r.top + window.scrollY),
+    Math.round(r.width), Math.round(r.height)].join('|'); };
   const sel = 'a[href],button,input:not([type=hidden]),select,textarea,summary,' +
     '[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],' +
     '[role=textbox],[role=combobox],[role=switch],[role=option],[contenteditable=""],[contenteditable=true]';
@@ -135,7 +137,13 @@ SNAPSHOT_JS = r"""(start) => {
       if (type === 'checkbox' || type === 'radio') item.checked = el.checked;
       else if (type === 'password') item.value = el.value ? '(filled)' : '(empty)';
       else if (['input', 'textarea', 'select'].includes(tag) && !['button', 'submit', 'reset'].includes(type)) {
-        item.value = (el.value || '').slice(0, 80);
+        // One-time codes, tokens, card numbers and the like are never echoed.
+        const hint = [el.name, el.id, el.getAttribute('autocomplete'), el.getAttribute('inputmode'), el.getAttribute('placeholder'), name].join(' ');
+        if (/(otp|one-time|code|token|secret|card|cc-|cvv|cvc|csc|ssn|pin|passcode|2fa|totp|password)/i.test(hint)) {
+          item.value = el.value ? '(filled)' : '(empty)';
+        } else {
+          item.value = (el.value || '').slice(0, 80);
+        }
       }
       if (el.disabled) item.disabled = true;
       if (name && consent.test(name) && isCookieOverlay(el)) { item.consent = true; item.overlay = true; consentCount++; }
@@ -163,8 +171,10 @@ SNAPSHOT_JS = r"""(start) => {
 
 
 # Must match `fingerprint` in SNAPSHOT_JS exactly.
-FINGERPRINT_JS = r"""(el) => [el.tagName, el.getAttribute('role') || '', el.getAttribute('type') || '',
-  (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80), el.getAttribute('href') || ''].join('|')"""
+FINGERPRINT_JS = r"""(el) => { const r = el.getBoundingClientRect(); return [el.tagName, el.getAttribute('role') || '', el.getAttribute('type') || '',
+  (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80), el.getAttribute('href') || '',
+  el.id || '', el.getAttribute('name') || '', Math.round(r.left + window.scrollX), Math.round(r.top + window.scrollY),
+  Math.round(r.width), Math.round(r.height)].join('|'); }"""
 
 
 def shown(url):
@@ -191,21 +201,59 @@ def source_line(page):
 ALLOWED = tuple(h.strip().lower() for h in os.environ.get("GBOT_ALLOWED_HOSTS", "").split(",") if h.strip())
 
 
-def host_allowed(url):
+# The page the browser opens with. It is shipped with the computer image.
+START_PAGE = "file:///usr/local/share/gbot/start.html"
+
+
+def host_allowed(url, top=True):
+    """Whether a page or frame may be used. data: and blob: frames load
+    nothing from the network of their own, so they are allowed inside a
+    page; as a page of their own they are not."""
     if not ALLOWED:
         return True
+    scheme = urlparse(url).scheme
+    if url in ("about:blank", "about:srcdoc"):
+        return True
+    if url == START_PAGE:
+        return True
+    if scheme in ("data", "blob"):
+        return not top
+    if scheme == "file":
+        return False
     host = (urlparse(url).hostname or "").lower()
     if not host:
-        # about:blank and srcdoc frames load nothing of their own. data:,
-        # blob: and file: URLs carry content with no site behind them.
-        return url in ("about:blank", "about:srcdoc")
+        return False
     return any(host == a or host.endswith("." + a) for a in ALLOWED)
+
+
+def guard_context(ctx):
+    """Checks every tab in the browser, not only the one in use: a popup or
+    a background tab can leave the allowlist too. Any tab that did is closed
+    (or reset when it is the last one), and the command stops."""
+    for p in list(ctx.pages):
+        try:
+            if p.is_closed():
+                continue
+            bad = next((f.url for f in p.frames if not host_allowed(f.url, top=(f == p.main_frame))), None)
+        except Exception:
+            continue
+        if bad is None:
+            continue
+        host = urlparse(bad).hostname or "another site"
+        try:
+            if len(ctx.pages) > 1:
+                p.close()
+            else:
+                p.goto("about:blank", wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+        except Exception:
+            pass
+        fail(f"A page went to {host}, which isn't on this bot's allowed list. It was closed.")
 
 
 def guard_page(page):
     """Close a page if it, or any frame in it, left the allowlist, by a
     click, redirect, script or embedded iframe."""
-    bad = next((f.url for f in page.frames if not host_allowed(f.url)), None)
+    bad = next((f.url for f in page.frames if not host_allowed(f.url, top=(f == page.main_frame))), None)
     if bad is None:
         return
     host = urlparse(bad).hostname or "another site"
@@ -372,7 +420,7 @@ def consent_candidates(page):
     found = []
     seen = set()
     for frame in page.frames:
-        for role in ("button", "link"):
+        for role in ("button",):
             try:
                 locs = frame.get_by_role(role, name=CONSENT)
                 count = min(locs.count(), 30)
@@ -387,6 +435,14 @@ def consent_candidates(page):
                 except Exception:
                     continue
                 if not label or len(label) > 80 or MARKETING.search(label):
+                    continue
+                # A link or a form button can navigate or submit; a banner's
+                # plain button only changes the banner.
+                try:
+                    plain = loc.evaluate("el => el.tagName === 'BUTTON' && (el.type || '') !== 'submit' && !el.closest('form') && !el.hasAttribute('href')")
+                except Exception:
+                    plain = False
+                if not plain:
                     continue
                 key = label.lower()
                 if key in seen:
@@ -852,11 +908,10 @@ def main():
         except Exception as e:
             fail(f"Couldn't reach the browser: {str(e).splitlines()[0]}")
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        # Every command first checks every tab, so nothing that left the
+        # allowlist (a popup, a background tab) is used or reported.
+        guard_context(ctx)
         page = current_page(ctx)
-        # Every command, not only some, refuses a page that has left the
-        # allowlist. guard_page resets it to about:blank first, so the next
-        # call starts from a safe page.
-        guard_page(page)
         if args.cmd == "navigate":
             cmd_navigate(page, args.url)
         elif args.cmd == "snapshot":

@@ -133,6 +133,21 @@ var alwaysAsk = map[string]bool{
 	"browser_navigate": true,
 }
 
+// noBlanketAllow are tools a single "always allow" never covers: they act on
+// the person's machine, accounts or secrets, and a rule for them would
+// silently apply to every bot the person has, now and later.
+var noBlanketAllow = map[string]bool{
+	"computer_shell":      true,
+	"computer_write_file": true,
+	"vault_type":          true,
+	"browser_navigate":    true,
+	"routine_create":      true,
+	"task_contract":       true,
+}
+
+// CanAlwaysAllow reports whether "always allow" may be offered for a tool.
+func CanAlwaysAllow(tool string) bool { return !noBlanketAllow[tool] }
+
 // needsApproval applies the requester's approval mode to one call.
 func needsApproval(rc *runCtx, name string) bool {
 	if internalTools[name] || rc.allow[name] || readonlyTool(name) {

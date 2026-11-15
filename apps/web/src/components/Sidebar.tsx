@@ -368,8 +368,9 @@ function BotMenu({ bot, x, y, onClose, onPin, onUnread, onRename, onCopy, onHide
   onRename: () => void; onCopy: () => void; onHide: () => void; onDelete: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const manage = !bot.role || bot.role === "owner" || bot.role === "manager";
-  const owner = !bot.role || bot.role === "owner";
+  // Least privilege when the role is unknown: the server enforces the rest.
+  const manage = bot.role === "owner" || bot.role === "manager";
+  const owner = bot.role === "owner";
   // Keep the menu on screen; it is fixed to the pointer.
   const left = Math.max(8, Math.min(x, window.innerWidth - 252));
   const top = Math.max(8, Math.min(y, window.innerHeight - 360));

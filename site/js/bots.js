@@ -451,8 +451,10 @@ class Stage {
     };
     window.addEventListener("pointermove", this.onMove, { passive: true });
     window.addEventListener("pointerdown", this.onMove, { passive: true });
-    this.canvas.addEventListener("webglcontextlost", (e) => e.preventDefault());
-    this.canvas.addEventListener("webglcontextrestored", () => { this.dirty = true; this.wake(); });
+    this.onContextLost = (e) => e.preventDefault();
+    this.onContextRestored = () => { this.dirty = true; this.wake(); };
+    this.canvas.addEventListener("webglcontextlost", this.onContextLost);
+    this.canvas.addEventListener("webglcontextrestored", this.onContextRestored);
 
     // A tap, not a scroll: the stage never swallows touch gestures.
     let down = null;
@@ -474,8 +476,11 @@ class Stage {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.visible = false;
     cancelAnimationFrame(this.raf);
     this.raf = 0;
+    this.canvas.removeEventListener("webglcontextlost", this.onContextLost);
+    this.canvas.removeEventListener("webglcontextrestored", this.onContextRestored);
     this.ro.disconnect();
     this.io.disconnect();
     document.removeEventListener("visibilitychange", this.onVisibility);
@@ -539,14 +544,14 @@ class Stage {
   }
 
   wake() {
-    if (this.raf || !this.visible || document.hidden || !this.width) return;
+    if (this.disposed || this.raf || !this.visible || document.hidden || !this.width) return;
     this.last = 0;
     this.raf = requestAnimationFrame(this.frame);
   }
 
   frame(now) {
     this.raf = 0;
-    if (!this.visible || document.hidden) return;
+    if (this.disposed || !this.visible || document.hidden) return;
     const dt = this.last ? Math.min((now - this.last) / 1000, 0.05) : 1 / 60;
     this.last = now;
     this.time += dt;

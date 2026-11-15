@@ -214,7 +214,8 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
-	s.Models.Invalidate()
+	// The catalog refreshes on its own TTL. Clearing it here on every request
+	// let any signed-in client make the server probe every provider each time.
 	list := s.Models.ListFor(r.Context(), s.userProviders(r.Context(), userFrom(r).ID))
 	if list == nil {
 		list = []models.Model{}

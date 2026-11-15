@@ -188,8 +188,10 @@ func TestSharing(t *testing.T) {
 		var bobRules, aliceRules struct{ Rules []store.ToolRule }
 		bob.do("GET", "/api/settings/rules", nil, &bobRules)
 		alice.do("GET", "/api/settings/rules", nil, &aliceRules)
-		if len(bobRules.Rules) != 1 || bobRules.Rules[0].Rule != "allow" {
-			t.Fatalf("bob's always-allow not saved: %+v", bobRules)
+		// The card's tool is high-risk, so "always allow" is refused for
+		// everyone: no rule for Bob, and nothing leaks to Alice.
+		if len(bobRules.Rules) != 0 {
+			t.Fatalf("a blanket rule was saved for a high-risk tool: %+v", bobRules)
 		}
 		if len(aliceRules.Rules) != 0 {
 			t.Fatalf("bob's always-allow leaked to alice: %+v", aliceRules)

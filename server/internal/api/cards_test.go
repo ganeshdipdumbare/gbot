@@ -111,8 +111,10 @@ func TestCards(t *testing.T) {
 		}
 		var rules struct{ Rules []store.ToolRule }
 		c.do("GET", "/api/settings/rules", nil, &rules)
-		if len(rules.Rules) != 1 || rules.Rules[0].Tool != "routine_create" || rules.Rules[0].Rule != "allow" {
-			t.Fatalf("always-allow not saved: %+v", rules)
+		// routine_create changes the bot's own setup, so "always allow" is
+		// refused for it: no blanket rule is saved.
+		if len(rules.Rules) != 0 {
+			t.Fatalf("a blanket rule was saved for a high-risk tool: %+v", rules)
 		}
 	})
 

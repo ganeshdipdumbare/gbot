@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -21,12 +22,18 @@ import (
 // redirects back; nothing secret is sent to the page.
 type mcpPending struct {
 	user, name, serverURL, redirect, verifier string
-	client                                    *mcpoauth.Client
-	cfg                                       *mcpoauth.Config
-	expires                                   time.Time
+	// bind is also set as a cookie in the browser that started the sign-in.
+	// The callback must come back with it, so a link planted for someone
+	// else cannot finish a flow that person did not start.
+	bind    string
+	client  *mcpoauth.Client
+	cfg     *mcpoauth.Config
+	expires time.Time
 }
 
 const oauthTTL = 15 * time.Minute
+
+const oauthBindCookie = "gbot_oauth_bind"
 
 func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -74,6 +81,15 @@ func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "could not start the sign-in")
 		return
 	}
+	bind, err := mcpoauth.Random(32)
+	if err != nil {
+		writeErr(w, 500, "could not start the sign-in")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: oauthBindCookie, Value: bind, Path: "/api/mcp/oauth", MaxAge: int(oauthTTL.Seconds()),
+		HttpOnly: true, Secure: s.SecureCookies, SameSite: http.SameSiteLaxMode,
+	})
 	s.oauthMu.Lock()
 	if s.oauthPending == nil {
 		s.oauthPending = map[string]*mcpPending{}
@@ -85,7 +101,7 @@ func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	s.oauthPending[state] = &mcpPending{
 		user: userFrom(r).ID, name: body.Name, serverURL: u.String(), redirect: redirect,
-		verifier: verifier, client: client, cfg: cfg, expires: time.Now().Add(oauthTTL),
+		verifier: verifier, bind: bind, client: client, cfg: cfg, expires: time.Now().Add(oauthTTL),
 	}
 	s.oauthMu.Unlock()
 	writeJSON(w, 200, map[string]string{"url": cfg.AuthURL(client.ID, redirect, state, verifier)})
@@ -137,6 +153,10 @@ func (s *Server) mcpOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	p := s.takePending(q.Get("state"))
 	if p == nil {
 		s.oauthPage(w, http.StatusBadRequest, false, "", "This sign-in expired. Start again from Settings.")
+		return
+	}
+	if c, err := r.Cookie(oauthBindCookie); err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(p.bind)) != 1 {
+		s.oauthPage(w, http.StatusBadRequest, false, "", "Finish this sign-in in the same browser where you started it.")
 		return
 	}
 	code := q.Get("code")
