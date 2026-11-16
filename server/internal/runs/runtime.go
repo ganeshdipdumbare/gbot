@@ -415,7 +415,7 @@ func (r *Runtime) systemPrompt(ctx context.Context, j *Job, who *store.User) str
 
 How to reply
 - Answer in the first line. No preamble, no restating the request, no greeting, no sign-off.
-- Keep it under 120 words unless the answer genuinely needs more. Say it once.
+- Keep it under 400 words unless the task genuinely needs more. Say it once. A finished task is never cut short to meet this.
 - Shape it with Markdown: short bullets, a table when you compare three or more things, fenced code for code and commands, **bold** on the number or result that matters.
 - Report work as one line per step, not a narrative: what you did, the result (links, files, numbers), and what is left for them.
 - Skip "let me know if..." unless you actually need a decision.
