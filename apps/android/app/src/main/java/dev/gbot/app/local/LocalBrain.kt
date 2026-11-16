@@ -384,7 +384,7 @@ class LocalBrain(
             // bot's ask is already scoped by the bot that sent it, and a
             // round's answers only need finishing, so those skip it: on a
             // phone every model call waits in the same line.
-            val plan = if (!w.plans) "" else {
+            val plan = if (!w.plans || !worthPlanning(prompt)) "" else {
                 stage("Planning")
                 book.call(w.root)
                 withTimeoutOrNull(PLAN_TIMEOUT_MS) {
@@ -499,7 +499,7 @@ class LocalBrain(
 
     /** The one message plus just enough of what came before it. */
     private fun planAsk(prompt: String, history: List<GMessage>, group: Group?, bot: Bot): String = buildString {
-        val before = history.takeLast(4)
+        val before = history.takeLast(2)
         if (before.isNotEmpty()) {
             appendLine("Just before this:")
             for (m in before) {
@@ -508,16 +508,15 @@ class LocalBrain(
                     group != null && m.botId != null && m.botId != bot.id -> db.bot(m.botId)?.name ?: "A teammate"
                     else -> "You"
                 }
-                appendLine("- $who: ${m.content.take(220)}")
+                appendLine("- $who: ${m.content.take(140)}")
             }
             appendLine()
         }
         appendLine("The message to handle:")
-        appendLine(prompt.take(2000))
+        appendLine(prompt.take(1200))
         appendLine()
-        appendLine("Write only the plan, at most 5 short lines, in this shape:")
+        appendLine("Write only the plan, at most 3 short lines:")
         appendLine("WANT: what they actually want, in one line")
-        appendLine("CONTEXT: what matters from before, or nothing")
         appendLine("STEPS: 1) ... 2) ...")
         append("Do not answer the message, do not greet, and add no other lines.")
     }
@@ -536,7 +535,7 @@ class LocalBrain(
             tools = emptyList(),
             automaticToolCalling = false,
             samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.3, seed = 0),
-            maxOutputToken = 220,
+            maxOutputToken = 160,
         )
         e.createConversation(config).use { conv ->
             val sb = StringBuilder()
@@ -573,7 +572,7 @@ class LocalBrain(
         val config = ConversationConfig(
             systemInstruction = Contents.of(system),
             initialMessages = history.map { m ->
-                val t = m.content.take(2000)
+                val t = m.content.take(700)
                 when {
                     group != null && m.role == "bot" && m.botId != bot.id ->
                         Message.user("${db.bot(m.botId.orEmpty())?.name ?: "Someone"}: $t")
@@ -596,7 +595,7 @@ class LocalBrain(
             },
             automaticToolCalling = false,
             samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7, seed = 0),
-            maxOutputToken = 700,
+            maxOutputToken = 512,
         )
 
         val schemas = tools.schemas + mcpTools
@@ -784,7 +783,7 @@ class LocalBrain(
         var list = db.messages(chat).filter { it.role == "user" || it.role == "bot" }
         // In a group the prompt was just stored; don't show it twice.
         if (group != null && list.lastOrNull()?.role == "user" && list.last().content == prompt) list = list.dropLast(1)
-        return list.takeLast(if (group == null) 12 else 20)
+        return list.takeLast(if (group == null) 8 else 12)
     }
 
     private suspend fun engine(file: File): Engine = engineLock.withLock {
@@ -817,57 +816,55 @@ class LocalBrain(
     }
 
     private fun systemPrompt(bot: Bot, group: Group?, peers: List<Bot>): String {
-        val profile = db.get("profile").orEmpty().take(1200).ifBlank { "Nothing yet." }
-        val notes = promptNotes(db.memories(bot.id), 8)
-            .joinToString("\n") { "- ${noteDay(it.at)}: ${it.text.take(400)}" }
+        val profile = db.get("profile").orEmpty().take(700).ifBlank { "Nothing yet." }
+        val notes = promptNotes(db.memories(bot.id), 6)
+            .joinToString("\n") { "- ${noteDay(it.at)}: ${it.text.take(200)}" }
             .ifBlank { "Nothing yet." }
-        val skills = api.localSkills().joinToString("\n") { "- ${it.name}: ${it.description.take(160)}" }.ifBlank { "None yet." }
+        val skills = api.localSkills().joinToString("\n") { "- ${it.name}: ${it.description.take(100)}" }.ifBlank { "None yet." }
         return buildString {
-            appendLine("You are ${bot.name.ifBlank { "a bot" }}${if (bot.title.isBlank()) "" else ", ${bot.title}"}.")
+            appendLine("You are ${bot.name.ifBlank { "a bot" }}${if (bot.title.isBlank()) "" else ", ${bot.title}"}, running on this person's phone. Today is ${LocalDate.now()}.")
             if (bot.instructions.isNotBlank()) appendLine(bot.instructions.trim())
             appendLine()
-            appendLine("You run entirely on this person's phone. Keep answers short and concrete; you have a small memory.")
-            appendLine("Today is ${LocalDate.now()}.")
+            appendLine("How to reply:")
+            appendLine("- Answer in the first line. No preamble, no restating the question, no greeting, no sign-off.")
+            appendLine("- Two or three sentences, or up to five short bullets. Say it once.")
+            appendLine("- Markdown for shape only: short bullets, `code` for commands and values, **bold** for the number or result that matters. No headings.")
+            appendLine("- Report work as one line per step: what you did, the result, what's left for them.")
+            appendLine("- If you can answer from this chat, your memory or what you already know, answer now and call no tools.")
+            appendLine("- Take the fewest steps that reach the answer. Never re-read a page or re-check a fact you already have, and stop as soon as the answer holds.")
             if (group != null) {
                 val others = group.botIds.mapNotNull { db.bot(it)?.name }.filter { it != bot.name }
                 appendLine()
                 appendLine("You are in the group chat “${group.name}” with ${others.joinToString(", ").ifBlank { "no one else" }}.")
-                appendLine("Messages from teammates appear as “Name: …”. Answer as yourself, briefly. Mention a teammate as @Name to hand the work to them; they answer here, in this chat, not in a private one. Don't speak for them.")
+                appendLine("Teammates appear as “Name: …”. Answer as yourself, in a line or two. @Name hands the work to them, in this chat. Don't speak for them.")
             }
             if (peers.isNotEmpty()) {
                 appendLine()
-                appendLine("The person's other bots, which you can reach with message_bot: " + peers.joinToString(", ") { it.name } + ".")
-                appendLine("Ask (the default) when you need their answer: send every ask you need now, then finish your turn; all the answers come back to you together in one message once they're in. Tell when you're only passing something on: nothing comes back. Send it yourself when the task needs another bot — don't ask the person to relay it. The person sees that you sent it, so don't announce it. @Name does nothing outside a group chat — use message_bot.")
+                appendLine("The person's other bots, reachable with message_bot: " + peers.joinToString(", ") { it.name } + ".")
+                appendLine("Ask (the default) when you need their answer: send every ask you need now, then finish your turn; the answers come back together. Tell when you're only passing something on. Send it yourself instead of asking the person to relay it, and don't announce it — they see it. @Name does nothing outside a group chat.")
             }
             appendLine()
-            appendLine("Your tools:")
-            appendLine("- browser_open, browser_read, browser_click, browser_fill, browser_enter, browser_back: your own browser window, which the person can watch. Use it whenever the job needs a sign-in, a form, a click, or should happen in front of them — applying, booking, buying, checking their account. Always browser_read before you act, and use the numbered element ids it gives you.")
-            appendLine("- web_fetch: read a page's text with nothing on screen. Use it when they only want the information — search results, articles, prices. It has no sign-ins and cannot click, so it is never the way to do something for them.")
-            appendLine("- open_in_chrome: hand the page to the person's real browser when a site needs their sign-in there.")
-            appendLine("- vault_type: type a saved secret into a field on a site it was saved for; you never see the value.")
-            appendLine("- use_skill: load the full instructions of a skill.")
-            appendLine("- browser_forward, browser_reload, browser_scroll, browser_wait: more ways around a page.")
-            appendLine("- notify, remember, recall, profile.")
-            appendLine("- ask_user: ask the person a question on a card, with options when it's a choice. Use it rather than asking in plain text.")
-            appendLine("- file_list, file_read, file_write: your own folder on this phone, for notes, drafts and data you keep.")
-            appendLine("- routine_list, routine_update, routine_delete, routine_run: your scheduled routines.")
-            appendLine("- task_contract, task_verify: for a task with a deliverable, agree a goal and 3-6 checks first, do the work, then verify before you say it's done. Never claim success against a failed check.")
-            if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots something; asks' answers come back to you together.")
-            if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot itself can't be archived.")
-            if (api.localMcp().any { it.enabled && it.status == "connected" }) appendLine("- Tools starting with mc… come from connected integrations; they work like the others.")
+            appendLine("Tools (the schemas say the rest):")
+            appendLine("- browser_*: your own browser window, which the person can watch. Use it when the job needs a sign-in, a form or a click — applying, booking, buying, checking their account. browser_read before you act, then use the numbered ids it gives you; one read per action, not two.")
+            appendLine("- web_fetch: a page's text, nothing on screen. For information only — no sign-ins, no clicking.")
+            appendLine("- open_in_chrome when a site needs their own browser; vault_type for a saved secret, never a password you typed.")
+            appendLine("- ask_user for any question or choice — a card, not plain text. notify, remember, forget, recall, profile, use_skill, file_*, routine_*.")
+            appendLine("- task_contract then task_verify for a multi-step deliverable they will check; a quick answer needs neither. Never claim success against a failed check.")
+            if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots; asks come back together.")
+            if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot can't be archived.")
+            if (api.localMcp().any { it.enabled && it.status == "connected" }) appendLine("- Tools starting with mc… come from connected integrations.")
             appendLine()
             appendLine("Rules:")
-            appendLine("- Do not invent facts about the person. Use profile for forms and personal details.")
-            appendLine("- Say what you did in one or two lines. If a step needs their approval, it appears as a card; wait for the answer.")
-            appendLine("- Never say something was sent, submitted, applied for, booked or bought unless you did it in the browser and the page confirmed it.")
-            appendLine("- A message from the person may arrive with an internal plan. Follow it. If none came, or the task turns out different, call plan first with one step per line. The person never sees a plan, so don't tell them about it.")
-            appendLine("- Use remember for durable facts about the person: preferences, names, decisions, how they like things. Use forget when they correct you or ask you to.")
-            appendLine("- You cannot run shell commands, open other apps, text, email, or post through chat apps. To reach another of the person's bots, use message_bot — or @Name inside a group chat.")
+            appendLine("- Never invent facts about the person; use profile for their details.")
+            appendLine("- Never say something was sent, submitted, applied for, booked or bought unless the page confirmed it.")
+            appendLine("- remember durable facts and preferences; forget when they correct you.")
+            appendLine("- A message may carry an internal plan. Follow it, and never mention it. No plan and the task has several steps? call plan, one step per line.")
+            appendLine("- You cannot run shell commands, open other apps, text, email or post through chat apps.")
             appendLine()
             appendLine("The person's details:")
             appendLine(profile)
             appendLine()
-            appendLine("What you remember (the newest fact wins if two disagree):")
+            appendLine("What you remember (newest fact wins):")
             append(notes)
             appendLine()
             appendLine()
@@ -1111,12 +1108,31 @@ class LocalBrain(
         const val MCP_TIMEOUT_MS = 20_000L
 
         /** A plan that takes longer than this is not worth blocking the answer. */
-        const val PLAN_TIMEOUT_MS = 90_000L
+        const val PLAN_TIMEOUT_MS = 45_000L
     }
 }
 
 /** What a bot replies when it has nothing to send back. */
 const val NO_REPLY = "NO_REPLY"
+
+/**
+ * Whether a message is worth a planning pass. On a phone every model call
+ * waits in the same line, so a short, single-step message is answered
+ * straight away: the plan would cost as much as the reply. Anything long,
+ * listed, or asking for several things keeps its plan.
+ */
+fun worthPlanning(prompt: String): Boolean {
+    val p = prompt.trim()
+    if (p.length >= 180) return true
+    if (p.lines().size > 2) return true
+    val low = p.lowercase()
+    return MULTI_STEP.any { low.contains(it) }
+}
+
+private val MULTI_STEP = listOf(
+    " and then", " then ", "after that", "first ", "step 1", "1.", "1)", "each of",
+    "for every", "compare", "research", "book ", "apply", "order ", "buy ", "fill in", "sign in",
+)
 
 /** The plan with blank lines dropped and its length bounded. */
 fun cleanPlan(raw: String): String = raw.lines()

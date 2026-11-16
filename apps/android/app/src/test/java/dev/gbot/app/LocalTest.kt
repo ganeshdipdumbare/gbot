@@ -296,6 +296,16 @@ class LocalTest {
     }
 
     @Test
+    fun `only a message that needs a plan gets one`() {
+        assertFalse(dev.gbot.app.local.worthPlanning("hi"))
+        assertFalse(dev.gbot.app.local.worthPlanning("what's the weather?"))
+        assertTrue(dev.gbot.app.local.worthPlanning("find me a flight and then book it"))
+        assertTrue(dev.gbot.app.local.worthPlanning("compare these two phones"))
+        assertTrue(dev.gbot.app.local.worthPlanning("do this\nand this\nand this"))
+        assertTrue(dev.gbot.app.local.worthPlanning("a".repeat(200)))
+    }
+
+    @Test
     fun `a plan is trimmed and kept out of the chat`() {
         val raw = "\n WANT: the flights\n\nCONTEXT: none\nSTEPS: 1) search\n2) compare\n3) book\n4) confirm\n"
         val out = dev.gbot.app.local.cleanPlan(raw)
