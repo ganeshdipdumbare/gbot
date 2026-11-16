@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -159,6 +162,28 @@ var ErrBotLimit = &limitError{"you can have up to 50 bots"}
 type limitError struct{ msg string }
 
 func (e *limitError) Error() string { return e.msg }
+
+// ValidateBotFields applies the same name, title, instructions and look
+// limits the API and the roster tools enforce, so a bot hatched in chat
+// can still be edited in the forms. Non-nil fields are trimmed in place.
+func ValidateBotFields(name, title, instructions *string, look *Look) string {
+	if name != nil {
+		*name = strings.TrimSpace(*name)
+		if *name == "" || utf8.RuneCountInString(*name) > 40 {
+			return "give your bot a name (up to 40 characters)"
+		}
+	}
+	if title != nil && utf8.RuneCountInString(*title) > 80 {
+		return "keep the title under 80 characters"
+	}
+	if instructions != nil && len(*instructions) > 20000 {
+		return "instructions are too long"
+	}
+	if look != nil && len(fmt.Sprint(*look)) > 2000 {
+		return "look is too large"
+	}
+	return ""
+}
 
 func (s *Store) CreateBot(ctx context.Context, spaceID, ownerID string, nb NewBot) (*Bot, error) {
 	look, _ := json.Marshal(nb.Look)

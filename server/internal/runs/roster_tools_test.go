@@ -15,33 +15,40 @@ import (
 // archive a teammate.
 func TestRosterToolsAreTheMainBots(t *testing.T) {
 	r := &Runtime{}
-	names := func(b *store.Bot, g *store.Group) map[string]kritrim.Tool {
+	names := func(b *store.Bot, g *store.Group, forUser string) map[string]kritrim.Tool {
 		out := map[string]kritrim.Tool{}
-		for _, tl := range r.runTools(context.Background(), &Job{Bot: b, Group: g, For: b.OwnerID}) {
+		for _, tl := range r.runTools(context.Background(), &Job{Bot: b, Group: g, For: forUser}) {
 			out[tl.Name] = tl
 		}
 		return out
 	}
 	roster := []string{"bot_list", "bot_create", "bot_update", "bot_archive"}
 	owner := "00000000-0000-4000-8000-000000000002"
+	otherUser := "00000000-0000-4000-8000-000000000099"
 	main := &store.Bot{ID: "00000000-0000-4000-8000-000000000001", OwnerID: owner, Main: true}
 	other := &store.Bot{ID: "00000000-0000-4000-8000-000000000003", OwnerID: owner}
 
-	got := names(main, nil)
+	got := names(main, nil, owner)
 	for _, n := range roster {
 		if _, ok := got[n]; !ok {
 			t.Fatalf("%s not offered to the main bot", n)
 		}
 	}
 	for _, n := range roster {
-		if _, ok := names(other, nil)[n]; ok {
+		if _, ok := names(other, nil, owner)[n]; ok {
 			t.Fatalf("%s must not be offered to an ordinary bot", n)
 		}
 	}
 	// A group chat is a conversation, not the place to change the roster.
 	for _, n := range roster {
-		if _, ok := names(main, &store.Group{ID: "g1", UserID: owner})[n]; ok {
+		if _, ok := names(main, &store.Group{ID: "g1", UserID: owner}, owner)[n]; ok {
 			t.Fatalf("%s must not be offered in a group", n)
+		}
+	}
+	// A shared main bot must not hand the roster tools to every member.
+	for _, n := range roster {
+		if _, ok := names(main, nil, otherUser)[n]; ok {
+			t.Fatalf("%s must not be offered to a non-owner chatting with the main bot", n)
 		}
 	}
 	// Reading the roster is free; every change asks the person first.
@@ -62,6 +69,29 @@ func TestRosterToolsAreTheMainBots(t *testing.T) {
 		}
 		if l := toolLabel(n); strings.HasPrefix(l, "Using ") {
 			t.Errorf("%s has no label of its own: %q", n, l)
+		}
+	}
+}
+
+// Roster changes must match the HTTP API: managers can edit, only the
+// owner can archive. Collaborators who can merely see a bot cannot.
+func TestRosterRoleGates(t *testing.T) {
+	cases := []struct {
+		role                  string
+		canManage, canArchive bool
+	}{
+		{"owner", true, true},
+		{"manager", true, false},
+		{"collaborator", false, false},
+		{"", false, false},
+	}
+	for _, c := range cases {
+		b := &store.Bot{Role: c.role}
+		if got := rosterCanManage(b); got != c.canManage {
+			t.Errorf("role %q manage: got %v want %v", c.role, got, c.canManage)
+		}
+		if got := rosterCanArchive(b); got != c.canArchive {
+			t.Errorf("role %q archive: got %v want %v", c.role, got, c.canArchive)
 		}
 	}
 }

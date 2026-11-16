@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/net/publicsuffix"
 
@@ -120,25 +119,6 @@ func cleanHosts(in []string) ([]string, string) {
 	return out, ""
 }
 
-func validBotFields(name, title, instructions *string, look *store.Look) string {
-	if name != nil {
-		*name = strings.TrimSpace(*name)
-		if *name == "" || utf8.RuneCountInString(*name) > 40 {
-			return "give your bot a name (up to 40 characters)"
-		}
-	}
-	if title != nil && utf8.RuneCountInString(*title) > 80 {
-		return "keep the title under 80 characters"
-	}
-	if instructions != nil && len(*instructions) > 20000 {
-		return "instructions are too long"
-	}
-	if look != nil && len(fmt.Sprint(*look)) > 2000 {
-		return "look is too large"
-	}
-	return ""
-}
-
 func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name         string     `json:"name"`
@@ -150,7 +130,7 @@ func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if msg := validBotFields(&body.Name, &body.Title, &body.Instructions, &body.Look); msg != "" {
+	if msg := store.ValidateBotFields(&body.Name, &body.Title, &body.Instructions, &body.Look); msg != "" {
 		writeErr(w, 400, msg)
 		return
 	}
@@ -181,7 +161,7 @@ func (s *Server) updateBot(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &p) {
 		return
 	}
-	if msg := validBotFields(p.Name, p.Title, p.Instructions, p.Look); msg != "" {
+	if msg := store.ValidateBotFields(p.Name, p.Title, p.Instructions, p.Look); msg != "" {
 		writeErr(w, 400, msg)
 		return
 	}

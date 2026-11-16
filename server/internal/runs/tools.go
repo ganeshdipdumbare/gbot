@@ -490,9 +490,11 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 	}
 
 	// The roster tools: the person's main bot looks after their other
-	// bots. Phone mode offers the same four, with the same words, in
+	// bots. Only the owner chatting with their own main bot gets them —
+	// a shared main bot must not let every member rewrite the roster.
+	// Phone mode offers the same four, with the same words, in
 	// LocalTools.kt. Every change asks the person first.
-	if b.Main && j.Group == nil {
+	if b.Main && j.Group == nil && b.OwnerID == j.user() {
 		tools = append(tools,
 			kritrim.NewTool("bot_list", "List the person's bots with their titles and models. Look before you change one.",
 				func(ctx context.Context, _ struct{}) (string, error) {
@@ -501,15 +503,15 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 			kritrim.Risky(kritrim.NewTool("bot_create", "Hatch a new bot for the person. Give it a name, what it is for, and standing instructions.",
 				func(ctx context.Context, in botCreateIn) (string, error) {
 					name := strings.TrimSpace(in.Name)
-					if name == "" {
-						return "", errors.New("give the new bot a name")
+					title := strings.TrimSpace(in.Title)
+					instructions := strings.TrimSpace(in.Instructions)
+					look := store.Look{"seed": newSeed()}
+					if msg := store.ValidateBotFields(&name, &title, &instructions, &look); msg != "" {
+						return "", errors.New(msg)
 					}
-					nb := store.NewBot{
-						Name: name, Title: strings.TrimSpace(in.Title),
-						Instructions: strings.TrimSpace(in.Instructions),
-						Look:         store.Look{"seed": newSeed()},
-					}
-					nu, err := r.store.CreateBot(ctx, b.SpaceID, j.user(), nb)
+					nu, err := r.store.CreateBot(ctx, b.SpaceID, j.user(), store.NewBot{
+						Name: name, Title: title, Instructions: instructions, Look: look,
+					})
 					if err != nil {
 						return "", err
 					}
@@ -522,6 +524,9 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 					target, err := r.rosterPick(ctx, j, in.Bot)
 					if err != nil {
 						return "", err
+					}
+					if !rosterCanManage(target) {
+						return "", fmt.Errorf("only the owner or a manager can change %s", target.Name)
 					}
 					var p store.BotPatch
 					if t := strings.TrimSpace(in.Title); t != "" {
@@ -540,6 +545,9 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 					if p.Title == nil && p.Instructions == nil && p.Model == nil {
 						return "", fmt.Errorf("say what to change about %s: title, instructions or model", target.Name)
 					}
+					if msg := store.ValidateBotFields(nil, p.Title, p.Instructions, nil); msg != "" {
+						return "", errors.New(msg)
+					}
 					nu, err := r.store.UpdateBot(ctx, target.SpaceID, target.ID, p)
 					if err != nil {
 						return "", err
@@ -557,11 +565,22 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 					if target.Main {
 						return "", errors.New("the main bot can't be archived")
 					}
+					if !rosterCanArchive(target) {
+						return "", fmt.Errorf("only the owner can archive %s", target.Name)
+					}
+					audience := r.Audience(target.ID)
+					// Everyone who could have a computer with this bot —
+					// same cleanup the HTTP archive path does.
+					people, _ := r.store.SpaceMemberIDs(ctx, target.SpaceID)
+					people = append(people, target.OwnerID)
 					if err := r.store.ArchiveBot(ctx, target.SpaceID, target.ID); err != nil {
 						return "", err
 					}
 					r.StopBot(target.ID)
-					r.hub.Publish(target.SpaceID, r.Audience(target.ID), Event{Type: "bot_removed", BotID: target.ID})
+					if r.computer != nil {
+						r.computer.StopBot(ctx, target.ID, people)
+					}
+					r.hub.Publish(target.SpaceID, audience, Event{Type: "bot_removed", BotID: target.ID})
 					r.event(j.convo(), b, "Archived **"+target.Name+"**", map[string]any{"kind": "bot"})
 					return "Archived " + target.Name + ".", nil
 				})),
@@ -624,7 +643,7 @@ func (r *Runtime) rosterSummary(ctx context.Context, j *Job) (string, error) {
 
 // rosterPick finds the bot the main bot named, by name, the way
 // message_bot resolves a peer. A name it doesn't have is an error that
-// lists the ones it does.
+// lists the ones it does. The returned bot carries the viewer's role.
 func (r *Runtime) rosterPick(ctx context.Context, j *Job, name string) (*store.Bot, error) {
 	want := strings.TrimPrefix(strings.TrimSpace(name), "@")
 	list, err := r.store.ListBots(ctx, j.Bot.SpaceID, j.user())
@@ -639,6 +658,16 @@ func (r *Runtime) rosterPick(ctx context.Context, j *Job, name string) (*store.B
 		names = append(names, p.Name)
 	}
 	return nil, fmt.Errorf("no bot named %q; the person has %s", want, strings.Join(names, ", "))
+}
+
+// rosterCanManage mirrors the API's manage check: owner or manager.
+func rosterCanManage(b *store.Bot) bool {
+	return b.Role == "owner" || b.Role == "manager"
+}
+
+// rosterCanArchive mirrors the API: only the owner can delete a bot.
+func rosterCanArchive(b *store.Bot) bool {
+	return b.Role == "owner"
 }
 
 // newSeed gives a hatched bot its own look, as the web does on hatch.
