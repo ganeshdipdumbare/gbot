@@ -387,7 +387,7 @@ function BotMenu({ bot, x, y, onClose, onPin, onUnread, onRename, onCopy, onHide
         {!manage && <MenuItem icon={<Icon.copy />} onClick={onCopy}>Copy conversation ID</MenuItem>}
         <div className="my-1 h-px bg-line" />
         <MenuItem icon={<Icon.eyeOff />} onClick={onHide}>Hide from sidebar</MenuItem>
-        {owner && <MenuItem icon={<Icon.trash />} danger onClick={onDelete}>Delete</MenuItem>}
+        {owner && !bot.main && <MenuItem icon={<Icon.trash />} danger onClick={onDelete}>Delete</MenuItem>}
       </div>
     </>
   );

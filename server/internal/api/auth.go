@@ -110,10 +110,14 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "could not create account")
 		return
 	}
+	// Every account starts on its main bot: the one that looks after the
+	// others, as phone mode hatches it too.
 	first := store.NewBot{
-		Name:  "Mochi",
-		Title: "your first teammate",
-		Look:  store.Look{"seed": auth.NewToken()[:10]},
+		Name:         store.MainBotName,
+		Title:        store.MainBotTitle,
+		Instructions: store.MainBotPurpose,
+		Look:         store.MainBotLook(),
+		Main:         true,
 	}
 	u, err := s.Store.CreateUser(r.Context(), c.Email, c.Name, hash, s.Models.Pick(r.Context()), first, n == 0)
 	if errors.Is(err, store.ErrNotFirst) {

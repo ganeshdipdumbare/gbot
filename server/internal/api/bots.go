@@ -220,13 +220,23 @@ func (s *Server) archiveBot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, "only the owner can delete this bot")
 		return
 	}
+	// The main bot stays: it is what the person comes back to, and the
+	// only bot that can hatch the others.
+	if b.Main {
+		writeErr(w, 400, "the main bot can't be deleted")
+		return
+	}
 	audience := s.Runtime.Audience(b.ID)
 	// Everyone who could have a computer with this bot. Adopted computers
 	// do not remember their owner, so their keys are derived from these.
 	people, _ := s.Store.SpaceMemberIDs(r.Context(), b.SpaceID)
 	people = append(people, b.OwnerID)
 	if err := s.Store.ArchiveBot(r.Context(), b.SpaceID, b.ID); err != nil {
-		writeErr(w, 404, "bot not found")
+		if errors.Is(err, store.ErrMainBot) {
+			writeErr(w, 400, "the main bot can't be deleted")
+		} else {
+			writeErr(w, 404, "bot not found")
+		}
 		return
 	}
 	s.Runtime.StopBot(b.ID)

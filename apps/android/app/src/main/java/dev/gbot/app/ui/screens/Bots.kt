@@ -36,7 +36,6 @@ import androidx.navigation.NavHostController
 import dev.gbot.app.GbotApp
 import dev.gbot.app.Mode
 import dev.gbot.app.data.groupKey
-import dev.gbot.app.local.MAIN_BOT
 import dev.gbot.app.net.Bot
 import dev.gbot.app.net.Look
 import dev.gbot.app.net.Sharing
@@ -196,7 +195,7 @@ fun BotSettingsScreen(nav: NavHostController, id: String) {
         if (app.mode == Mode.Local) MemorySection(bot.id)
         if (canManage && app.mode == Mode.Server) ShareSection(bot)
         GButton("Clear chat history", { forgetToo = false; clearing = true }, variant = Variant.Soft, icon = "trash")
-        if (bot.isOwner && bot.id != MAIN_BOT) GButton("Archive bot", { archiving = true }, variant = Variant.Danger)
+        if (bot.isOwner && !bot.isMain) GButton("Archive bot", { archiving = true }, variant = Variant.Danger)
     }
     if (clearing) Confirm(
         "Clear your chat with ${bot.name}?",

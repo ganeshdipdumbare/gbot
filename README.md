@@ -52,6 +52,11 @@ needs you, stuck, done), and keep working while you keep chatting.
 
 ### Teammates, not tabs
 
+- **A main bot.** Every account starts on **gbot**, the bot that looks after
+  the others: ask it for a teammate and it hatches one, retitles one, changes
+  a model or archives one, each behind an approval card. It's first in the
+  roster and can't be deleted. The same bot, with the same powers, on the
+  phone, the web and macOS.
 - **Memory that lasts.** Before a long chat outgrows the model, a rolling
   summary keeps the facts that matter. A bot can also search its own history
   for anything older.
@@ -134,7 +139,8 @@ Then build and start everything:
 make run
 ```
 
-Open <http://127.0.0.1:8080> and hatch your first bot.
+Open <http://127.0.0.1:8080> and sign up. Your account starts on **gbot**,
+your main bot: ask it for a teammate and it hatches one for you.
 
 For development with hot reload, run `make dev` and open
 <http://127.0.0.1:5173>.

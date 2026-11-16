@@ -43,7 +43,9 @@ data class State(
 )
 
 private fun lastAt(m: Message?, createdAt: String) = m?.createdAt ?: createdAt
-private fun sortBots(b: List<Bot>) = b.sortedWith(compareBy<Bot>({ !it.pinned }).thenByDescending { lastAt(it.lastMessage, it.createdAt) })
+// The main bot stays first, then pinned, then the most recent chat.
+private fun sortBots(b: List<Bot>) =
+    b.sortedWith(compareBy<Bot>({ !it.isMain }, { !it.pinned }).thenByDescending { lastAt(it.lastMessage, it.createdAt) })
 private fun sortGroups(g: List<Group>) = g.sortedByDescending { lastAt(it.lastMessage, it.createdAt) }
 
 /**

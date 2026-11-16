@@ -2,9 +2,12 @@ package runs
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 
 	"gbot/internal/cron"
 	"gbot/internal/crypto"
+	"gbot/internal/store"
 )
 
 // Tools a bot gets for one run. They're built per run so each closes
@@ -116,6 +120,23 @@ type messageBotIn struct {
 
 type skillIn struct {
 	Name string `json:"name" desc:"the skill's name"`
+}
+
+type botCreateIn struct {
+	Name         string `json:"name" desc:"short name, e.g. Scout"`
+	Title        string `json:"title,omitempty" desc:"what it is for, one line"`
+	Instructions string `json:"instructions,omitempty" desc:"standing instructions for it"`
+}
+
+type botUpdateIn struct {
+	Bot          string `json:"bot" desc:"the bot's name, as bot_list shows it"`
+	Title        string `json:"title,omitempty" desc:"new title; leave empty to keep it"`
+	Instructions string `json:"instructions,omitempty" desc:"new standing instructions; leave empty to keep it"`
+	Model        string `json:"model,omitempty" desc:"new model id, as bot_list shows it; leave empty to keep it"`
+}
+
+type botIn struct {
+	Bot string `json:"bot" desc:"the bot's name, as bot_list shows it"`
 }
 
 type historyIn struct {
@@ -468,6 +489,85 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 		)
 	}
 
+	// The roster tools: the person's main bot looks after their other
+	// bots. Phone mode offers the same four, with the same words, in
+	// LocalTools.kt. Every change asks the person first.
+	if b.Main && j.Group == nil {
+		tools = append(tools,
+			kritrim.NewTool("bot_list", "List the person's bots with their titles and models. Look before you change one.",
+				func(ctx context.Context, _ struct{}) (string, error) {
+					return r.rosterSummary(ctx, j)
+				}),
+			kritrim.Risky(kritrim.NewTool("bot_create", "Hatch a new bot for the person. Give it a name, what it is for, and standing instructions.",
+				func(ctx context.Context, in botCreateIn) (string, error) {
+					name := strings.TrimSpace(in.Name)
+					if name == "" {
+						return "", errors.New("give the new bot a name")
+					}
+					nb := store.NewBot{
+						Name: name, Title: strings.TrimSpace(in.Title),
+						Instructions: strings.TrimSpace(in.Instructions),
+						Look:         store.Look{"seed": newSeed()},
+					}
+					nu, err := r.store.CreateBot(ctx, b.SpaceID, j.user(), nb)
+					if err != nil {
+						return "", err
+					}
+					r.hub.Publish(b.SpaceID, []string{j.user()}, Event{Type: "bot", BotID: nu.ID, Data: nu})
+					r.event(j.convo(), b, "Hatched **"+nu.Name+"**", map[string]any{"kind": "bot", "botId": nu.ID})
+					return "Hatched " + nu.Name + ".", nil
+				})),
+			kritrim.Risky(kritrim.NewTool("bot_update", "Change one of the person's bots: its title, instructions or model. Only what you pass changes.",
+				func(ctx context.Context, in botUpdateIn) (string, error) {
+					target, err := r.rosterPick(ctx, j, in.Bot)
+					if err != nil {
+						return "", err
+					}
+					var p store.BotPatch
+					if t := strings.TrimSpace(in.Title); t != "" {
+						p.Title = &t
+					}
+					if i := strings.TrimSpace(in.Instructions); i != "" {
+						p.Instructions = &i
+					}
+					if m := strings.TrimSpace(in.Model); m != "" {
+						provs, _ := r.store.ListProviders(ctx, j.user())
+						if r.catalog.PickFor(ctx, ProviderModels(provs), m) != m {
+							return "", fmt.Errorf("%q isn't an available model; use a model id from bot_list", m)
+						}
+						p.Model = &m
+					}
+					if p.Title == nil && p.Instructions == nil && p.Model == nil {
+						return "", fmt.Errorf("say what to change about %s: title, instructions or model", target.Name)
+					}
+					nu, err := r.store.UpdateBot(ctx, target.SpaceID, target.ID, p)
+					if err != nil {
+						return "", err
+					}
+					r.hub.Publish(nu.SpaceID, r.Audience(nu.ID), Event{Type: "bot", BotID: nu.ID, Data: nu})
+					r.event(j.convo(), b, "Updated **"+nu.Name+"**", map[string]any{"kind": "bot", "botId": nu.ID})
+					return "Updated " + nu.Name + ".", nil
+				})),
+			kritrim.Risky(kritrim.NewTool("bot_archive", "Archive one of the person's bots. The main bot can't be archived.",
+				func(ctx context.Context, in botIn) (string, error) {
+					target, err := r.rosterPick(ctx, j, in.Bot)
+					if err != nil {
+						return "", err
+					}
+					if target.Main {
+						return "", errors.New("the main bot can't be archived")
+					}
+					if err := r.store.ArchiveBot(ctx, target.SpaceID, target.ID); err != nil {
+						return "", err
+					}
+					r.StopBot(target.ID)
+					r.hub.Publish(target.SpaceID, r.Audience(target.ID), Event{Type: "bot_removed", BotID: target.ID})
+					r.event(j.convo(), b, "Archived **"+target.Name+"**", map[string]any{"kind": "bot"})
+					return "Archived " + target.Name + ".", nil
+				})),
+		)
+	}
+
 	if len(j.peers) > 0 {
 		peers := j.peers
 		tools = append(tools, kritrim.NewTool("message_bot", "Ask or tell another of the person's bots something. It doesn't wait: send every ask you need, then finish your turn, and the answers come back to you together once they're all in. The person sees a card for each message, so don't announce that you sent it. Use it when the person asks you to ask, tell or work with another bot, or when the task clearly needs one.",
@@ -497,6 +597,57 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 			}))
 	}
 	return tools
+}
+
+// rosterSummary is the roster as the main bot reads it: one line per bot.
+func (r *Runtime) rosterSummary(ctx context.Context, j *Job) (string, error) {
+	list, err := r.store.ListBots(ctx, j.Bot.SpaceID, j.user())
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	for _, p := range list {
+		fmt.Fprintf(&sb, "- %s: %s", p.Name, firstNonEmpty(p.Title, "no title yet"))
+		if p.Model != "" {
+			fmt.Fprintf(&sb, " · model %s", p.Model)
+		}
+		if p.Main {
+			sb.WriteString(" · the main bot (you)")
+		}
+		sb.WriteString("\n")
+	}
+	if sb.Len() == 0 {
+		return "No bots yet.", nil
+	}
+	return sb.String(), nil
+}
+
+// rosterPick finds the bot the main bot named, by name, the way
+// message_bot resolves a peer. A name it doesn't have is an error that
+// lists the ones it does.
+func (r *Runtime) rosterPick(ctx context.Context, j *Job, name string) (*store.Bot, error) {
+	want := strings.TrimPrefix(strings.TrimSpace(name), "@")
+	list, err := r.store.ListBots(ctx, j.Bot.SpaceID, j.user())
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, p := range list {
+		if strings.EqualFold(p.Name, want) {
+			return p, nil
+		}
+		names = append(names, p.Name)
+	}
+	return nil, fmt.Errorf("no bot named %q; the person has %s", want, strings.Join(names, ", "))
+}
+
+// newSeed gives a hatched bot its own look, as the web does on hatch.
+func newSeed() string {
+	var b [5]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // fetchesWeb catches the common ways a shell command reaches a website.
@@ -541,6 +692,7 @@ var readonlyTools = map[string]bool{
 	"routine_list":       true,
 	"use_skill":          true,
 	"history_search":     true,
+	"bot_list":           true,
 }
 
 func readonlyTool(name string) bool { return readonlyTools[name] }
@@ -591,6 +743,10 @@ var toolLabels = map[string]string{
 	"message_bot":         "Talking to a teammate",
 	"ask_user":            "Has a question",
 	"request_takeover":    "Needs you on its computer",
+	"bot_list":            "Checking the roster",
+	"bot_create":          "Hatching a bot",
+	"bot_update":          "Updating a bot",
+	"bot_archive":         "Archiving a bot",
 }
 
 func toolLabel(name string) string {

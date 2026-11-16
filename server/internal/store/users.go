@@ -58,8 +58,8 @@ func (s *Store) CreateUser(ctx context.Context, email, name, hash, model string,
 			return err
 		}
 		look, _ := json.Marshal(firstBot.Look)
-		_, err := tx.Exec(ctx, `INSERT INTO bots(space_id,owner_id,name,title,instructions,look) VALUES($1,$2,$3,$4,$5,$6)`,
-			u.SpaceID, u.ID, firstBot.Name, firstBot.Title, firstBot.Instructions, look)
+		_, err := tx.Exec(ctx, `INSERT INTO bots(space_id,owner_id,name,title,instructions,look,main,pinned) VALUES($1,$2,$3,$4,$5,$6,$7,$7)`,
+			u.SpaceID, u.ID, firstBot.Name, firstBot.Title, firstBot.Instructions, look, firstBot.Main)
 		return err
 	})
 	if err != nil {
