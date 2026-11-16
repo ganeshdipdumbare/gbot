@@ -633,14 +633,23 @@ class LocalBrain(
                     return@repeat
                 }
                 log("step ${step + 1}: ${text.length} chars, ${calls.size} calls")
-                answer = text.toString()
+                if (text.isNotBlank()) answer = text.toString()
                 if (calls.isEmpty()) return@use answer
-                val responses = calls.map { call ->
-                    Content.ToolResponse(call.name, executeTool(tools, bot, group, call.name, call.arguments.toJson(), onStage))
+                val results = calls.map { call ->
+                    call.name to executeTool(tools, bot, group, call.name, call.arguments.toJson(), onStage)
                 }
-                next = Message.tool(Contents.of(responses))
+                // One step left: hand the results back as words with the
+                // wrap-up, so the run ends with its report rather than with
+                // another tool call nobody ever sees.
+                next = if (step >= MAX_STEPS - 2) {
+                    Message.user(
+                        results.joinToString("\n\n") { (name, out) -> "Result of $name:\n$out" } + "\n\n" + WRAP_UP,
+                    )
+                } else {
+                    Message.tool(Contents.of(results.map { (name, out) -> Content.ToolResponse(name, out) }))
+                }
             }
-            answer
+            answer.ifBlank { OUT_OF_STEPS }
         }
     }
 
@@ -1082,8 +1091,27 @@ class LocalBrain(
     private companion object {
         const val TAG = "gbot-local"
 
-        /** Model/tool rounds for a model running on the phone itself. */
-        const val MAX_STEPS = 12
+        /**
+         * Model/tool rounds for a model running on the phone itself. A task
+         * worth asking for — look, read, compare, write — is many rounds, and
+         * stopping at twelve ended most of them with nothing. Tokens are slow
+         * on a phone, so the run's own clock, not this, is what usually stops
+         * a very long one.
+         */
+        const val MAX_STEPS = 24
+
+        /**
+         * Said on the last round a run has, in place of more tool results.
+         * Without it the final round goes on another tool call and the person
+         * is left with silence.
+         */
+        const val WRAP_UP =
+            "This is your last step: no more tools. Write your answer now from what you already have — " +
+                "what you did, what you found, and anything still left for them."
+
+        /** Said when even the wrap-up step produced no words. */
+        const val OUT_OF_STEPS =
+            "I ran out of steps before finishing this one. Ask me to carry on and I'll pick up where I stopped."
 
         /** How many unreadable tool calls one run forgives before it stops. */
         const val MAX_RESCUES = 3

@@ -5,13 +5,16 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.gbot.app.local.BrowserController
 import dev.gbot.app.local.Contract
 import dev.gbot.app.local.LocalDb
+import dev.gbot.app.local.LocalProviders
 import dev.gbot.app.local.LocalSlack
 import dev.gbot.app.local.LocalTools
 import dev.gbot.app.local.RunBook
 import dev.gbot.app.local.SlackEvent
 import dev.gbot.app.local.SlackTarget
+import dev.gbot.app.local.ToolSchema
 import dev.gbot.app.local.receipt
 import dev.gbot.app.local.verifyPrompt
+import dev.gbot.app.net.Provider
 import dev.gbot.app.net.SlackInstall
 import dev.gbot.app.net.SlackLink
 import kotlinx.coroutines.CoroutineScope
@@ -170,5 +173,54 @@ class PhoneParityTest {
         assertTrue(tools.run("file_list", buildJsonObject {}).contains("notes/trip.md"))
         assertTrue(tools.run("file_write", args("../../escape.txt", "x")).startsWith("Use a plain file name"))
         assertTrue(tools.run("file_read", args("../../../shared_prefs/gbot.xml", null)).startsWith("No such file"))
+    }
+
+    @Test
+    fun `a run that uses every step still ends with an answer, not silence`() = runBlocking {
+        val server = MockWebServer()
+        val asks = Collections.synchronizedList(mutableListOf<String>())
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val body = request.body?.utf8().orEmpty()
+                asks.add(body)
+                fun ok(json: String) = MockResponse.Builder().code(200)
+                    .addHeader("Content-Type", "application/json").body(json).build()
+                // Told to wrap up, the model answers; otherwise it keeps working.
+                return if (body.contains("This is your last step")) {
+                    ok("""{"choices":[{"message":{"content":"Found three flights; the cheapest is Friday."}}]}""")
+                } else {
+                    ok(
+                        """{"choices":[{"message":{"content":"","tool_calls":[""" +
+                            """{"id":"c1","type":"function","function":{"name":"web_search","arguments":"{}"}}]}}]}""",
+                    )
+                }
+            }
+        }
+        server.start()
+        try {
+            val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+            val db = LocalDb(ctx)
+            val providers = LocalProviders(ctx, db)
+            val p = Provider(id = "p1", name = "Mock", kind = "openai", baseUrl = server.url("/v1").toString().trimEnd('/'), models = listOf("m1"))
+            db.putProvider(p)
+            val ran = Collections.synchronizedList(mutableListOf<String>())
+            val search = ToolSchema("web_search", "search", buildJsonObject {})
+
+            val answer = providers.run(
+                p, "m1", "be useful", emptyList(), "find flights", listOf(search),
+                onText = {},
+                execute = { call -> ran.add(call.name); "three results" },
+            )
+
+            // The phone matches the server's own bound rather than stopping a task halfway.
+            assertEquals(40, LocalProviders.MAX_STEPS)
+            assertEquals("Found three flights; the cheapest is Friday.", answer)
+            // Every step but the last did work; the last one wrote the answer.
+            assertEquals(LocalProviders.MAX_STEPS, asks.size)
+            assertEquals(LocalProviders.MAX_STEPS - 1, ran.size)
+            assertTrue("the wrap-up is asked for once", asks.count { it.contains("This is your last step") } == 1)
+        } finally {
+            server.close()
+        }
     }
 }
