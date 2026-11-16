@@ -1,8 +1,6 @@
 package dev.gbot.app.ui
 
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -10,6 +8,16 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,7 +41,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -267,28 +274,95 @@ fun TopBar(title: String, onBack: (() -> Unit)?, subtitle: String? = null, lead:
 }
 
 /**
- * The gbot mark, like the app icon: a white bot head touching the base of
- * a black tile. Tap it and it hops; at rest it sits still.
+ * The gbot mark, like the app icon: a white bot head touching the base of a
+ * dark tile. The tile is a lit object rather than a flat sticker — a sheen
+ * along its top edge, the head rounded by the same light the bots use, and
+ * a soft contact shadow on light paper, where a flat black square otherwise
+ * sits on the page like a hole. Tap it and it hops; at rest it sits still.
  */
 @Composable
 fun GbotLogo(size: Int = 30, onClick: (() -> Unit)? = null) {
-    var happy by remember { mutableStateOf(false) }
-    LaunchedEffect(happy) {
-        if (happy) { delay(900); happy = false }
-    }
-    val lift by animateFloatAsState(if (happy) -2.5f else 0f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow), label = "lift")
-    Box(Modifier.size(44.dp).pressable { happy = true; onClick?.invoke() }.semantics { contentDescription = "gbot" }, contentAlignment = Alignment.Center) {
-        Box(Modifier.size(size.dp).offset(y = lift.dp).clip(RoundedCornerShape(size * 0.3f)).background(Color(0xFF141414)), contentAlignment = Alignment.Center) {
+    val g = LocalG.current
+    val hop = remember { Animatable(1f) }
+    val scope = rememberCoroutineScope()
+    Box(
+        Modifier.size(maxOf(44, size).dp)
+            .pressable { scope.launch { hop.snapTo(0f); hop.animateTo(1f, tween(560, easing = LinearEasing)) }; onClick?.invoke() }
+            .semantics { contentDescription = "gbot" },
+        contentAlignment = Alignment.Center,
+    ) {
+        val h = hop.value
+        val air = ((h - 0.10f) / 0.62f).coerceIn(0f, 1f)
+        val up = if (h > 0.10f && h < 0.72f) 0.20f * (4f * air * (1f - air)) else 0f
+        val squash = if (h >= 1f) 0f else keyframe(h, 0f to 0f, .09f to 1f, .2f to 0f, .7f to 0f, .78f to 1f, 1f to 0f)
+        Box(
+            Modifier.size(size.dp).graphicsLayer {
+                translationY = -up * this.size.height
+                scaleX = 1f + 0.10f * squash
+                scaleY = 1f - 0.10f * squash
+                transformOrigin = TransformOrigin(0.5f, 1f)
+            },
+        ) {
             Canvas(Modifier.matchParentSize()) {
                 val unit = this.size.minDimension / 108f
                 withTransform({ scale(unit, unit, Offset.Zero) }) {
-                    drawCircle(Color.White, 38f, Offset(54f, 70f))
+                    val r = CornerRadius(32f)
+                    val tile = Path().apply {
+                        addRoundRect(RoundRect(Rect(0f, 0f, 108f, 108f), r))
+                    }
+                    // Light paper: the mark casts, so it sits on the page.
+                    if (!g.dark) withTransform({ scale(0.94f, 0.3f, Offset(54f, 108f)) }) {
+                        drawCircle(
+                            Brush.radialGradient(
+                                0f to Color.Black.copy(alpha = 0.22f), 0.6f to Color.Black.copy(alpha = 0.08f),
+                                1f to Color.Transparent, center = Offset(54f, 110f), radius = 56f,
+                            ),
+                            56f, Offset(54f, 110f),
+                        )
+                    }
+                    drawPath(
+                        tile,
+                        Brush.verticalGradient(
+                            0f to Color(if (g.dark) 0xFF2A2A2A else 0xFF303030),
+                            0.55f to Color(0xFF191919),
+                            1f to Color(if (g.dark) 0xFF0E0E0E else 0xFF0D0D0D),
+                            startY = 0f, endY = 108f,
+                        ),
+                    )
+                    clipPath(tile) {
+                        // The key light catching the tile's top bevel.
+                        drawPath(tile, Brush.verticalGradient(
+                            0f to Color.White.copy(alpha = 0.22f), 1f to Color.Transparent,
+                            startY = 0f, endY = 42f,
+                        ), style = Stroke(4.5f))
+                        // The head, lit from the upper left like the bots.
+                        drawCircle(
+                            Brush.radialGradient(
+                                0f to Color.White,
+                                0.55f to Color(0xFFF4F3F0),
+                                1f to Color(0xFFD9D6CE),
+                                center = Offset(40f, 52f), radius = 72f,
+                            ),
+                            38f, Offset(54f, 70f),
+                        )
+                    }
                     drawRoundRect(Color(0xFF141414), Offset(40f, 55.5f), Size(9f, 21f), CornerRadius(4.5f))
                     drawRoundRect(Color(0xFF141414), Offset(59f, 55.5f), Size(9f, 21f), CornerRadius(4.5f))
+                    // On a dark page the tile would melt into the chrome.
+                    if (g.dark) drawPath(tile, Color.White.copy(alpha = 0.10f), style = Stroke(2f))
                 }
             }
         }
     }
+}
+
+/** Piecewise-linear keyframes: (at, value) pairs. */
+private fun keyframe(p: Float, vararg k: Pair<Float, Float>): Float {
+    for (i in 1 until k.size) if (p <= k[i].first) {
+        val (a, va) = k[i - 1]; val (b, vb) = k[i]
+        return va + (vb - va) * ((p - a) / (b - a)).coerceIn(0f, 1f)
+    }
+    return k.last().second
 }
 
 /** A titled screen with a scrolling body that stays clear of the keyboard. */

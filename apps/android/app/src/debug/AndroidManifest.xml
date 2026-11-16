@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug-only: a contact sheet of every bot, for eyeballing the rig. -->
+        <activity
+            android:name=".GbotPreviewActivity"
+            android:exported="true"
+            android:theme="@style/Gbot" />
+    </application>
+</manifest>
