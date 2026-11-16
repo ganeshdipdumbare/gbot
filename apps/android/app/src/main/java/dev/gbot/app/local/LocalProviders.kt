@@ -182,7 +182,10 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                 }
             }
         }
-        repeat(MAX_STEPS) {
+        var said = ""
+        for (step in 0 until MAX_STEPS) {
+            val last = step == MAX_STEPS - 1
+            if (last) messages += buildJsonObject { put("role", "user"); put("content", WRAP_UP) }
             val body = buildJsonObject {
                 put("model", model)
                 put("stream", false)
@@ -190,9 +193,11 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                 if (toolJson.isNotEmpty()) put("tools", JsonArray(toolJson))
             }
             val r = post("$base/chat/completions", mapOf("Authorization" to "Bearer $key"), body)
-            val msg = r["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")?.jsonObject ?: return ""
+            val msg = r["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")?.jsonObject
+                ?: return said.ifBlank { UNREADABLE }
             val text = msg["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
             if (text.isNotEmpty()) onText(text)
+            if (text.isNotBlank()) said = text
             val calls = (msg["tool_calls"] as? JsonArray).orEmpty().mapNotNull { c ->
                 val f = c.jsonObject["function"]?.jsonObject ?: return@mapNotNull null
                 ToolCall(
@@ -201,7 +206,9 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = parseObject(f["arguments"]?.jsonPrimitive?.contentOrNull),
                 )
             }
-            if (calls.isEmpty()) return text
+            if (calls.isEmpty()) return said
+            // The wrap-up step's tool calls are ignored: it was told to answer.
+            if (last) return said.ifBlank { OUT_OF_STEPS }
             messages += buildJsonObject {
                 put("role", "assistant")
                 put("content", text)
@@ -215,7 +222,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                 }
             }
         }
-        return ""
+        return said.ifBlank { OUT_OF_STEPS }
     }
 
     private suspend fun anthropic(
@@ -228,7 +235,12 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
         val toolJson = tools.map { t ->
             buildJsonObject { put("name", t.name); put("description", t.description); put("input_schema", t.parameters) }
         }
-        repeat(MAX_STEPS) {
+        var said = ""
+        for (step in 0 until MAX_STEPS) {
+            val last = step == MAX_STEPS - 1
+            // The tool list stays on the last step: a conversation holding
+            // tool_use blocks is rejected without it. The words do the work.
+            if (last) messages += buildJsonObject { put("role", "user"); put("content", WRAP_UP) }
             val body = buildJsonObject {
                 put("model", model)
                 put("max_tokens", 4096)
@@ -252,6 +264,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                 if (o["type"]?.jsonPrimitive?.contentOrNull == "text") o["text"]?.jsonPrimitive?.contentOrNull else null
             }.joinToString("")
             if (text.isNotEmpty()) onText(text)
+            if (text.isNotBlank()) said = text
             val calls = blocks.mapNotNull { b ->
                 val o = b.jsonObject
                 if (o["type"]?.jsonPrimitive?.contentOrNull != "tool_use") return@mapNotNull null
@@ -261,7 +274,8 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = (o["input"] as? JsonObject) ?: JsonObject(emptyMap()),
                 )
             }
-            if (calls.isEmpty()) return text
+            if (calls.isEmpty()) return said
+            if (last) return said.ifBlank { OUT_OF_STEPS }
             messages += buildJsonObject { put("role", "assistant"); put("content", JsonArray(blocks.toList())) }
             val results = buildJsonArray {
                 calls.forEach { c ->
@@ -274,7 +288,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
             }
             messages += buildJsonObject { put("role", "user"); put("content", results) }
         }
-        return ""
+        return said.ifBlank { OUT_OF_STEPS }
     }
 
     private suspend fun gemini(
@@ -287,7 +301,13 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
         val toolJson = tools.map { t ->
             buildJsonObject { put("name", t.name); put("description", t.description); put("parameters", t.parameters) }
         }
-        repeat(MAX_STEPS) {
+        var said = ""
+        for (step in 0 until MAX_STEPS) {
+            val last = step == MAX_STEPS - 1
+            if (last) contents += buildJsonObject {
+                put("role", "user")
+                putJsonArray("parts") { addJsonObject { put("text", WRAP_UP) } }
+            }
             val body = buildJsonObject {
                 putJsonObject("systemInstruction") { putJsonArray("parts") { addJsonObject { put("text", system) } } }
                 put("contents", JsonArray(contents))
@@ -295,9 +315,10 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
             }
             val r = post("$base/models/$model:generateContent?key=$key", emptyMap(), body)
             val parts = r["candidates"]?.jsonArray?.firstOrNull()?.jsonObject?.get("content")?.jsonObject?.get("parts")?.jsonArray
-                ?: return ""
+                ?: return said.ifBlank { UNREADABLE }
             val text = parts.mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }.joinToString("")
             if (text.isNotEmpty()) onText(text)
+            if (text.isNotBlank()) said = text
             val calls = parts.mapNotNull { p ->
                 val f = p.jsonObject["functionCall"]?.jsonObject ?: return@mapNotNull null
                 ToolCall(
@@ -306,7 +327,8 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = (f["args"] as? JsonObject) ?: JsonObject(emptyMap()),
                 )
             }
-            if (calls.isEmpty()) return text
+            if (calls.isEmpty()) return said
+            if (last) return said.ifBlank { OUT_OF_STEPS }
             contents += buildJsonObject {
                 put("role", "model")
                 putJsonArray("parts") {
@@ -335,7 +357,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                 }
             }
         }
-        return ""
+        return said.ifBlank { OUT_OF_STEPS }
     }
 
     private fun wireOpenAI(m: Message): JsonObject =
@@ -375,10 +397,27 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
     companion object {
         /**
          * Model/tool rounds in one answer. A real task — search, read,
-         * compare, write — is many rounds; the server allows 40, so the
-         * phone should not stop a task at eight.
+         * compare, write — is many rounds, so the phone matches the server's
+         * own bound rather than stopping a task halfway. The run's clock is
+         * the real limit; this only stops a model that loops forever.
          */
-        const val MAX_STEPS = 24
+        const val MAX_STEPS = 40
+
+        /**
+         * Said on the last round a run has. Without it a long task spends its
+         * final round on another tool call and the person gets nothing: the
+         * model must spend that round writing what it found instead.
+         */
+        const val WRAP_UP =
+            "This is your last step: no more tools. Write your answer now from what you already have — " +
+                "what you did, what you found, and anything still left for them."
+
+        /** Said when even the wrap-up step produced no words. */
+        const val OUT_OF_STEPS =
+            "I ran out of steps before finishing this one. Ask me to carry on and I'll pick up where I stopped."
+
+        /** Said when a provider answers with something this app can't read. */
+        const val UNREADABLE = "The provider sent a reply I couldn't read. Check the endpoint in Settings → Models."
 
         /** "api.openai.com" means /v1; a path the person typed is kept as is. */
         fun normalizeBase(kind: String?, raw: String): String {
