@@ -644,20 +644,43 @@ func (r *Runtime) rosterSummary(ctx context.Context, j *Job) (string, error) {
 // rosterPick finds the bot the main bot named, by name, the way
 // message_bot resolves a peer. A name it doesn't have is an error that
 // lists the ones it does. The returned bot carries the viewer's role.
+// When several bots share a name, the person's own wins so a teammate's
+// team-visible Scout isn't rewritten by accident.
 func (r *Runtime) rosterPick(ctx context.Context, j *Job, name string) (*store.Bot, error) {
 	want := strings.TrimPrefix(strings.TrimSpace(name), "@")
 	list, err := r.store.ListBots(ctx, j.Bot.SpaceID, j.user())
 	if err != nil {
 		return nil, err
 	}
+	return rosterPickFrom(list, want, j.user())
+}
+
+// rosterPickFrom resolves a name against a roster. Own bots win ties;
+// several matches with no clear owner preference are rejected as ambiguous.
+func rosterPickFrom(list []*store.Bot, want, viewer string) (*store.Bot, error) {
 	var names []string
+	var matches, owned []*store.Bot
 	for _, p := range list {
-		if strings.EqualFold(p.Name, want) {
-			return p, nil
-		}
 		names = append(names, p.Name)
+		if !strings.EqualFold(p.Name, want) {
+			continue
+		}
+		matches = append(matches, p)
+		if p.OwnerID == viewer || p.Role == "owner" {
+			owned = append(owned, p)
+		}
 	}
-	return nil, fmt.Errorf("no bot named %q; the person has %s", want, strings.Join(names, ", "))
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no bot named %q; the person has %s", want, strings.Join(names, ", "))
+	}
+	candidates := matches
+	if len(owned) > 0 {
+		candidates = owned
+	}
+	if len(candidates) > 1 {
+		return nil, fmt.Errorf("more than one bot named %q; rename one so it's clear which to change", want)
+	}
+	return candidates[0], nil
 }
 
 // rosterCanManage mirrors the API's manage check: owner or manager.

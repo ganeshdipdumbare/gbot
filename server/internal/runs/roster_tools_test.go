@@ -95,3 +95,32 @@ func TestRosterRoleGates(t *testing.T) {
 		}
 	}
 }
+
+// When two Scouts are visible, the person's own is the one the roster
+// tools change — not whichever ListBots returned first.
+func TestRosterPickPrefersOwnBot(t *testing.T) {
+	me := "user-me"
+	theirs := "user-them"
+	mine := &store.Bot{ID: "mine", Name: "Scout", OwnerID: me, Role: "owner", Title: "mine"}
+	shared := &store.Bot{ID: "theirs", Name: "Scout", OwnerID: theirs, Role: "collaborator", Title: "theirs"}
+	// Teammate first in the list, the way a pinned team bot can sort.
+	got, err := rosterPickFrom([]*store.Bot{shared, mine}, "scout", me)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != mine.ID {
+		t.Fatalf("picked %s, want the person's own Scout", got.ID)
+	}
+
+	// Two of their own with the same name: refuse rather than guess.
+	otherMine := &store.Bot{ID: "mine2", Name: "Scout", OwnerID: me, Role: "owner"}
+	if _, err := rosterPickFrom([]*store.Bot{mine, otherMine}, "Scout", me); err == nil || !strings.Contains(err.Error(), "more than one") {
+		t.Fatalf("ambiguous own bots: %v", err)
+	}
+
+	// Only a teammate's bot matches: still resolvable when the name is unique.
+	got, err = rosterPickFrom([]*store.Bot{shared}, "Scout", me)
+	if err != nil || got.ID != shared.ID {
+		t.Fatalf("unique teammate bot: got %v err %v", got, err)
+	}
+}
