@@ -3,7 +3,6 @@ package dev.gbot.app.ui
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -14,6 +13,8 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
@@ -25,14 +26,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -40,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import dev.gbot.app.net.Look
 import kotlinx.coroutines.delay
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.random.Random
@@ -61,9 +66,11 @@ private fun keys(p: Float, vararg k: Pair<Float, Float>): Float {
 }
 
 /**
- * A gbot: one of eight geometric bodies, a bold color and two eyes. Volume
- * comes from a Grok-style spherical fill on a single clean path — not from
- * a dark rim or a triangle mesh.
+ * A gbot: one of eight geometric bodies, a bold colour and two eyes, lit the
+ * way the web rig lights its 3D pillow — thickness under the front face, a
+ * key light on the top bevel, a rim down the right, and the under-edge in
+ * shade. Looking around turns the body in perspective rather than sliding a
+ * face across a flat disc.
  */
 val LocalSharedScope = compositionLocalOf<SharedTransitionScope?> { null }
 val LocalAnimScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
@@ -80,10 +87,19 @@ fun Gbot(
     val meta = bodies.getValue(t.shape)
     val path = remember(t.shape) { bodyPath(t.shape) }
     val bounds = remember(path) { path.getBounds() }
-    val bg = LocalG.current.bg
+    val g = LocalG.current
     val happy = mood == "done" || mood == "happy"
     val small = size < 48
     val simple = size < 56
+    // Below this the avatar is a dot in a list: one flat layer, no perspective.
+    val flat = size < 30
+
+    // Each bot keeps its own clock — phase, speed and how much it moves — so
+    // a roster never breathes in lockstep, and no two bots feel alike at rest.
+    val own = remember(seed) {
+        val r = rng("beat:$seed")
+        floatArrayOf(r().toFloat(), 0.88f + 0.24f * r().toFloat(), 0.85f + 0.3f * r().toFloat())
+    }
 
     var blink by remember { mutableStateOf(false) }
     if (!happy && mood != "sleepy") LaunchedEffect(lively) {
@@ -93,7 +109,7 @@ fun Gbot(
             if (lively && Random.nextFloat() < 0.35f) { delay(190); blink = true; delay(95); blink = false }
         }
     }
-    val blinkY by animateFloatAsState(if (blink) 0.1f else 1f, tween(80), label = "blink")
+    val blinkY by animateFloatAsState(if (blink) 0.1f else 1f, tween(70), label = "blink")
 
     var drift by remember { mutableStateOf(Offset.Zero) }
     if (mood == "idle" && !small) LaunchedEffect(lively) {
@@ -104,13 +120,17 @@ fun Gbot(
             else Offset((Random.nextFloat() - 0.5f) * spread, (Random.nextFloat() - 0.5f) * (if (lively) 1.3f else 0.8f))
         }
     } else LaunchedEffect(Unit) { drift = Offset.Zero }
-    val soft = spring<Float>(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow)
+    val soft = spring<Float>(dampingRatio = 0.62f, stiffness = 260f)
     val gazeX by animateFloatAsState(drift.x, soft, label = "gx")
     val gazeY by animateFloatAsState(drift.y, soft, label = "gy")
     val gx = gazeX * 2.4f; val gy = gazeY * 1.6f
     val px = gazeX * 3f; val py = gazeY * 2f
+    // The web turns the whole body toward what it looks at; so does this one.
+    val yaw = if (flat) 0f else gazeX.coerceIn(-1.2f, 1.2f) * 13f
+    val pitch = if (flat) 0f else -gazeY.coerceIn(-1.2f, 1.2f) * 8f
 
-    val bouncy = spring<Float>(dampingRatio = 0.5f, stiffness = 420f)
+    // Eyes land fast: a mood should be legible before the body finishes moving.
+    val bouncy = spring<Float>(dampingRatio = 0.52f, stiffness = 700f)
     val poses = listOf(-1, 1).map { pose(mood, it, gx, gy) }
     val l = poses[0]; val r = poses[1]
     val ltx by animateFloatAsState(l.tx, bouncy, label = "ltx"); val lty by animateFloatAsState(l.ty, bouncy, label = "lty")
@@ -119,9 +139,9 @@ fun Gbot(
     val rtx by animateFloatAsState(r.tx, bouncy, label = "rtx"); val rty by animateFloatAsState(r.ty, bouncy, label = "rty")
     val rsx by animateFloatAsState(r.sx, bouncy, label = "rsx"); val rsy by animateFloatAsState(r.sy, bouncy, label = "rsy")
     val rrot by animateFloatAsState(r.rot, bouncy, label = "rrot")
-    val happyA by animateFloatAsState(if (happy) 1f else 0f, tween(180), label = "happy")
+    val happyA by animateFloatAsState(if (happy) 1f else 0f, tween(150), label = "happy")
 
-    val period = when {
+    val period = ((when {
         mood == "idle" && small -> 0
         mood == "sleepy" && small -> 0
         mood == "idle" -> if (lively) 3100 else 4200
@@ -131,14 +151,22 @@ fun Gbot(
         mood == "blocked" -> 2600
         mood == "sleepy" -> 6000
         else -> 0
-    }
+    }) * own[1]).toInt()
     val phase = if (period > 0) {
         val inf = rememberInfiniteTransition(label = "body")
         val p by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(period, easing = LinearEasing), RepeatMode.Restart), label = "phase")
-        p
+        (p + own[0]) % 1f
     } else 0f
+
+    // A mood change lands with a little weight behind it.
+    val pop = remember { Animatable(0f) }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(mood) {
+        if (settled && !flat) { pop.snapTo(1f); pop.animateTo(0f, spring(dampingRatio = 0.34f, stiffness = 900f)) }
+        settled = true
+    }
     val hop = remember { Animatable(1f) }
-    LaunchedEffect(happy) { if (happy) { hop.snapTo(0f); hop.animateTo(1f, tween(700)) } }
+    LaunchedEffect(happy) { if (happy) { hop.snapTo(0f); hop.animateTo(1f, tween(640, easing = LinearEasing)) } }
     val pulse = if (live) {
         val inf = rememberInfiniteTransition(label = "live")
         val p by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1800, easing = LinearEasing)), label = "pulse")
@@ -150,24 +178,33 @@ fun Gbot(
     val k = tri(phase)
     when {
         happy -> {
+            // A hop with weight: a quick crouch, a gravity arc, a landing squash.
             val h = hop.value
-            ty = keys(h, 0f to 0f, .2f to 0f, .5f to -.14f, .8f to 0f, 1f to 0f)
-            sx = keys(h, 0f to 1f, .2f to 1.08f, .5f to .95f, .8f to 1.04f, 1f to 1f)
-            sy = keys(h, 0f to 1f, .2f to .9f, .5f to 1.06f, .8f to .96f, 1f to 1f)
+            val air = ((h - 0.10f) / 0.62f).coerceIn(0f, 1f)
+            ty = if (h > 0.10f && h < 0.72f) -0.21f * (4f * air * (1f - air)) else 0f
+            val squash = keys(h, 0f to 0f, .09f to 1f, .2f to 0f, .7f to 0f, .78f to 1f, 1f to 0f)
+            val stretch = if (h > 0.10f && h < 0.72f) 1f - abs(2f * air - 1f) else 0f
+            sx = 1f + 0.11f * squash - 0.05f * stretch
+            sy = 1f - 0.11f * squash + 0.06f * stretch
         }
         period == 0 -> {}
-        mood == "idle" && lively -> { rot = tilt - 1.4f + 2.8f * k; ty = -0.016f * k; sx = 1 + 0.012f * k; sy = 1 - 0.012f * k }
-        mood == "idle" || mood == "sleepy" -> { sx = 1 + 0.012f * k; sy = 1 - 0.015f * k }
+        mood == "idle" && lively -> {
+            val a = own[2]
+            rot = tilt - 1.4f * a + 2.8f * a * k; ty = -0.016f * a * k
+            sx = 1 + 0.012f * a * k; sy = 1 - 0.012f * a * k
+        }
+        mood == "idle" || mood == "sleepy" -> { sx = 1 + 0.012f * own[2] * k; sy = 1 - 0.015f * own[2] * k }
         mood == "thinking" -> { rot = -4f + 8f * k; scan = -2f + 4f * k }
         mood == "working" -> { ty = -0.035f * k; sx = 1.018f - 0.028f * k; sy = 0.986f + 0.026f * k }
         mood == "waiting" -> rot = -7f + 3f * k
         mood == "blocked" -> rot = keys(phase, 0f to 0f, .7f to 0f, .74f to -5f, .78f to 5f, .82f to -4f, .86f to 3f, .9f to 0f, 1f to 0f)
     }
+    if (!happy) { sx += 0.05f * pop.value; sy -= 0.05f * pop.value }
 
     val eye = Color(hue.eye)
     val (ew, eh) = eyeSizes.getValue(t.eyes)
-    val s = meta.eyeScale
-    val w = ew * s; val h = eh * s; val gap = 12 * s
+    val es = meta.eyeScale
+    val w = ew * es; val h = eh * es; val gap = 12 * es
 
     val shared = LocalSharedScope.current
     val anim = LocalAnimScope.current
@@ -177,54 +214,19 @@ fun Gbot(
         modifier
     }
 
-    val glowCenter = remember(bounds) {
-        Offset(bounds.left + bounds.width * 0.5f, bounds.top + bounds.height * 0.18f)
-    }
-    val glowRadius = remember(bounds) { maxOf(bounds.width, bounds.height) * 0.98f }
-    val bodyBrush = remember(hue.body, glowCenter, glowRadius) {
-        Glow.body(hue.body, glowCenter, glowRadius)
-    }
-    val sheenBrush = remember(glowCenter) {
-        Glow.sheen(Offset(glowCenter.x - 8f, bounds.top + bounds.height * 0.22f), 30f)
-    }
-    val formBrush = remember(bounds) {
-        Brush.verticalGradient(
-            0f to Color(0x38FFFFFF),
-            0.16f to Color.Transparent,
-            0.78f to Color.Transparent,
-            1f to Color(0x2A000000),
-            startY = bounds.top,
-            endY = bounds.bottom,
-        )
-    }
-    val shadowBrush = remember {
-        Brush.radialGradient(
-            0f to Color(0x38000000), 0.55f to Color(0x14000000), 1f to Color.Transparent,
-            center = Offset(50f, 95.5f), radius = 28f,
-        )
-    }
-    Canvas(shaped.size(size.dp).semantics { contentDescription = "bot" }) {
-        val unit = this.size.minDimension / 106f
-        withTransform({ scale(unit, unit, Offset.Zero); translate(3f, 3f) }) {
-            withTransform({ scale(1f, 3.4f / 28f, Offset(50f, 95.5f)) }) {
-                drawCircle(shadowBrush, 28f, Offset(50f, 95.5f))
-            }
-            val pivot = Offset(bounds.center.x, bounds.bottom)
+    val paint = remember(hue.body, bounds, g.dark) { Glow.paint(hue.body, bounds, g.dark) }
+    // Off the ground the shadow shrinks and fades, as it does in the web rig.
+    val lift = (-ty / 0.21f).coerceIn(0f, 1f)
+    val bg = g.bg
+
+    val body: DrawScope.() -> Unit = {
+        box {
             withTransform({
-                rotate(rot, pivot)
+                rotate(rot, Offset(bounds.center.x, bounds.bottom))
                 translate(0f, ty * bounds.height)
-                scale(sx, sy, pivot)
+                scale(sx, sy, Offset(bounds.center.x, bounds.bottom))
             }) {
-                drawPath(path, bodyBrush)
-                if (!simple) clipPath(path) {
-                    drawRect(formBrush)
-                    withTransform({
-                        translate(-px * 0.3f, -py * 0.3f)
-                        scale(1f, 0.58f, Offset(glowCenter.x - 8f, bounds.top + bounds.height * 0.22f))
-                    }) {
-                        drawCircle(sheenBrush, 30f, Offset(glowCenter.x - 8f, bounds.top + bounds.height * 0.22f))
-                    }
-                }
+                drawBody(path, bounds, paint, simple, flat, px, py)
                 withTransform({
                     translate(px + scan, py)
                     scale(1f, blinkY, Offset(meta.faceX, meta.faceY))
@@ -246,20 +248,80 @@ fun Gbot(
                         }
                         if (happyA > 0f) {
                             val arc = Path().apply {
-                                moveTo(cx - 7 * s, cy + 3)
-                                quadraticTo(cx, cy - 7 * s, cx + 7 * s, cy + 3)
+                                moveTo(cx - 7 * es, cy + 3)
+                                quadraticTo(cx, cy - 7 * es, cx + 7 * es, cy + 3)
                             }
-                            drawPath(arc, eye.copy(alpha = happyA), style = Stroke(width = 6 * s, cap = StrokeCap.Round))
+                            drawPath(arc, eye.copy(alpha = happyA), style = Stroke(width = 6 * es, cap = StrokeCap.Round))
                         }
                     }
                 }
             }
-            if (live) {
-                withTransform({ scale(pulse, pulse, Offset(84f, 84f)) }) {
-                    drawCircle(bg, 9f, Offset(84f, 84f))
-                    drawCircle(Color(0xFF8B5CF6), 7.5f, Offset(84f, 84f))
-                }
+        }
+    }
+    val ground: DrawScope.() -> Unit = {
+        box { drawGround(paint, lift, sx) }
+    }
+    val dot: DrawScope.() -> Unit = {
+        if (live) box {
+            withTransform({ scale(pulse, pulse, Offset(84f, 84f)) }) {
+                drawCircle(bg, 9f, Offset(84f, 84f))
+                drawCircle(g.live, 7.5f, Offset(84f, 84f))
             }
         }
     }
+
+    val canvas = shaped.size(size.dp).semantics { contentDescription = "bot" }
+    if (flat) {
+        Canvas(canvas) { ground(); body(); dot() }
+    } else {
+        // The body turns in its own layer, so the shadow stays on the floor.
+        val pivotY = (3f + bounds.bottom) / 106f
+        Box(canvas) {
+            Canvas(Modifier.fillMaxSize()) { ground() }
+            Canvas(
+                Modifier.fillMaxSize().graphicsLayer {
+                    rotationY = yaw
+                    rotationX = pitch
+                    cameraDistance = 5f
+                    transformOrigin = TransformOrigin(0.5f, pivotY)
+                },
+            ) { body() }
+            if (live) Canvas(Modifier.fillMaxSize()) { dot() }
+        }
+    }
+}
+
+/** Draw in the 106-unit box the bodies are cut for, margin included. */
+internal inline fun DrawScope.box(crossinline content: DrawScope.() -> Unit) {
+    val unit = size.minDimension / 106f
+    withTransform({ scale(unit, unit, Offset.Zero); translate(3f, 3f) }) { content() }
+}
+
+internal fun DrawScope.drawGround(paint: BotPaint, lift: Float, sx: Float) {
+    val w = (1f - lift * 0.35f) * sx
+    withTransform({ scale(w, w * 3.4f / 30f, Offset(50f, 95.5f)) }) {
+        drawCircle(paint.shadow, 30f, Offset(50f, 95.5f), alpha = 1f - lift * 0.75f)
+    }
+}
+
+internal fun DrawScope.drawBody(
+    path: Path, b: Rect, paint: BotPaint, simple: Boolean, flat: Boolean, px: Float, py: Float,
+) {
+    // The body's thickness, peeking out under the front face.
+    if (!flat) withTransform({ translate(0f, 2.4f) }) { drawPath(path, paint.wall) }
+    drawPath(path, paint.face)
+    clipPath(path) {
+        if (!flat) {
+            drawPath(path, paint.crown, style = Stroke(5.2f))
+            drawPath(path, paint.rim, style = Stroke(4f))
+            drawPath(path, paint.under, style = Stroke(7f))
+        }
+        if (!simple) withTransform({
+            translate(-px * 0.3f, -py * 0.3f)
+            scale(1f, 0.62f, paint.sheenAt)
+        }) {
+            drawCircle(paint.sheen, maxOf(b.width, b.height) * 0.30f, paint.sheenAt)
+        }
+    }
+    drawPath(path, paint.contour, style = Stroke(if (flat) 1.8f else 1.4f))
 }
