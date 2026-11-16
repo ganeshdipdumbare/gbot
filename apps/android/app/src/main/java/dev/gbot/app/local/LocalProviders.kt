@@ -231,7 +231,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
         repeat(MAX_STEPS) {
             val body = buildJsonObject {
                 put("model", model)
-                put("max_tokens", 1024)
+                put("max_tokens", 4096)
                 // The system prompt and the tool list are the same on every
                 // step of a run and every turn of a chat; caching them cuts
                 // the wait before the first word (and the bill with it).

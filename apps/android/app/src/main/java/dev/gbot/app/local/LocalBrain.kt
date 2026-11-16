@@ -595,7 +595,7 @@ class LocalBrain(
             },
             automaticToolCalling = false,
             samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7, seed = 0),
-            maxOutputToken = 512,
+            maxOutputToken = 2048,
         )
 
         val schemas = tools.schemas + mcpTools
@@ -827,7 +827,7 @@ class LocalBrain(
             appendLine()
             appendLine("How to reply:")
             appendLine("- Answer in the first line. No preamble, no restating the question, no greeting, no sign-off.")
-            appendLine("- Two or three sentences, or up to five short bullets. Say it once.")
+            appendLine("- A short answer in a few sentences or bullets. For a task, as many short bullets as the work needs. Say it once.")
             appendLine("- Markdown for shape only: short bullets, `code` for commands and values, **bold** for the number or result that matters. No headings.")
             appendLine("- Report work as one line per step: what you did, the result, what's left for them.")
             appendLine("- If you can answer from this chat, your memory or what you already know, answer now and call no tools.")
