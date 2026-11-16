@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -11,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gbot/internal/crypto"
 	mcpoauth "gbot/internal/mcp"
 	"gbot/internal/store"
 )
@@ -20,14 +22,24 @@ import (
 // redirects back; nothing secret is sent to the page.
 type mcpPending struct {
 	user, name, serverURL, redirect, verifier string
-	client                                    *mcpoauth.Client
-	cfg                                       *mcpoauth.Config
-	expires                                   time.Time
+	// bind is also set as a cookie in the browser that started the sign-in.
+	// The callback must come back with it, so a link planted for someone
+	// else cannot finish a flow that person did not start.
+	bind    string
+	client  *mcpoauth.Client
+	cfg     *mcpoauth.Config
+	expires time.Time
 }
 
 const oauthTTL = 15 * time.Minute
 
+const oauthBindCookie = "gbot_oauth_bind"
+
 func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
+	if !s.probeLimit.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "too many sign-in attempts, try again in a minute")
+		return
+	}
 	var body struct {
 		Name string `json:"name"`
 		URL  string `json:"url"`
@@ -54,13 +66,16 @@ func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := mcpoauth.Discover(ctx, u.String())
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		// The detail names internal hosts and statuses; keep it in the log.
+		s.Log.Warn("mcp oauth discover", "err", err)
+		writeErr(w, 400, "couldn't set up sign-in with that app. Check the address, or add it with a token instead.")
 		return
 	}
 	redirect := base + "/api/mcp/oauth/callback"
 	client, err := mcpoauth.Register(ctx, cfg, redirect)
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		s.Log.Warn("mcp oauth register", "err", err)
+		writeErr(w, 400, "that app didn't accept a sign-in from gbot. Add it with a token instead.")
 		return
 	}
 	state, err := mcpoauth.Random(32)
@@ -73,6 +88,15 @@ func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "could not start the sign-in")
 		return
 	}
+	bind, err := mcpoauth.Random(32)
+	if err != nil {
+		writeErr(w, 500, "could not start the sign-in")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: oauthBindCookie, Value: bind, Path: "/api/mcp/oauth", MaxAge: int(oauthTTL.Seconds()),
+		HttpOnly: true, Secure: s.SecureCookies, SameSite: http.SameSiteLaxMode,
+	})
 	s.oauthMu.Lock()
 	if s.oauthPending == nil {
 		s.oauthPending = map[string]*mcpPending{}
@@ -84,7 +108,7 @@ func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	s.oauthPending[state] = &mcpPending{
 		user: userFrom(r).ID, name: body.Name, serverURL: u.String(), redirect: redirect,
-		verifier: verifier, client: client, cfg: cfg, expires: time.Now().Add(oauthTTL),
+		verifier: verifier, bind: bind, client: client, cfg: cfg, expires: time.Now().Add(oauthTTL),
 	}
 	s.oauthMu.Unlock()
 	writeJSON(w, 200, map[string]string{"url": cfg.AuthURL(client.ID, redirect, state, verifier)})
@@ -138,6 +162,10 @@ func (s *Server) mcpOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		s.oauthPage(w, http.StatusBadRequest, false, "", "This sign-in expired. Start again from Settings.")
 		return
 	}
+	if c, err := r.Cookie(oauthBindCookie); err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(p.bind)) != 1 {
+		s.oauthPage(w, http.StatusBadRequest, false, "", "Finish this sign-in in the same browser where you started it.")
+		return
+	}
 	code := q.Get("code")
 	if code == "" {
 		s.oauthPage(w, http.StatusBadRequest, false, "", "The app didn't return a code.")
@@ -151,7 +179,7 @@ func (s *Server) mcpOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw, _ := json.Marshal(tokens)
-	sealed := s.Sealer.Seal(raw)
+	sealed := s.Sealer.Seal(raw, crypto.Owner("mcp-oauth", p.user))
 	// Reconnecting an app replaces its tokens instead of adding a
 	// second copy of the same server.
 	var m *store.MCPServer

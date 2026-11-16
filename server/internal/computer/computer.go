@@ -129,6 +129,15 @@ func (m *Manager) changed(o Owner) {
 // Ensure starts the bot's computer if needed. network=false gives it no
 // network at all.
 func (m *Manager) Ensure(ctx context.Context, o Owner, network bool) error {
+	return m.ensure(ctx, o, network, 0)
+}
+
+// maxEnsureRetries bounds how often one call re-checks a computer that other
+// calls keep changing. Without it, two calls that want different network
+// settings could keep replacing the box and each other's work.
+const maxEnsureRetries = 3
+
+func (m *Manager) ensure(ctx context.Context, o Owner, network bool, depth int) error {
 	k := o.Key()
 	if !safeID.MatchString(k) {
 		return errors.New("bad bot id")
@@ -151,9 +160,15 @@ func (m *Manager) Ensure(ctx context.Context, o Owner, network bool) error {
 			m.changed(o)
 			return nil
 		}
+		// Network setting changed: recreate. Mark it as busy while it stops,
+		// so no one else uses or replaces it in the meantime.
+		b.starting = true
 		m.mu.Unlock()
-		m.stopKey(context.Background(), k) // network setting changed: recreate
+		m.stopKey(context.Background(), k)
 		m.mu.Lock()
+		if m.boxes[k] == b {
+			delete(m.boxes, k)
+		}
 	}
 	if b := m.boxes[k]; b != nil && b.starting {
 		m.mu.Unlock()
@@ -161,31 +176,58 @@ func (m *Manager) Ensure(ctx context.Context, o Owner, network bool) error {
 			time.Sleep(100 * time.Millisecond)
 			m.mu.Lock()
 			ok := m.boxes[k] != nil && !m.boxes[k].starting
+			matches := ok && m.boxes[k].network == network
 			gone := m.boxes[k] == nil
 			m.mu.Unlock()
-			if ok {
+			if matches {
 				return nil
 			}
+			if ok {
+				// Ready, but with the other network setting: ask again, a
+				// bounded number of times.
+				if depth+1 >= maxEnsureRetries {
+					return errors.New("the computer is being changed by another request; try again")
+				}
+				return m.ensure(ctx, o, network, depth+1)
+			}
 			if gone {
-				return errors.New("the computer failed to start")
+				// The box was replaced or stopped while waiting: try again
+				// from the top, within the same bound.
+				if depth+1 >= maxEnsureRetries {
+					return errors.New("the computer failed to start")
+				}
+				return m.ensure(ctx, o, network, depth+1)
 			}
 		}
 		return errors.New("the computer is taking too long to start")
 	}
-	m.boxes[k] = &box{owner: o, starting: true, network: network, controller: "bot", lastUsed: time.Now()}
+	nb := &box{owner: o, starting: true, network: network, controller: "bot", lastUsed: time.Now()}
+	m.boxes[k] = nb
 	m.mu.Unlock()
 	m.changed(o)
 
 	id, err := m.start(ctx, k, network)
 	m.mu.Lock()
 	if err != nil {
-		delete(m.boxes, k)
-	} else {
-		m.boxes[k].id, m.boxes[k].starting = id, false
+		if m.boxes[k] == nb {
+			delete(m.boxes, k)
+		}
+		m.mu.Unlock()
+		m.changed(o)
+		return err
 	}
+	if m.boxes[k] != nb {
+		// Stopped while it was starting: nothing is tracking this container,
+		// so stop it here rather than leave it running.
+		m.mu.Unlock()
+		m.d.stop(context.Background(), id)
+		m.changed(o)
+		return errors.New("the computer was stopped while it was starting")
+	}
+	nb.id, nb.starting = id, false
 	m.mu.Unlock()
 	m.changed(o)
-	return err
+	return nil
 }
 
 func (m *Manager) start(ctx context.Context, k string, network bool) (string, error) {
@@ -290,16 +332,27 @@ func (m *Manager) Wake(ctx context.Context, o Owner) error {
 func (m *Manager) Stop(ctx context.Context, o Owner) { m.stopKey(ctx, o.Key()) }
 
 // StopBot turns off every person's computer with a bot, e.g. when the bot
-// is deleted.
-func (m *Manager) StopBot(ctx context.Context, botID string) {
+// is deleted. people are the users who might have one; a computer adopted
+// after a restart has no recorded owner, so it is matched by key.
+func (m *Manager) StopBot(ctx context.Context, botID string, people []string) {
 	m.mu.Lock()
+	seen := map[string]bool{}
 	var keys []string
-	for k, b := range m.boxes {
-		if b.owner.Bot == botID {
+	add := func(k string) {
+		if !seen[k] {
+			seen[k] = true
 			keys = append(keys, k)
 		}
 	}
+	for k, b := range m.boxes {
+		if b.owner.Bot == botID {
+			add(k)
+		}
+	}
 	m.mu.Unlock()
+	for _, u := range people {
+		add(Owner{Bot: botID, User: u}.Key())
+	}
 	for _, k := range keys {
 		m.stopKey(ctx, k)
 	}
@@ -405,8 +458,19 @@ func (m *Manager) Exec(ctx context.Context, o Owner, command string, timeout tim
 	return &ExecResult{out, errOut, code}, err
 }
 
-// note adds a line to the Terminal's activity stream.
+// note adds a line to the Terminal's activity stream. Text can come from
+// the web or from a page the bot read, so control characters are removed
+// before it reaches a terminal that renders escape sequences.
 func (m *Manager) note(ctx context.Context, id, symbol, color, text string) {
+	text = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, text)
 	line := fmt.Sprintf("\n\033[38;5;%sm%s\033[0m %s\n", color, symbol, text)
 	_, _, _, _ = m.d.exec(ctx, id, "gbot", nil, []byte(line), false, "sh", "-c", "cat >> /tmp/gbot/activity.log")
 }

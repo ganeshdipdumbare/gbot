@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"gbot/internal/crypto"
+	"gbot/internal/replay"
 	"gbot/internal/runs"
 	"gbot/internal/slack"
 	"gbot/internal/store"
@@ -107,7 +109,7 @@ func (s *Server) slackPost(t slackTarget, text string) {
 	if err != nil || s.Sealer == nil {
 		return
 	}
-	token, err := s.Sealer.Open(in.BotToken)
+	token, err := s.Sealer.Open(in.BotToken, crypto.Owner("slack-bot-token", in.OwnerID))
 	if err != nil {
 		s.Log.Warn("slack: cannot open bot token", "install", t.installID)
 		return
@@ -121,7 +123,7 @@ func (s *Server) slackPost(t slackTarget, text string) {
 // slackEvents is Slack's inbound webhook. It carries no session, so the
 // signature is the only thing that makes it trustworthy.
 func (s *Server) slackEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.hookLimit.Allow(clientIP(r)) {
+	if !s.hookLimit.Allow(s.clientIP(r)) {
 		writeErr(w, 429, "slow down")
 		return
 	}
@@ -161,13 +163,21 @@ func (s *Server) slackEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, "unauthorized")
 		return
 	}
-	secret, err := s.Sealer.Open(in.SigningKey)
+	secret, err := s.Sealer.Open(in.SigningKey, crypto.Owner("slack-signing-key", in.OwnerID))
 	if err != nil {
 		writeErr(w, 401, "unauthorized")
 		return
 	}
 	if !slack.Verify(secret, body, r.Header.Get("X-Slack-Request-Timestamp"), r.Header.Get("X-Slack-Signature"), time.Now()) {
 		writeErr(w, 401, "unauthorized")
+		return
+	}
+	// A signed request is accepted once. Slack retries deliver the same
+	// signature again, and a captured one must not be replayed inside the
+	// timestamp window.
+	if !replay.Accept("slack|"+r.Header.Get("X-Slack-Signature"), time.Now(), 10*time.Minute) {
+		// Already handled: acknowledge it, so Slack does not retry it again.
+		writeJSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
 
@@ -265,7 +275,8 @@ func (s *Server) connectSlack(w http.ResponseWriter, r *http.Request) {
 	}
 	in, err := s.Store.SaveSlackInstall(r.Context(), &store.SlackInstall{
 		SpaceID: u.SpaceID, OwnerID: u.ID, TeamID: body.TeamID, TeamName: strings.TrimSpace(body.TeamName),
-		BotToken: s.Sealer.Seal([]byte(body.BotToken)), SigningKey: s.Sealer.Seal([]byte(body.SigningSecret)),
+		BotToken:   s.Sealer.Seal([]byte(body.BotToken), crypto.Owner("slack-bot-token", u.ID)),
+		SigningKey: s.Sealer.Seal([]byte(body.SigningSecret), crypto.Owner("slack-signing-key", u.ID)),
 	})
 	if err != nil {
 		// The unique key is the workspace, so a clash means another

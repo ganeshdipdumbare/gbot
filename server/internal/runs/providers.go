@@ -14,6 +14,7 @@ import (
 	"gbot/internal/codex"
 	"gbot/internal/crypto"
 	"gbot/internal/models"
+	"gbot/internal/netguard"
 	"gbot/internal/store"
 )
 
@@ -31,7 +32,10 @@ type providerServer struct {
 	prefix  string
 	baseURL string
 	key     string
-	sig     string // kind, endpoint, prefix and a key hash
+	// keyBroken is set when a key is stored but cannot be opened, for
+	// example after GBOT_SECRET_KEY changed. Such a provider must not connect.
+	keyBroken bool
+	sig       string // kind, endpoint, prefix and a key hash
 }
 
 type providerState struct {
@@ -43,15 +47,19 @@ type providerState struct {
 // decodeProvider reads a stored provider, opening its sealed key.
 func decodeProvider(p *store.Provider, sealer *crypto.Sealer) providerServer {
 	key := ""
-	if len(p.Sealed) > 0 && sealer != nil {
-		if raw, err := sealer.Open(p.Sealed); err == nil {
+	broken := false
+	if len(p.Sealed) > 0 {
+		raw, err := sealerOpen(sealer, p.Sealed, crypto.Owner("provider-key", p.UserID))
+		if err != nil {
+			broken = true
+		} else {
 			key = string(raw)
 		}
 	}
 	sum := sha256.Sum256([]byte(key))
 	return providerServer{
 		id: p.ID, owner: p.UserID, name: p.Name, kind: p.Kind, prefix: p.Prefix,
-		baseURL: p.BaseURL, key: key,
+		baseURL: p.BaseURL, key: key, keyBroken: broken,
 		sig: p.Kind + "\n" + p.BaseURL + "\n" + p.Prefix + "\n" + hex.EncodeToString(sum[:]),
 	}
 }
@@ -131,6 +139,9 @@ func validateProvider(p providerServer) error {
 	if p.prefix == "" {
 		return fmt.Errorf("no model prefix")
 	}
+	if p.keyBroken {
+		return fmt.Errorf("the saved API key can't be read; enter it again")
+	}
 	if _, err := url.Parse(p.baseURL); err != nil {
 		return fmt.Errorf("bad endpoint: %w", err)
 	}
@@ -185,7 +196,10 @@ func (r *Runtime) modelFor(model string) (kritrim.Model, error) {
 		return nil, fmt.Errorf("the model %s is not connected", model)
 	}
 	p := st.srv
-	cfg := kritrim.ModelConfig{APIKey: p.key, BaseURL: p.baseURL}
+	// Provider traffic goes through the same guard as discovery, so a
+	// configured address cannot reach the server's own services when
+	// GBOT_BLOCK_PRIVATE_NETWORK is set.
+	cfg := kritrim.ModelConfig{APIKey: p.key, BaseURL: p.baseURL, Client: netguard.Client(10 * time.Minute)}
 	switch p.kind {
 	case "anthropic":
 		return kritrim.Anthropic(name, cfg), nil
@@ -311,4 +325,12 @@ func geminiRoot(base string) string {
 		base = strings.TrimSuffix(base, v)
 	}
 	return base
+}
+
+// sealerOpen opens a sealed value, failing when there is no sealer.
+func sealerOpen(sealer *crypto.Sealer, sealed, aad []byte) ([]byte, error) {
+	if sealer == nil {
+		return nil, fmt.Errorf("secret storage is not configured")
+	}
+	return sealer.Open(sealed, aad)
 }

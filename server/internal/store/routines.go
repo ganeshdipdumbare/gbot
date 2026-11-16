@@ -24,6 +24,12 @@ type Routine struct {
 
 func (r *Routine) SecretHash() []byte { return r.secret }
 
+// NewWebhookRoutine builds a webhook routine with the given secret hash.
+// Used by the code that verifies calls to it, and by its tests.
+func NewWebhookRoutine(secretHash []byte) *Routine {
+	return &Routine{Kind: "webhook", Active: true, secret: secretHash}
+}
+
 const routineCols = `id, bot_id, name, prompt, kind, schedule, secret_hash, active, next_run_at, last_run_at, created_at, user_id`
 
 func scanRoutine(row pgx.Row) (*Routine, error) {

@@ -77,8 +77,10 @@ func (e Event) Thread() string {
 }
 
 var (
-	mention = regexp.MustCompile(`<@[A-Z0-9]+>`)
-	spaces  = regexp.MustCompile(`[ \t]+`)
+	mention   = regexp.MustCompile(`<@[A-Z0-9]+>`)
+	spaces    = regexp.MustCompile(`[ \t]+`)
+	broadcast = regexp.MustCompile(`<!(everyone|channel|here|subteam\^[A-Z0-9|]+)(\|[^>]*)?>`)
+	link      = regexp.MustCompile(`<(https?://[^|>]+)(\|[^>]*)?>`)
 )
 
 // Prompt is the message text with Slack's user mentions removed, so the
@@ -86,7 +88,22 @@ var (
 // gap, so runs of spaces collapse back to one.
 func (e Event) Prompt() string {
 	out := mention.ReplaceAllString(e.Text, " ")
+	// Broadcast tokens would read as commands to the whole channel, and link
+	// markup hides where a link goes; the bot sees plain words and the URL.
+	out = broadcast.ReplaceAllStringFunc(out, func(m string) string {
+		if strings.HasPrefix(m, "<!subteam") {
+			return "@group"
+		}
+		return "@" + strings.TrimSuffix(strings.TrimPrefix(m, "<!"), ">")
+	})
+	out = link.ReplaceAllString(out, "$1")
 	return strings.TrimSpace(spaces.ReplaceAllString(out, " "))
+}
+
+// slackEscape escapes text the way Slack expects in messages, so text the bot
+// writes cannot ping a channel or hide a link behind a label.
+func slackEscape(text string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
 }
 
 // Actionable reports whether this event should start a run.
@@ -128,7 +145,7 @@ func (c *Client) httpClient() *http.Client {
 
 // Post sends text into a channel, in a thread when one is given.
 func (c *Client) Post(ctx context.Context, channel, thread, text string) error {
-	payload := map[string]string{"channel": channel, "text": text}
+	payload := map[string]string{"channel": channel, "text": slackEscape(text)}
 	if thread != "" {
 		payload["thread_ts"] = thread
 	}

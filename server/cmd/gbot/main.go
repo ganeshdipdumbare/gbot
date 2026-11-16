@@ -22,6 +22,7 @@ import (
 	"gbot/internal/computer"
 	"gbot/internal/crypto"
 	"gbot/internal/models"
+	"gbot/internal/netguard"
 	"gbot/internal/routines"
 	"gbot/internal/runs"
 	"gbot/internal/store"
@@ -101,6 +102,12 @@ func run(cmd string, log *slog.Logger) error {
 	sealer, err := crypto.Load(env("GBOT_KEY_FILE", filepath.Join(home, ".config", "gbot", "secret.key")))
 	if err != nil {
 		return err
+	}
+	keyAAD := crypto.Owner("key-check", "instance")
+	seal := func(b []byte) []byte { return sealer.Seal(b, keyAAD) }
+	open := func(b []byte) ([]byte, error) { return sealer.Open(b, keyAAD) }
+	if err := st.CheckSecretKey(ctx, seal, open); err != nil {
+		return fmt.Errorf("%w. Restore the original GBOT_SECRET_KEY (or secret.key file) before starting", err)
 	}
 
 	cat := models.NewCatalog(env("OLLAMA_HOST", "http://127.0.0.1:11434"))
@@ -190,12 +197,18 @@ func run(cmd string, log *slog.Logger) error {
 	if v := env("GBOT_COOKIE_SECURE", ""); v != "" {
 		secureCookies = v == "true"
 	}
+	netguard.BlockPrivate = env("GBOT_BLOCK_PRIVATE_NETWORK", "") == "true"
+	if t := env("GBOT_SETUP_TOKEN", ""); t != "" && len(t) < 16 {
+		return errors.New("GBOT_SETUP_TOKEN must be at least 16 characters")
+	}
 	srv := &api.Server{
 		Store: st, Runtime: rt, Hub: hub, Models: cat, Log: log,
 		Computer: comp, Routines: rs, Sealer: sealer, Voice: api.VoiceFromEnv(),
 		SecureCookies: secureCookies,
 		PublicURL:     strings.TrimRight(env("GBOT_PUBLIC_URL", ""), "/"),
 		AllowSignup:   env("GBOT_SIGNUP", "open") == "open",
+		SetupToken:    env("GBOT_SETUP_TOKEN", ""),
+		TrustProxy:    env("GBOT_TRUST_PROXY", "") != "",
 	}
 	hs := &http.Server{
 		Addr:              addr,

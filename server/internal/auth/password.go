@@ -42,9 +42,18 @@ func CheckPassword(pw, encoded string) (bool, error) {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &m, &t, &p); err != nil {
 		return false, errBadHash
 	}
+	// The parameters come from the stored hash. Bound them, so a malformed
+	// or hostile hash can neither panic argon2 nor take minutes to check.
+	if t < 1 || p < 1 || m < 8*uint32(p) || m > 1<<20 || t > 10 || p > 16 {
+		return false, errBadHash
+	}
 	salt, err1 := base64.RawStdEncoding.DecodeString(parts[4])
 	want, err2 := base64.RawStdEncoding.DecodeString(parts[5])
 	if err1 != nil || err2 != nil {
+		return false, errBadHash
+	}
+	// A key shorter than ours (or an empty one) would match almost anything.
+	if len(want) != argonKeyLen || len(salt) < 8 {
 		return false, errBadHash
 	}
 	got := argon2.IDKey([]byte(pw), salt, t, m, p, uint32(len(want)))

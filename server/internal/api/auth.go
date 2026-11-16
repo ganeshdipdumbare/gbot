@@ -1,7 +1,9 @@
 package api
 
 import (
+	"crypto/subtle"
 	"errors"
+	"net"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -20,17 +22,56 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "database unavailable")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"fresh": n == 0, "signup": n == 0 || s.AllowSignup})
+	writeJSON(w, 200, map[string]any{
+		"fresh":      n == 0,
+		"signup":     n == 0 || s.AllowSignup,
+		"setupToken": n == 0 && s.SetupToken != "",
+	})
+}
+
+// firstAccountAllowed decides who may create the first account on a fresh
+// server. With GBOT_SETUP_TOKEN set, only someone with the token. Without
+// it, only a direct connection from this machine, never one that came
+// through a proxy, so a stranger who reaches a new server first can't
+// claim it.
+func (s *Server) firstAccountAllowed(r *http.Request, token string) bool {
+	if s.SetupToken != "" {
+		return subtle.ConstantTimeCompare([]byte(token), []byte(s.SetupToken)) == 1
+	}
+	if s.TrustProxy {
+		return false
+	}
+	// A proxy usually passes the public host name through, so the Host must
+	// also be a local name.
+	host := r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = h
+	}
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return false
+	}
+	for _, h := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded"} {
+		if r.Header.Get(h) != "" {
+			return false
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 type credentials struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name,omitempty"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	Name       string `json:"name,omitempty"`
+	SetupToken string `json:"setupToken,omitempty"`
 }
 
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimit.Allow(clientIP(r)) {
+	if !s.authLimit.Allow(s.clientIP(r)) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 		return
 	}
@@ -38,8 +79,17 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &c) {
 		return
 	}
-	if n, _ := s.Store.CountUsers(r.Context()); n > 0 && !s.AllowSignup {
+	n, err := s.Store.CountUsers(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	if n > 0 && !s.AllowSignup {
 		writeErr(w, http.StatusForbidden, "sign-ups are closed on this server")
+		return
+	}
+	if n == 0 && !s.firstAccountAllowed(r, c.SetupToken) {
+		writeErr(w, http.StatusForbidden, "this server is new: create the first account from the machine it runs on, or enter the setup token from GBOT_SETUP_TOKEN")
 		return
 	}
 	c.Email = strings.ToLower(strings.TrimSpace(c.Email))
@@ -65,11 +115,17 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		Title: "your first teammate",
 		Look:  store.Look{"seed": auth.NewToken()[:10]},
 	}
-	u, err := s.Store.CreateUser(r.Context(), c.Email, c.Name, hash, s.Models.Pick(r.Context()), first)
+	u, err := s.Store.CreateUser(r.Context(), c.Email, c.Name, hash, s.Models.Pick(r.Context()), first, n == 0)
+	if errors.Is(err, store.ErrNotFirst) {
+		writeErr(w, http.StatusForbidden, "this server already has accounts")
+		return
+	}
 	if err != nil {
 		var pg *pgconn.PgError
 		if errors.As(err, &pg) && pg.Code == "23505" {
-			writeErr(w, 409, "that email already has an account")
+			// The same answer whether or not the email is registered, so
+			// sign-up can't be used to find out who has an account.
+			writeErr(w, http.StatusBadRequest, "couldn't create an account with those details. Try signing in instead.")
 			return
 		}
 		s.Log.Error("signup", "err", err)
@@ -80,7 +136,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimit.Allow(clientIP(r)) {
+	if !s.authLimit.Allow(s.clientIP(r)) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 		return
 	}
@@ -158,7 +214,8 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
-	s.Models.Invalidate()
+	// The catalog refreshes on its own TTL. Clearing it here on every request
+	// let any signed-in client make the server probe every provider each time.
 	list := s.Models.ListFor(r.Context(), s.userProviders(r.Context(), userFrom(r).ID))
 	if list == nil {
 		list = []models.Model{}

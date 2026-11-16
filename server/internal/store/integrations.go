@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -101,6 +102,21 @@ func (s *Store) UpsertSkill(ctx context.Context, userID string, k *Skill) (*Skil
 		ON CONFLICT (user_id,name) DO UPDATE SET description=EXCLUDED.description, body=EXCLUDED.body
 		RETURNING id, name, description, body, created_at`, userID, k.Name, k.Description, k.Body).
 		Scan(&out.ID, &out.Name, &out.Description, &out.Body, &out.CreatedAt)
+	return out, err
+}
+
+// UpdateSkill changes an existing skill in place, so renaming it keeps its
+// row instead of leaving the old name behind. It returns ErrNotFound when
+// the skill does not belong to userID.
+func (s *Store) UpdateSkill(ctx context.Context, userID, id string, k *Skill) (*Skill, error) {
+	out := &Skill{}
+	err := s.DB.QueryRow(ctx, `UPDATE skills SET name=$3, description=$4, body=$5
+		WHERE id=$1 AND user_id=$2
+		RETURNING id, name, description, body, created_at`, id, userID, k.Name, k.Description, k.Body).
+		Scan(&out.ID, &out.Name, &out.Description, &out.Body, &out.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
 	return out, err
 }
 

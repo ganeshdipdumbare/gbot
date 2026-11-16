@@ -88,7 +88,7 @@ func mcpPrefix(id string) string { return "m" + strings.ReplaceAll(id, "-", "")[
 func decodeMCP(s *store.MCPServer, sealer *crypto.Sealer) mcpServer {
 	headers := map[string]any{}
 	if len(s.Sealed) > 0 && sealer != nil {
-		if raw, err := sealer.Open(s.Sealed); err == nil {
+		if raw, err := sealer.Open(s.Sealed, crypto.Owner("mcp-headers", s.UserID)); err == nil {
 			var h map[string]string
 			_ = json.Unmarshal(raw, &h)
 			for k, v := range h {
@@ -110,7 +110,7 @@ func openOAuth(s *store.MCPServer, sealer *crypto.Sealer) *mcpoauth.Tokens {
 	if len(s.OAuth) == 0 || sealer == nil {
 		return nil
 	}
-	raw, err := sealer.Open(s.OAuth)
+	raw, err := sealer.Open(s.OAuth, crypto.Owner("mcp-oauth", s.UserID))
 	if err != nil {
 		return nil
 	}
@@ -135,7 +135,7 @@ func (r *Runtime) refreshToken(ctx context.Context, s *store.MCPServer, sealer *
 		return s
 	}
 	raw, _ := json.Marshal(next)
-	sealed := sealer.Seal(raw)
+	sealed := sealer.Seal(raw, crypto.Owner("mcp-oauth", s.UserID))
 	updated, err := r.store.SetMCPOAuth(ctx, s.UserID, s.ID, sealed)
 	if err != nil {
 		r.log.Warn("mcp refresh save", "server", s.Name, "err", err)

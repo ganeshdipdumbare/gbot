@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Gbot, type Look } from "@gbot/characters";
-import { api } from "../lib/api";
+import { api, type Bot } from "../lib/api";
 import { clearChat, upsertBot, useStore } from "../lib/store";
 import { attempt, toast } from "../lib/toast";
 import { Modal } from "./Modal";
@@ -29,24 +29,66 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
   const [confirm, setConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [forgetToo, setForgetToo] = useState(false);
+  // The bot as last loaded into the form, and whether it changed elsewhere
+  // while the form had unsaved edits.
+  const base = useRef<Bot | null>(null);
+  const [stale, setStale] = useState(false);
 
+  const formOf = (b: Bot) => JSON.stringify({
+    name: b.name, title: b.title, instructions: b.instructions, model: b.model, look: b.look ?? {},
+    network: b.computerNetwork, hosts: (b.allowedHosts ?? []).join("\n"), readAloud: b.readAloud, voice: b.voice,
+  });
+  const formNow = () => formOf({
+    name, title, instructions, model, look, computerNetwork: network, allowedHosts: hosts.split("\n"), readAloud, voice,
+  } as Bot);
+
+  function load(b: Bot) {
+    setName(b.name); setTitle(b.title); setInstructions(b.instructions); setModel(b.model); setLook(b.look ?? {});
+    setNetwork(b.computerNetwork); setHosts((b.allowedHosts ?? []).join("\n")); setReadAloud(b.readAloud); setVoice(b.voice);
+    setError(""); setConfirm(false); setStale(false);
+    base.current = b;
+  }
+
+  // Opening the dialog loads the bot fresh.
   useEffect(() => {
-    if (!open || !bot) return;
-    setName(bot.name); setTitle(bot.title); setInstructions(bot.instructions); setModel(bot.model); setLook(bot.look ?? {});
-    setNetwork(bot.computerNetwork); setHosts((bot.allowedHosts ?? []).join("\n")); setReadAloud(bot.readAloud); setVoice(bot.voice);
-    setError(""); setConfirm(false);
+    if (open && bot) load(bot);
   }, [open, bot?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The bot changed while the dialog is open (for example, a co-manager saved).
+  // Reload when there are no unsaved edits; otherwise keep the edits and say so.
+  useEffect(() => {
+    if (!open || !bot || !base.current || base.current.id !== bot.id) return;
+    if (formOf(base.current) === formOf(bot)) return;
+    if (formNow() === formOf(base.current)) load(bot);
+    else setStale(true);
+  }, [bot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!bot) return null;
   // Owners and managers change how a bot works; collaborators only chat with it.
-  const role = bot.role ?? "owner";
+  // A bot without a role is treated as the least we know; the server still
+  // enforces what the person may actually change.
+  const role = bot.role ?? "collaborator";
   const canManage = role === "owner" || role === "manager";
 
   async function save() {
     setError("");
+    // The bot changed elsewhere since this form loaded. Saving now would
+    // overwrite that change, so the person reloads first.
+    if (stale) {
+      setError("This bot changed while you were editing. Reload it, then apply your changes again.");
+      return;
+    }
+    const hostList = hosts.split("\n").map((s) => s.trim()).filter(Boolean);
+    // Check the list here, so one bad line is named and nothing is lost.
+    const bad = hostList.find((h) => !looksLikeSite(h));
+    if (bad) {
+      setError(`"${bad}" isn't a site like linkedin.com. Fix or remove that line, then save.`);
+      return;
+    }
     try {
-      const allowedHosts = hosts.split("\n").map((s) => s.trim()).filter(Boolean);
-      const b = await api.updateBot(bot!.id, { name, title, instructions, model, look, computerNetwork: network, allowedHosts, readAloud, voice });
+      const b = await api.updateBot(bot!.id, { name, title, instructions, model, look, computerNetwork: network, allowedHosts: hostList, readAloud, voice });
+      base.current = b; // our own save is not a change to reload
+      setStale(false);
       upsertBot(b);
       toast("Saved");
       setSaved(true);
@@ -63,6 +105,12 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
       <div className="px-5 pb-6 space-y-5">
         {!canManage && (
           <p className="rounded-2xl bg-surface-2 p-3 text-[13px] text-ink-2">Shared with you. Only its owner and managers can change how it works.</p>
+        )}
+        {stale && (
+          <p className="flex items-center justify-between gap-3 rounded-2xl bg-surface-2 p-3 text-[13px] text-ink-2" role="status">
+            Changed elsewhere while you were editing. Your edits are kept.
+            <Button variant="ghost" onClick={() => load(bot)}>Reload</Button>
+          </p>
         )}
         <div className="grid grid-cols-2 gap-3">
           <div><Label>Name</Label><Input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} /></div>
@@ -163,4 +211,14 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
       </div>
     </Modal>
   );
+}
+
+// Mirrors the server's rule for allowlist entries (see cleanHosts in
+// server/internal/api/bots.go). The server stays the authority.
+function looksLikeSite(raw: string) {
+  let h = raw.trim().toLowerCase();
+  const scheme = h.indexOf("://");
+  if (scheme >= 0) h = h.slice(scheme + 3);
+  h = h.split(/[/?#]/)[0].replace(/^\*\./, "").replace(/\.$/, "");
+  return h === "localhost" || /^([a-z0-9-]+\.)+[a-z]{2,}$/.test(h);
 }

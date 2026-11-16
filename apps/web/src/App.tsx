@@ -6,6 +6,7 @@ import { Shell } from "./components/Shell";
 import { Gbot } from "@gbot/characters";
 import { ErrorBoundary, Toaster } from "./components/Feedback";
 import { toast } from "./lib/toast";
+import { invalidateSkills } from "./components/Composer";
 
 const Gallery = lazy(() => import("./components/Gallery"));
 
@@ -29,6 +30,8 @@ function Main() {
     const out = () => {
       if (!get().me) return;
       set(() => ({ me: null, bots: [], groups: [], messages: {}, presence: {}, unread: {}, loaded: false }));
+      // Skill names belong to the account that loaded them.
+      invalidateSkills();
       toast("Your session ended. Sign in again.");
     };
     window.addEventListener("gbot:signed-out", out);

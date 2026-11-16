@@ -17,13 +17,16 @@ export function Welcome() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  // Set when the server requires its setup token to create the first account.
+  const [needsToken, setNeedsToken] = useState(false);
+  const [setupToken, setSetupToken] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [mood, setMood] = useState<Mood>("idle");
   const [ref, gaze] = useGaze<HTMLDivElement>();
 
   useEffect(() => {
-    api.setup().then((s) => { setCanSignUp(s.signup); setMode(s.fresh ? "signup" : "login"); }).catch(() => {});
+    api.setup().then((s) => { setCanSignUp(s.signup); setNeedsToken(!!s.setupToken); setMode(s.fresh ? "signup" : "login"); }).catch(() => {});
   }, []);
 
   async function submit(e: FormEvent) {
@@ -32,7 +35,9 @@ export function Welcome() {
     setError("");
     setMood("thinking");
     try {
-      const u = mode === "signup" ? await api.signup({ email, password, name }) : await api.login({ email, password });
+      const u = mode === "signup"
+        ? await api.signup({ email, password, name, setupToken: needsToken ? setupToken : undefined })
+        : await api.login({ email, password });
       setMood("happy");
       setTimeout(() => set(() => ({ me: u })), 280);
     } catch (err) {
@@ -62,6 +67,12 @@ export function Welcome() {
             <div>
               <Label>Name</Label>
               <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+            </div>
+          )}
+          {signup && needsToken && (
+            <div>
+              <Label hint="Set by the server owner as GBOT_SETUP_TOKEN">Setup token</Label>
+              <Input value={setupToken} onChange={(e) => setSetupToken(e.target.value)} autoComplete="off" className="h-10!" />
             </div>
           )}
           <div>

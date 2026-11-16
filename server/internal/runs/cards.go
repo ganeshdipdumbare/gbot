@@ -146,7 +146,7 @@ func (r *Runtime) Answer(ctx context.Context, caller *store.User, card *store.Me
 	switch {
 	case kind == "approval" && decision == "approve":
 		typ, status = "approve", "approved"
-		if tool, _ := card.Data["tool"].(string); always && tool != "" {
+		if tool, _ := card.Data["tool"].(string); always && tool != "" && CanAlwaysAllow(tool) {
 			_ = r.store.SetToolRule(ctx, caller.ID, tool, "allow")
 		}
 	case kind == "approval" && decision == "reject":

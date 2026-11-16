@@ -81,8 +81,12 @@ func TestClearChat(t *testing.T) {
 
 	c.do("POST", "/api/bots/"+pip.ID+"/messages", map[string]string{"text": "hi"}, nil)
 	waitBubbles(1)
-	if !sessionExists() {
-		t.Fatal("the run left no model thread to clear")
+	// The model thread is saved just after the reply appears, so wait for it.
+	for deadline := time.Now().Add(10 * time.Second); !sessionExists(); {
+		if time.Now().After(deadline) {
+			t.Fatal("the run left no model thread to clear")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	mem := store.NewMemory(st)
 	if err := mem.Put(store.WithScope(ctx, thread), "likes", "short answers"); err != nil {

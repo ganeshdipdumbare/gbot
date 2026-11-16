@@ -25,6 +25,16 @@ android {
             keyAlias "androiddebugkey"
             keyPassword "android"
         }
+        // The real release key is never committed. CI supplies it through
+        // these variables on tagged releases (see .github/workflows/ci.yml).
+        if (System.getenv("GBOT_RELEASE_KEYSTORE")) {
+            release {
+                storeFile file(System.getenv("GBOT_RELEASE_KEYSTORE"))
+                storePassword System.getenv("GBOT_RELEASE_STORE_PASSWORD")
+                keyAlias System.getenv("GBOT_RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("GBOT_RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -32,7 +42,9 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-            signingConfig signingConfigs.debug
+            // Local builds without the release key fall back to the debug key.
+            // CI refuses to publish a debug-signed APK; see the android job.
+            signingConfig signingConfigs.findByName("release") ?: signingConfigs.debug
         }
     }
 

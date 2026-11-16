@@ -1,7 +1,7 @@
 // The page's own behavior: the picker, small niceties, and bringing the
 // 3D crew in after the words are already on screen.
 
-import { botSVG, eyeNames, hues, shapeNames } from "./shapes.js";
+import { botSVG, eyeNames, hues, moodNames, shapeNames } from "./shapes.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -37,7 +37,9 @@ for (const btn of $$("[data-copy]")) {
     } catch {
       btn.textContent = "Select and copy";
     }
-    setTimeout(() => (btn.textContent = "Copy"), 1600);
+    // One timer per button: a second click restarts the label, not the old timer.
+    clearTimeout(btn._copyTimer);
+    btn._copyTimer = setTimeout(() => (btn.textContent = "Copy"), 1600);
   });
 }
 
@@ -88,9 +90,13 @@ function paintStudio(changed) {
 
 if (form) {
   paintPicker();
+  // Only known values reach the state, since the state is written into SVG.
+  const allowed = { shape: shapeNames, hue: Object.keys(hues), eyes: eyeNames, mood: moodNames };
   form.addEventListener("change", (e) => {
-    state[e.target.name] = e.target.value;
-    paintStudio(e.target.name);
+    const { name, value } = e.target;
+    if (!allowed[name] || !allowed[name].includes(value)) return;
+    state[name] = value;
+    paintStudio(name);
   });
   form.addEventListener("submit", (e) => e.preventDefault());
   $("[data-surprise]")?.addEventListener("click", () => {
@@ -138,17 +144,26 @@ async function startStudio() {
     studio.set(state);
     if (state.mood !== "idle") studio.setMood(state.mood);
   } catch {
+    // A half-built stage must not stay as the studio: tear it down and
+    // show the flat picture instead.
+    try { studio?.dispose(); } catch {}
+    studio = null;
     studioFlat = flat(studioEl, [state]);
   }
 }
 
 if (heroEl) startHero();
 if (studioEl) {
-  // The second scene waits until it is nearly on screen.
-  const io = new IntersectionObserver((entries) => {
-    if (!entries.some((e) => e.isIntersecting)) return;
-    io.disconnect();
+  // The second scene waits until it is nearly on screen. Browsers without
+  // IntersectionObserver start it straight away, as the reveal code does.
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      startStudio();
+    }, { rootMargin: "600px 0px" });
+    io.observe(studioEl);
+  } else {
     startStudio();
-  }, { rootMargin: "600px 0px" });
-  io.observe(studioEl);
+  }
 }

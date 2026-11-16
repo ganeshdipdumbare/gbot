@@ -446,11 +446,15 @@ class Stage {
       this.pointer.at = performance.now();
       this.pointer.type = e.pointerType;
       this.dirty = true;
+      // Wake the loop: with motion reduced, a dirty frame is only drawn when it runs.
+      this.wake();
     };
     window.addEventListener("pointermove", this.onMove, { passive: true });
     window.addEventListener("pointerdown", this.onMove, { passive: true });
-    this.canvas.addEventListener("webglcontextlost", (e) => e.preventDefault());
-    this.canvas.addEventListener("webglcontextrestored", () => { this.dirty = true; this.wake(); });
+    this.onContextLost = (e) => e.preventDefault();
+    this.onContextRestored = () => { this.dirty = true; this.wake(); };
+    this.canvas.addEventListener("webglcontextlost", this.onContextLost);
+    this.canvas.addEventListener("webglcontextrestored", this.onContextRestored);
 
     // A tap, not a scroll: the stage never swallows touch gestures.
     let down = null;
@@ -465,6 +469,28 @@ class Stage {
       down = null;
     });
     this.canvas.addEventListener("pointerleave", () => this.setHover(null));
+  }
+
+  // Stops everything the stage started: the frame loop, observers, document
+  // and window listeners, and the WebGL context. Safe to call once.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.visible = false;
+    cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.canvas.removeEventListener("webglcontextlost", this.onContextLost);
+    this.canvas.removeEventListener("webglcontextrestored", this.onContextRestored);
+    this.ro.disconnect();
+    this.io.disconnect();
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    window.removeEventListener("pointermove", this.onMove);
+    window.removeEventListener("pointerdown", this.onMove);
+    for (const bot of this.bots) bot.dispose();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+    this.canvas.remove();
+    this.el.classList.remove("is-live");
   }
 
   add(bot) {
@@ -508,6 +534,7 @@ class Stage {
     if (bot) bot.hovered = true;
     this.canvas.style.cursor = bot ? "pointer" : "";
     this.dirty = true;
+    this.wake();
   }
 
   // Where a point in the scene lands on the stage, in CSS pixels.
@@ -517,14 +544,14 @@ class Stage {
   }
 
   wake() {
-    if (this.raf || !this.visible || document.hidden || !this.width) return;
+    if (this.disposed || this.raf || !this.visible || document.hidden || !this.width) return;
     this.last = 0;
     this.raf = requestAnimationFrame(this.frame);
   }
 
   frame(now) {
     this.raf = 0;
-    if (!this.visible || document.hidden) return;
+    if (this.disposed || !this.visible || document.hidden) return;
     const dt = this.last ? Math.min((now - this.last) / 1000, 0.05) : 1 / 60;
     this.last = now;
     this.time += dt;
@@ -798,5 +825,7 @@ class Studio extends Stage {
   }
 }
 
-export function mountHero(el, opts) { return new Hero(el, opts); }
-export function mountStudio(el, opts) { return new Studio(el, opts); }
+// Mounting twice on one element would stack two canvases and loops; the
+// second call gets the stage that is already there.
+export function mountHero(el, opts) { return el.__gbotStage ??= new Hero(el, opts); }
+export function mountStudio(el, opts) { return el.__gbotStage ??= new Studio(el, opts); }

@@ -12,11 +12,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"gbot/internal/cron"
+	"gbot/internal/replay"
 	"gbot/internal/store"
 )
 
@@ -147,29 +149,66 @@ func (s *Service) tick(ctx context.Context) {
 		return
 	}
 	for _, r := range due {
-		bot, err := s.Store.GetBotAnySpace(ctx, r.BotID)
-		if err != nil {
+		bot, ok := s.runnableBot(ctx, r)
+		if !ok {
 			continue
 		}
 		s.Fire(ctx, bot, r, "")
 	}
 }
 
-// Verify checks a webhook call: the caller proves it knows the secret by
-// signing the body (X-GBot-Signature: sha256=<hex hmac>) or sending it as
-// a bearer token over HTTPS.
-func Verify(r *store.Routine, body []byte, signature, bearer string) bool {
+// RunnableBot returns the routine's bot when the routine's creator can still
+// see it. A routine keeps the access of the person who made it, so once
+// that access is gone, the routine stops running.
+func (s *Service) RunnableBot(ctx context.Context, r *store.Routine) (*store.Bot, bool) {
+	return s.runnableBot(ctx, r)
+}
+
+func (s *Service) runnableBot(ctx context.Context, r *store.Routine) (*store.Bot, bool) {
+	base, err := s.Store.GetBotAnySpace(ctx, r.BotID)
+	if err != nil {
+		return nil, false
+	}
+	bot, err := s.Store.GetBotFor(ctx, base.SpaceID, r.UserID, r.BotID)
+	if err != nil {
+		s.Log.Info("routine skipped: its creator no longer has access", "routine", r.ID)
+		return nil, false
+	}
+	return bot, true
+}
+
+// webhookWindow is how far a signed timestamp may drift from our clock.
+const webhookWindow = 5 * time.Minute
+
+// Verify checks a webhook call. The caller either signs the request
+// (X-GBot-Signature: sha256=<hex hmac>, over "<X-GBot-Timestamp>.<body>")
+// or sends the secret as a bearer token over HTTPS. The signature is bound
+// to a timestamp within five minutes, so a captured request cannot be
+// replayed later. The secret is never stored: signatures use sha256(secret).
+func Verify(r *store.Routine, body []byte, signature, timestamp, bearer string, now time.Time) bool {
 	if r.Kind != "webhook" || len(r.SecretHash()) == 0 {
 		return false
 	}
-	// The secret itself isn't stored, so a signature is checked against
-	// a key derived from it: callers sign with sha256(secret).
 	if strings.HasPrefix(signature, "sha256=") {
+		ts, err := strconv.ParseInt(timestamp, 10, 64)
+		if err != nil {
+			return false
+		}
+		drift := now.Sub(time.Unix(ts, 0))
+		if drift < -webhookWindow || drift > webhookWindow {
+			return false
+		}
 		mac := hmac.New(sha256.New, r.SecretHash())
+		mac.Write([]byte(timestamp + "."))
 		mac.Write(body)
 		want := mac.Sum(nil)
 		got, err := hex.DecodeString(strings.TrimPrefix(signature, "sha256="))
-		return err == nil && hmac.Equal(got, want)
+		if err != nil || !hmac.Equal(got, want) {
+			return false
+		}
+		// A signature is good once. Within the window it could otherwise be
+		// sent again, so each accepted one is remembered until it expires.
+		return replay.Accept(r.ID+"|"+signature, now, 2*webhookWindow)
 	}
 	if bearer != "" {
 		h := sha256.Sum256([]byte(bearer))

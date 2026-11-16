@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"gbot/internal/codex"
+	"gbot/internal/netguard"
 )
 
 // Provider is an account's model provider, without its key. Prefix is the
@@ -83,7 +85,7 @@ func Discover(ctx context.Context, kind, baseURL, apiKey string) ([]string, erro
 	if err := ValidProviderURL(base); err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newDiscoverClient()
 	switch kind {
 	case "openai":
 		return discoverOpenAI(ctx, client, base, apiKey)
@@ -209,16 +211,25 @@ func supportsGenerate(methods []string) bool {
 	return false
 }
 
+// maxListBody caps how much of a provider's model list we read.
+const maxListBody = 4 << 20
+
+// newDiscoverClient is the client used to list models. See netguard.
+func newDiscoverClient() *http.Client {
+	return netguard.Client(10 * time.Second)
+}
+
 func getJSON(client *http.Client, req *http.Request, v any) error {
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		// Transport errors can echo internal addresses; say only what matters.
+		return fmt.Errorf("couldn't reach %s", req.URL.Host)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("%s returned %s", req.URL.Host, resp.Status)
 	}
-	return json.NewDecoder(resp.Body).Decode(v)
+	return json.NewDecoder(io.LimitReader(resp.Body, maxListBody)).Decode(v)
 }
 
 func cleanModels(in []string) []string {

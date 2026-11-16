@@ -4,6 +4,10 @@ import { fade, Icon, IconButton, leave, spring } from "./ui";
 
 const focusable = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// Open dialogs, innermost last. Only the top one handles Escape, so closing
+// a dialog stacked on another does not close both.
+const openStack: symbol[] = [];
+
 // An accessible dialog: focus moves in, Tab stays inside, Escape closes,
 // and focus returns to whatever opened it.
 export function Modal({ open, onClose, children, title, width = 520, side }: {
@@ -16,6 +20,8 @@ export function Modal({ open, onClose, children, title, width = 520, side }: {
 
   useEffect(() => {
     if (!open) return;
+    const token = Symbol("modal");
+    openStack.push(token);
     const opener = document.activeElement as HTMLElement | null;
     const t = setTimeout(() => {
       const el = panel.current;
@@ -24,16 +30,25 @@ export function Modal({ open, onClose, children, title, width = 520, side }: {
       (first ?? el).focus();
     }, 30);
     const onKey = (e: KeyboardEvent) => {
+      if (openStack[openStack.length - 1] !== token) return;
       if (e.key === "Escape") { e.stopPropagation(); close.current(); return; }
       if (e.key !== "Tab" || !panel.current) return;
-      const items = [...panel.current.querySelectorAll<HTMLElement>(focusable)].filter((x) => x.offsetParent !== null);
+      // offsetParent is null inside position:fixed, so use the layout boxes.
+      const items = [...panel.current.querySelectorAll<HTMLElement>(focusable)].filter((x) => x.getClientRects().length > 0);
       if (!items.length) return;
       const [first, last] = [items[0], items[items.length - 1]];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     window.addEventListener("keydown", onKey);
-    return () => { clearTimeout(t); window.removeEventListener("keydown", onKey); opener?.focus?.(); };
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("keydown", onKey);
+      const i = openStack.indexOf(token);
+      if (i >= 0) openStack.splice(i, 1);
+      // The opener may have been removed while the dialog was open.
+      if (opener?.isConnected) opener.focus?.();
+    };
   }, [open]);
 
   return (

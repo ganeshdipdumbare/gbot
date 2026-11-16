@@ -165,7 +165,11 @@ func TestSlackBridge(t *testing.T) {
 	}
 
 	t.Run("a linked channel reaches the bot", func(t *testing.T) {
-		if code, _ := postSlack(t, srv.URL, event(), "", nil); code != 200 {
+		// A fresh event: the earlier one was already delivered, and Slack
+		// retries of the same request are acknowledged, not handled again.
+		fresh := event()
+		fresh["event"].(map[string]any)["ts"] = "100.2"
+		if code, _ := postSlack(t, srv.URL, fresh, "", nil); code != 200 {
 			t.Fatalf("want 200, got %d", code)
 		}
 		if !hasMessage(t, alice, bot.ID, "check the build") {

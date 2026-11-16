@@ -720,7 +720,12 @@ function Integrations() {
 function parseSkillMd(text: string): Partial<Skill> {
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text.trim());
   if (!m) return { body: text };
-  const meta = Object.fromEntries(m[1].split("\n").map((l) => l.split(/:\s*/, 2)).filter((p) => p.length === 2)) as Record<string, string>;
+  // Split on the first colon only, so values like "Use when: X" keep their rest.
+  const meta: Record<string, string> = {};
+  for (const line of m[1].split("\n")) {
+    const i = line.indexOf(":");
+    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
   return { name: meta.name, description: meta.description, body: m[2].trim() };
 }
 
@@ -813,7 +818,7 @@ function Skills() {
   async function save() {
     setError("");
     try {
-      await api.saveSkill({ name: edit!.name ?? "", description: edit!.description ?? "", body: edit!.body ?? "" });
+      await api.saveSkill({ id: edit!.id, name: edit!.name ?? "", description: edit!.description ?? "", body: edit!.body ?? "" });
       invalidateSkills();
       toast("Skill saved");
       setEdit(null);
