@@ -5,7 +5,8 @@ import { hues, type Hue } from "@gbot/ui-tokens";
 
 export const shapes = ["circle", "square", "triangle", "hexagon", "cloud", "pill", "arch", "diamond"] as const;
 export const eyeStyles = ["dot", "pill", "wide"] as const;
-export const hueNames = Object.keys(hues) as Hue[];
+// white is the app's mark, worn by the main bot only: never seeded, never offered.
+export const hueNames = (Object.keys(hues) as Hue[]).filter((h) => h !== "white");
 
 export type Shape = (typeof shapes)[number];
 export type EyeStyle = (typeof eyeStyles)[number];

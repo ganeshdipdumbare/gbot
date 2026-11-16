@@ -75,7 +75,7 @@ class Screens {
             "/api/bots/b1/messages" to """{"messages":[
               {"id":"m1","botId":"b1","role":"user","content":"Find me flights to Lisbon on Friday under €200","createdAt":"${ago(6)}"},
               {"id":"m2","botId":"b1","role":"event","content":"","data":{"kind":"activity","steps":[{"label":"Searched","detail":"flights Berlin Lisbon Friday","ok":true},{"label":"Opened","detail":"google.com/travel/flights","ok":true},{"label":"Read","detail":"3 results","ok":true}]},"createdAt":"${ago(5)}"},
-              {"id":"m3","botId":"b1","role":"bot","content":"Here are the **three flights** under €200:\n\n1. **TAP 541** — 07:10 → 09:15, €149\n2. **easyJet 4410** — 12:30 → 14:40, €172\n3. **Ryanair 8812** — 18:05 → 20:10, €119\n\n| Airline | Price |\n|---|---|\n| Ryanair | €119 |\n| TAP | €149 |\n\nWant me to hold one? `booking` needs your OK.","createdAt":"${ago(4)}"},
+              {"id":"m3","botId":"b1","role":"bot","content":"Here are the **three flights** under €200:\n\n## Cheapest first\n\n1. **TAP 541** — 07:10 → 09:15, €149\n2. **easyJet 4410** — 12:30 → 14:40, €172\n3. **Ryanair 8812** — 18:05 → 20:10, €119\n\n| Airline | Price |\n|---|---|\n| Ryanair | €119 |\n| TAP | €149 |\n\nWant me to hold one? `booking` needs your OK.","createdAt":"${ago(4)}"},
               {"id":"m4","botId":"b1","role":"card","content":"Open the booking page for Ryanair 8812","data":{"kind":"approval","status":"pending","tool":"browser_open","args":{"url":"https://www.ryanair.com/booking"}},"createdAt":"${ago(3)}"}
             ]}""",
             "/api/bots/b1/queue" to """{"items":[]}""",

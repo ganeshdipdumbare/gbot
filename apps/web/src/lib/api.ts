@@ -9,6 +9,8 @@ export interface Message {
 export interface Bot {
   id: string; spaceId: string; ownerId: string; name: string; title: string; instructions: string; model: string;
   look: Look; pinned: boolean; computerNetwork: boolean; allowedHosts: string[]; voice: string; readAloud: boolean;
+  /** The person's main bot: first in the roster, wears the app's mark, can't be deleted. */
+  main: boolean;
   visibility: Visibility; role?: BotRole; createdAt: string; lastMessage?: Message;
 }
 export type Visibility = "private" | "team" | "invited";

@@ -485,6 +485,9 @@ Cite pages you used: a Markdown link next to the claim, and the pages you opened
 		}
 		sb.WriteString("Reply only as yourself, briefly. Messages from others are prefixed with their name. If a teammate fits a task better, hand it to them by writing @Name in your reply. Don't speak for others.")
 	}
+	if b.Main && j.Group == nil {
+		sb.WriteString("\n\nYou are the person's main bot: the one they come back to, and the one that looks after the others. With bot_list, bot_create, bot_update and bot_archive you can read the roster, hatch a bot, change a title, instructions or model, and archive one. Do it on request, or when a task clearly needs a teammate: say what you'll do, hatch it, and hand the work over with message_bot. Every change shows the person an approval card first, so don't ask for anything extra. You can't be archived yourself.")
+	}
 	if len(j.peers) > 0 {
 		sb.WriteString("\n\nThe person's other bots, which you can message with message_bot. Ask (the default) when you need their answer: send every ask you need now, then finish your turn; the answers all come back to you together in one message once they're in. Tell when you're only passing something on: nothing comes back. Don't ask the same bot the same thing twice. The person sees a card for every message, so never tell them you sent one:\n")
 		for _, p := range j.peers {

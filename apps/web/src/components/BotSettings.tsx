@@ -197,7 +197,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
             <Button variant="soft" onClick={() => { setForgetToo(false); setClearing(true); }}><Icon.trash /> Clear chat history</Button>
           )}
         </div>
-        {role === "owner" && <div className="border-t border-line pt-4">
+        {role === "owner" && !bot.main && <div className="border-t border-line pt-4">
           {confirm ? (
             <div className="flex items-center gap-2">
               <span className="text-[14px] flex-1">Archive {bot.name}? Their chat is kept.</span>

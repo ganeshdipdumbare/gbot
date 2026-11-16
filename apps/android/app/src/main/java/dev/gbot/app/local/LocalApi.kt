@@ -164,8 +164,8 @@ class LocalApi(
                 existing == null -> list + hatchMainBot()
                 // Seeded before the mark existed: give it the look once, but
                 // never overwrite a look the person has since chosen.
-                existing.look == Look() -> {
-                    val fixed = existing.copy(look = MAIN_LOOK)
+                existing.look == Look() || !existing.main -> {
+                    val fixed = existing.copy(look = if (existing.look == Look()) MAIN_LOOK else existing.look, main = true)
                     db.putBot(fixed)
                     list.map { if (it.id == MAIN_BOT) fixed else it }
                 }
@@ -185,7 +185,7 @@ class LocalApi(
 
     private fun hatchMainBot(): Bot {        val b = Bot(
             id = MAIN_BOT, name = "gbot", title = "Your main bot", look = MAIN_LOOK,
-            instructions = MAIN_PURPOSE, model = "", pinned = true,
+            instructions = MAIN_PURPOSE, model = "", pinned = true, main = true,
             createdAt = Instant.now().toString(),
         )
         db.putBot(b)

@@ -41,8 +41,13 @@ export function useStore<T>(sel: (s: State) => T): T {
 }
 
 const lastAt = (x: { lastMessage?: Message; createdAt: string }) => x.lastMessage?.createdAt ?? x.createdAt;
+// The main bot stays first, as the server orders it; then pinned, then
+// the most recent chat.
 const sortBots = (bots: Bot[]) =>
-  [...bots].sort((a, b) => (a.pinned !== b.pinned ? (a.pinned ? -1 : 1) : lastAt(b).localeCompare(lastAt(a))));
+  [...bots].sort((a, b) =>
+    a.main !== b.main ? (a.main ? -1 : 1)
+      : a.pinned !== b.pinned ? (a.pinned ? -1 : 1)
+        : lastAt(b).localeCompare(lastAt(a)));
 const sortGroups = (gs: Group[]) => [...gs].sort((a, b) => lastAt(b).localeCompare(lastAt(a)));
 
 export function upsertBot(bot: Bot) {

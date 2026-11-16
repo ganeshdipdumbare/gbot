@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -111,11 +112,25 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("signup: %d", code)
 	}
 
-	t.Run("first bot is created on signup", func(t *testing.T) {
+	t.Run("signup seeds the main bot", func(t *testing.T) {
 		var res struct{ Bots []store.Bot }
 		alice.do("GET", "/api/bots", nil, &res)
-		if len(res.Bots) != 1 || res.Bots[0].Name == "" {
+		if len(res.Bots) != 1 {
 			t.Fatalf("want one starter bot, got %+v", res.Bots)
+		}
+		b := res.Bots[0]
+		if !b.Main || b.Name != store.MainBotName || b.Instructions != store.MainBotPurpose {
+			t.Fatalf("want the main bot, got %+v", b)
+		}
+		if b.Look["hue"] != "white" {
+			t.Fatalf("the main bot should wear the app's mark, got %+v", b.Look)
+		}
+		// It is what the person comes back to, so it stays.
+		if code := alice.do("DELETE", "/api/bots/"+b.ID, nil, nil); code != 400 {
+			t.Fatalf("deleting the main bot: want 400, got %d", code)
+		}
+		if err := st.ArchiveBot(ctx, b.SpaceID, b.ID); !errors.Is(err, store.ErrMainBot) {
+			t.Fatalf("store archive of the main bot: %v", err)
 		}
 	})
 

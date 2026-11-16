@@ -3,7 +3,11 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -11,7 +15,25 @@ import (
 // MaxBotsPerSpace keeps the roster scannable (Grok Bot uses ~50).
 const MaxBotsPerSpace = 50
 
+// The person's main bot. It is seeded with the account, looks after the
+// other bots (the roster tools), wears the app's mark, and can't be
+// archived. Phone mode hatches the same bot, with the same words, in
+// LocalApi.kt, so the two surfaces behave alike.
+const (
+	MainBotName  = "gbot"
+	MainBotTitle = "Your main bot"
+	// MainBotPurpose is what the main bot is for. Its powers are the
+	// tools, not these words.
+	MainBotPurpose = "You are the person's main bot. You look after their other bots: on request, or when a task " +
+		"clearly needs one, you can list them (bot_list), hatch a new one (bot_create), change a " +
+		"title, instructions or model (bot_update), or archive one (bot_archive). Every change " +
+		"shows the person an approval card first, so ask for nothing extra."
+)
+
 type Look map[string]any
+
+// MainBotLook is the app's mark: the main bot never wears a seeded look.
+func MainBotLook() Look { return Look{"shape": "circle", "hue": "white", "eyes": "pill"} }
 
 type Bot struct {
 	ID           string    `json:"id"`
@@ -27,6 +49,7 @@ type Bot struct {
 	AllowedHosts []string  `json:"allowedHosts"`
 	Voice        string    `json:"voice"`
 	ReadAloud    bool      `json:"readAloud"`
+	Main         bool      `json:"main"`           // the person's main bot: first, marked, never archived
 	Visibility   string    `json:"visibility"`     // private | team | invited
 	Role         string    `json:"role,omitempty"` // the viewer's role: owner | manager | collaborator
 	CreatedAt    time.Time `json:"createdAt"`
@@ -36,11 +59,13 @@ type Bot struct {
 type NewBot struct {
 	Name, Title, Instructions, Model string
 	Look                             Look
+	// Main seeds the space's main bot. Only CreateUser sets it.
+	Main bool
 }
 
 // botCols lists the bot columns in scanBot's order, with the bots table
 // aliased as b.
-const botCols = `b.id, b.space_id, b.owner_id, b.name, b.title, b.instructions, b.model, b.look, b.pinned, b.computer_network, b.allowed_hosts, b.voice, b.read_aloud, b.visibility, b.created_at`
+const botCols = `b.id, b.space_id, b.owner_id, b.name, b.title, b.instructions, b.model, b.look, b.pinned, b.computer_network, b.allowed_hosts, b.voice, b.read_aloud, b.main, b.visibility, b.created_at`
 
 // scanBot reads a bot row. extra columns (such as the viewer's membership
 // role) are scanned after the bot's own.
@@ -48,7 +73,7 @@ func scanBot(row pgx.Row, extra ...any) (*Bot, error) {
 	b := &Bot{}
 	var look, hosts []byte
 	dest := append([]any{&b.ID, &b.SpaceID, &b.OwnerID, &b.Name, &b.Title, &b.Instructions, &b.Model, &look,
-		&b.Pinned, &b.Network, &hosts, &b.Voice, &b.ReadAloud, &b.Visibility, &b.CreatedAt}, extra...)
+		&b.Pinned, &b.Network, &hosts, &b.Voice, &b.ReadAloud, &b.Main, &b.Visibility, &b.CreatedAt}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, notFound(err)
 	}
@@ -89,7 +114,7 @@ func (s *Store) ListBots(ctx context.Context, spaceID, viewerID string) ([]*Bot,
 			WHERE bot_id = b.id AND group_id IS NULL AND chat_user_id = $2 AND role IN ('user','bot')
 			ORDER BY created_at DESC, id DESC LIMIT 1) m ON true
 		WHERE b.space_id = $1 AND b.archived_at IS NULL AND `+visibleTo+`
-		ORDER BY b.pinned DESC, COALESCE(m.created_at, b.created_at) DESC`, spaceID, viewerID)
+		ORDER BY b.main DESC, b.pinned DESC, COALESCE(m.created_at, b.created_at) DESC`, spaceID, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +163,28 @@ type limitError struct{ msg string }
 
 func (e *limitError) Error() string { return e.msg }
 
+// ValidateBotFields applies the same name, title, instructions and look
+// limits the API and the roster tools enforce, so a bot hatched in chat
+// can still be edited in the forms. Non-nil fields are trimmed in place.
+func ValidateBotFields(name, title, instructions *string, look *Look) string {
+	if name != nil {
+		*name = strings.TrimSpace(*name)
+		if *name == "" || utf8.RuneCountInString(*name) > 40 {
+			return "give your bot a name (up to 40 characters)"
+		}
+	}
+	if title != nil && utf8.RuneCountInString(*title) > 80 {
+		return "keep the title under 80 characters"
+	}
+	if instructions != nil && len(*instructions) > 20000 {
+		return "instructions are too long"
+	}
+	if look != nil && len(fmt.Sprint(*look)) > 2000 {
+		return "look is too large"
+	}
+	return ""
+}
+
 func (s *Store) CreateBot(ctx context.Context, spaceID, ownerID string, nb NewBot) (*Bot, error) {
 	look, _ := json.Marshal(nb.Look)
 	b, err := scanBot(s.DB.QueryRow(ctx, `INSERT INTO bots(space_id,owner_id,name,title,instructions,model,look)
@@ -153,7 +200,7 @@ func (s *Store) CreateBot(ctx context.Context, spaceID, ownerID string, nb NewBo
 	return b.withRole(ownerID, nil), nil
 }
 
-const botColsBare = `id, space_id, owner_id, name, title, instructions, model, look, pinned, computer_network, allowed_hosts, voice, read_aloud, visibility, created_at`
+const botColsBare = `id, space_id, owner_id, name, title, instructions, model, look, pinned, computer_network, allowed_hosts, voice, read_aloud, main, visibility, created_at`
 
 type BotPatch struct {
 	Name         *string   `json:"name"`
@@ -186,7 +233,19 @@ func (s *Store) UpdateBot(ctx context.Context, spaceID, id string, p BotPatch) (
 		id, spaceID, p.Name, p.Title, p.Instructions, p.Model, look, p.Pinned, p.Network, hosts, p.Voice, p.ReadAloud))
 }
 
+// ErrMainBot means the change isn't allowed on the person's main bot.
+var ErrMainBot = errors.New("the main bot can't be archived")
+
 func (s *Store) ArchiveBot(ctx context.Context, spaceID, id string) error {
+	// The guard lives here as well as in the API, so a routine, a tool or
+	// another server-side path can't archive the main bot either.
+	var main bool
+	if err := s.DB.QueryRow(ctx, `SELECT main FROM bots WHERE id=$1 AND space_id=$2 AND archived_at IS NULL`, id, spaceID).Scan(&main); err != nil {
+		return notFound(err)
+	}
+	if main {
+		return ErrMainBot
+	}
 	t, err := s.DB.Exec(ctx, `UPDATE bots SET archived_at=now() WHERE id=$1 AND space_id=$2 AND archived_at IS NULL`, id, spaceID)
 	if err == nil && t.RowsAffected() == 0 {
 		return ErrNotFound

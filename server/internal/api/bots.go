@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/net/publicsuffix"
 
@@ -120,25 +119,6 @@ func cleanHosts(in []string) ([]string, string) {
 	return out, ""
 }
 
-func validBotFields(name, title, instructions *string, look *store.Look) string {
-	if name != nil {
-		*name = strings.TrimSpace(*name)
-		if *name == "" || utf8.RuneCountInString(*name) > 40 {
-			return "give your bot a name (up to 40 characters)"
-		}
-	}
-	if title != nil && utf8.RuneCountInString(*title) > 80 {
-		return "keep the title under 80 characters"
-	}
-	if instructions != nil && len(*instructions) > 20000 {
-		return "instructions are too long"
-	}
-	if look != nil && len(fmt.Sprint(*look)) > 2000 {
-		return "look is too large"
-	}
-	return ""
-}
-
 func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name         string     `json:"name"`
@@ -150,7 +130,7 @@ func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if msg := validBotFields(&body.Name, &body.Title, &body.Instructions, &body.Look); msg != "" {
+	if msg := store.ValidateBotFields(&body.Name, &body.Title, &body.Instructions, &body.Look); msg != "" {
 		writeErr(w, 400, msg)
 		return
 	}
@@ -181,7 +161,7 @@ func (s *Server) updateBot(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &p) {
 		return
 	}
-	if msg := validBotFields(p.Name, p.Title, p.Instructions, p.Look); msg != "" {
+	if msg := store.ValidateBotFields(p.Name, p.Title, p.Instructions, p.Look); msg != "" {
 		writeErr(w, 400, msg)
 		return
 	}
@@ -220,13 +200,23 @@ func (s *Server) archiveBot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, "only the owner can delete this bot")
 		return
 	}
+	// The main bot stays: it is what the person comes back to, and the
+	// only bot that can hatch the others.
+	if b.Main {
+		writeErr(w, 400, "the main bot can't be deleted")
+		return
+	}
 	audience := s.Runtime.Audience(b.ID)
 	// Everyone who could have a computer with this bot. Adopted computers
 	// do not remember their owner, so their keys are derived from these.
 	people, _ := s.Store.SpaceMemberIDs(r.Context(), b.SpaceID)
 	people = append(people, b.OwnerID)
 	if err := s.Store.ArchiveBot(r.Context(), b.SpaceID, b.ID); err != nil {
-		writeErr(w, 404, "bot not found")
+		if errors.Is(err, store.ErrMainBot) {
+			writeErr(w, 400, "the main bot can't be deleted")
+		} else {
+			writeErr(w, 404, "bot not found")
+		}
 		return
 	}
 	s.Runtime.StopBot(b.ID)

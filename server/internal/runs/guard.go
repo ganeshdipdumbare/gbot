@@ -131,6 +131,11 @@ var alwaysAsk = map[string]bool{
 	// and whatever the site does), so it is a step worth a card even
 	// though it writes nothing.
 	"browser_navigate": true,
+	// The roster is the person's own team. The main bot proposes; they
+	// decide, in every mode, as phone mode does.
+	"bot_create":  true,
+	"bot_update":  true,
+	"bot_archive": true,
 }
 
 // noBlanketAllow are tools a single "always allow" never covers: they act on
@@ -143,6 +148,8 @@ var noBlanketAllow = map[string]bool{
 	"browser_navigate":    true,
 	"routine_create":      true,
 	"task_contract":       true,
+	// Archiving takes a teammate away; never behind a blanket rule.
+	"bot_archive": true,
 }
 
 // CanAlwaysAllow reports whether "always allow" may be offered for a tool.
@@ -197,6 +204,12 @@ func describeCall(name string, args map[string]any) string {
 		return fmt.Sprintf("Type the saved secret %q into [%v] (its value is never shown)", args["secret"], args["ref"])
 	case "routine_delete":
 		return "Delete a routine"
+	case "bot_create":
+		return fmt.Sprintf("Hatch a bot: %v", args["name"])
+	case "bot_update":
+		return fmt.Sprintf("Change %v", args["bot"])
+	case "bot_archive":
+		return fmt.Sprintf("Archive %v", args["bot"])
 	case "task_contract":
 		var b strings.Builder
 		b.WriteString("Agree on the plan: ")

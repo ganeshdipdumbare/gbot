@@ -1,5 +1,6 @@
 package dev.gbot.app.net
 
+import dev.gbot.app.local.MAIN_BOT
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -40,10 +41,15 @@ data class Bot(
     val title: String = "", val instructions: String = "", val model: String = "", val look: Look = Look(),
     val pinned: Boolean = false, val computerNetwork: Boolean = false, val allowedHosts: List<String> = emptyList(),
     val voice: String = "", val readAloud: Boolean = false, val visibility: String = "private",
+    /** The person's main bot: first in the roster, wears the app's mark, can't be archived. */
+    val main: Boolean = false,
     val role: String? = null, val createdAt: String = "", val lastMessage: Message? = null,
 ) {
     val canManage: Boolean get() = role == null || role == "owner" || role == "manager"
     val isOwner: Boolean get() = role == null || role == "owner"
+
+    /** True for the main bot, in phone mode and on a server alike. */
+    val isMain: Boolean get() = main || id == MAIN_BOT
 }
 
 @Serializable data class Member(val userId: String = "", val email: String = "", val name: String = "", val role: String = "")

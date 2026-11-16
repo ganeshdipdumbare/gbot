@@ -41,6 +41,9 @@ export const hues = {
   bubblegum: { body: "#FF66B3", eye: "#16131C" },
   sky: { body: "#3DBEF5", eye: "#16131C" },
   cream: { body: "#F1E7D6", eye: "#16131C" },
+  // The app's mark, worn by the main bot only. Kept out of hueNames so a
+  // seeded bot never lands on it.
+  white: { body: "#F7F7F4", eye: "#16131C" },
 } as const;
 
 export type Hue = keyof typeof hues;
