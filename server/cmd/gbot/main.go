@@ -198,6 +198,9 @@ func run(cmd string, log *slog.Logger) error {
 		secureCookies = v == "true"
 	}
 	netguard.BlockPrivate = env("GBOT_BLOCK_PRIVATE_NETWORK", "") == "true"
+	if t := env("GBOT_SETUP_TOKEN", ""); t != "" && len(t) < 16 {
+		return errors.New("GBOT_SETUP_TOKEN must be at least 16 characters")
+	}
 	srv := &api.Server{
 		Store: st, Runtime: rt, Hub: hub, Models: cat, Log: log,
 		Computer: comp, Routines: rs, Sealer: sealer, Voice: api.VoiceFromEnv(),

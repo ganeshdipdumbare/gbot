@@ -14,6 +14,7 @@ import (
 	"gbot/internal/codex"
 	"gbot/internal/crypto"
 	"gbot/internal/models"
+	"gbot/internal/netguard"
 	"gbot/internal/store"
 )
 
@@ -195,7 +196,10 @@ func (r *Runtime) modelFor(model string) (kritrim.Model, error) {
 		return nil, fmt.Errorf("the model %s is not connected", model)
 	}
 	p := st.srv
-	cfg := kritrim.ModelConfig{APIKey: p.key, BaseURL: p.baseURL}
+	// Provider traffic goes through the same guard as discovery, so a
+	// configured address cannot reach the server's own services when
+	// GBOT_BLOCK_PRIVATE_NETWORK is set.
+	cfg := kritrim.ModelConfig{APIKey: p.key, BaseURL: p.baseURL, Client: netguard.Client(10 * time.Minute)}
 	switch p.kind {
 	case "anthropic":
 		return kritrim.Anthropic(name, cfg), nil

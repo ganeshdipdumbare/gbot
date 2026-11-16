@@ -208,6 +208,9 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		if list, err := models.Discover(r.Context(), kind, base, key); err == nil {
 			discovered = list
+		} else if moved {
+			// The old endpoint's models are not the new one's; show none.
+			discovered = []string{}
 		}
 	}
 	p, err := s.Store.UpdateProvider(r.Context(), u.ID, cur.ID, store.ProviderPatch{

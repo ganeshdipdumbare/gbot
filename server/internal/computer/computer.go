@@ -191,7 +191,12 @@ func (m *Manager) ensure(ctx context.Context, o Owner, network bool, depth int) 
 				return m.ensure(ctx, o, network, depth+1)
 			}
 			if gone {
-				return errors.New("the computer failed to start")
+				// The box was replaced or stopped while waiting: try again
+				// from the top, within the same bound.
+				if depth+1 >= maxEnsureRetries {
+					return errors.New("the computer failed to start")
+				}
+				return m.ensure(ctx, o, network, depth+1)
 			}
 		}
 		return errors.New("the computer is taking too long to start")

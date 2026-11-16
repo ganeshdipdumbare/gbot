@@ -30,7 +30,8 @@ export function SidePanel({ bot, onClose, takeover, setTakeover }: {
         <ComputerTab bot={bot} onOpen={() => setWatch(true)} viewing={watch || takeover} />
         <RoutinesTab bot={bot} />
       </div>
-      <ComputerView bot={bot} open={watch || takeover} control={takeover} onClose={closeView} />
+      {/* Keyed by bot: switching bots starts a fresh view with no control held. */}
+      <ComputerView key={bot.id} bot={bot} open={watch || takeover} control={takeover} onClose={closeView} />
     </div>
   );
 }

@@ -339,7 +339,11 @@ function build(): Rig {
   // builds a fresh one instead of drawing into a dead renderer.
   canvas.addEventListener("webglcontextlost", (e) => {
     e.preventDefault();
-    if (rig && rig.renderer === renderer) rig = null;
+    if (rig && rig.renderer === renderer) {
+      // The old renderer's resources belong to the dead context; release them.
+      try { renderer.dispose(); } catch { /* already gone with the context */ }
+      rig = null;
+    }
   });
   renderer.setPixelRatio(1);
   renderer.setSize(ATLAS, ATLAS, false);

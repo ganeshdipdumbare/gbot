@@ -137,12 +137,16 @@ SNAPSHOT_JS = r"""(start) => {
       if (type === 'checkbox' || type === 'radio') item.checked = el.checked;
       else if (type === 'password') item.value = el.value ? '(filled)' : '(empty)';
       else if (['input', 'textarea', 'select'].includes(tag) && !['button', 'submit', 'reset'].includes(type)) {
-        // One-time codes, tokens, card numbers and the like are never echoed.
+        // Only plain text and choices are echoed. Anything else (text areas
+        // included, since they often hold keys and codes) shows whether it is
+        // filled, not what it holds. Fields that look like codes are never echoed.
         const hint = [el.name, el.id, el.getAttribute('autocomplete'), el.getAttribute('inputmode'), el.getAttribute('placeholder'), name].join(' ');
-        if (/(otp|one-time|code|token|secret|card|cc-|cvv|cvc|csc|ssn|pin|passcode|2fa|totp|password)/i.test(hint)) {
-          item.value = el.value ? '(filled)' : '(empty)';
-        } else {
+        const plain = tag === 'select' || (tag === 'input' && ['', 'text', 'search'].includes(type));
+        const secretish = /(otp|one-time|code|token|secret|card|cc-|cvv|cvc|csc|ssn|pin|passcode|2fa|totp|password|key)/i.test(hint);
+        if (plain && !secretish) {
           item.value = (el.value || '').slice(0, 80);
+        } else {
+          item.value = el.value ? '(filled)' : '(empty)';
         }
       }
       if (el.disabled) item.disabled = true;
@@ -211,6 +215,11 @@ def host_allowed(url, top=True):
     page; as a page of their own they are not."""
     if not ALLOWED:
         return True
+    # Our parser and the browser's can disagree on URLs with backslashes or
+    # control characters (in "https://evil.com\\.example.com" the host differs
+    # between them), so such URLs are refused outright.
+    if re.search(r"[\\\x00-\x20\x7f]", url):
+        return False
     scheme = urlparse(url).scheme
     if url in ("about:blank", "about:srcdoc"):
         return True
@@ -548,20 +557,34 @@ def read_state():
         return {}
 
 
+def private_dir(d):
+    """The state directory must be ours and private. A directory that
+    already existed with other permissions, or belongs to someone else, is
+    not trusted."""
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    st = os.lstat(d)
+    if st.st_uid != os.getuid():
+        raise OSError(f"{d} is not owned by this user")
+    if st.st_mode & 0o077:
+        os.chmod(d, 0o700)
+
+
 def write_state(obj):
     """Writes the state atomically: a fresh private file, then renamed over
     the old one, so a planted symlink is replaced rather than followed."""
     d = os.path.dirname(STATE)
     tmp = None
     try:
-        os.makedirs(d, mode=0o700, exist_ok=True)
+        private_dir(d)
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".web-last-", suffix=".json")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(obj, f)
         os.replace(tmp, STATE)
         tmp = None
-    except OSError:
-        pass
+    except OSError as e:
+        # Without the state the page-stuck check and element checks cannot
+        # work, so say so rather than fail silently.
+        print(f"gbot-web: couldn't save the page state ({e.strerror or e}).", file=sys.stderr)
     finally:
         if tmp is not None:
             try:

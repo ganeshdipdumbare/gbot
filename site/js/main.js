@@ -144,6 +144,10 @@ async function startStudio() {
     studio.set(state);
     if (state.mood !== "idle") studio.setMood(state.mood);
   } catch {
+    // A half-built stage must not stay as the studio: tear it down and
+    // show the flat picture instead.
+    try { studio?.dispose(); } catch {}
+    studio = null;
     studioFlat = flat(studioEl, [state]);
   }
 }

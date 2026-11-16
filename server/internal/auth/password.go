@@ -52,6 +52,10 @@ func CheckPassword(pw, encoded string) (bool, error) {
 	if err1 != nil || err2 != nil {
 		return false, errBadHash
 	}
+	// A key shorter than ours (or an empty one) would match almost anything.
+	if len(want) != argonKeyLen || len(salt) < 8 {
+		return false, errBadHash
+	}
 	got := argon2.IDKey([]byte(pw), salt, t, m, p, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }

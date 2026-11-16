@@ -38,11 +38,17 @@ function Splitter({ onMove, label }: { onMove: (dx: number) => void; label: stri
         const up = () => {
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
+          window.removeEventListener("pointercancel", up);
+          window.removeEventListener("blur", up);
           document.body.style.cursor = "";
           document.body.style.userSelect = "";
         };
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", up);
+        // A drag can end outside the window or be cancelled by the system;
+        // either way the listeners and body styles must still be cleared.
+        window.addEventListener("pointercancel", up);
+        window.addEventListener("blur", up);
       }}
     />
   );
