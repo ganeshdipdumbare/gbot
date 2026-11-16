@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gbot/internal/crypto"
+	"gbot/internal/replay"
 	"gbot/internal/runs"
 	"gbot/internal/slack"
 	"gbot/internal/store"
@@ -169,6 +170,14 @@ func (s *Server) slackEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	if !slack.Verify(secret, body, r.Header.Get("X-Slack-Request-Timestamp"), r.Header.Get("X-Slack-Signature"), time.Now()) {
 		writeErr(w, 401, "unauthorized")
+		return
+	}
+	// A signed request is accepted once. Slack retries deliver the same
+	// signature again, and a captured one must not be replayed inside the
+	// timestamp window.
+	if !replay.Accept("slack|"+r.Header.Get("X-Slack-Signature"), time.Now(), 10*time.Minute) {
+		// Already handled: acknowledge it, so Slack does not retry it again.
+		writeJSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
 

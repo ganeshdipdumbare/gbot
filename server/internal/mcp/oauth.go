@@ -25,6 +25,9 @@ const timeout = 20 * time.Second
 
 // Config is what a server's authorization metadata tells us.
 type Config struct {
+	// serverHost is the host the person typed in. Endpoints the remote
+	// metadata names must match it to use plain http.
+	serverHost            string
 	Resource              string   `json:"resource"`
 	AuthorizationEndpoint string   `json:"authorization_endpoint"`
 	TokenEndpoint         string   `json:"token_endpoint"`
@@ -91,7 +94,7 @@ func Discover(ctx context.Context, serverURL string) (*Config, error) {
 	if metaURL == "" {
 		metaURL = wellKnown(u, "oauth-protected-resource")
 	}
-	if err := netguard.Endpoint(metaURL); err != nil {
+	if err := discoveredEndpoint(metaURL, u.Hostname()); err != nil {
 		return nil, fmt.Errorf("this app's sign-in metadata is unusable: %w", err)
 	}
 	var resource struct {
@@ -118,7 +121,7 @@ func Discover(ctx context.Context, serverURL string) (*Config, error) {
 			last = err
 			continue
 		}
-		cfg, err := authMetadata(ctx, c, as)
+		cfg, err := authMetadata(ctx, c, as, u.Hostname())
 		if err == nil {
 			cfg.Resource = resource.Resource
 			if len(resource.ScopesSupported) > 0 {
@@ -132,6 +135,20 @@ func Discover(ctx context.Context, serverURL string) (*Config, error) {
 		last = errors.New("no authorization server")
 	}
 	return nil, fmt.Errorf("this app didn't offer a sign-in: %w", last)
+}
+
+// discoveredEndpoint checks a URL that a remote server's metadata named.
+// Plain http is only accepted for the same host the person entered, so a
+// document cannot send tokens to a service on this machine.
+func discoveredEndpoint(raw, serverHost string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errors.New("bad endpoint URL")
+	}
+	if u.Scheme == "http" && u.Hostname() != serverHost {
+		return errors.New("sign-in endpoints must use https")
+	}
+	return netguard.Endpoint(raw)
 }
 
 // probeMetadataURL asks the MCP server for the resource document in its
@@ -181,7 +198,7 @@ func wellKnown(u *url.URL, name string) string {
 
 // authMetadata tries both RFC 8414 placements: issuer plus the well-known
 // path, and the well-known segment inserted before an issuer path.
-func authMetadata(ctx context.Context, c *http.Client, issuer string) (*Config, error) {
+func authMetadata(ctx context.Context, c *http.Client, issuer, serverHost string) (*Config, error) {
 	u, err := url.Parse(issuer)
 	if err != nil || u.Host == "" {
 		return nil, errors.New("bad authorization server")
@@ -209,11 +226,12 @@ func authMetadata(ctx context.Context, c *http.Client, issuer string) (*Config, 
 			if ep == "" {
 				continue
 			}
-			if err := netguard.Endpoint(ep); err != nil {
+			if err := discoveredEndpoint(ep, serverHost); err != nil {
 				return nil, err
 			}
 		}
 		return &Config{
+			serverHost:            serverHost,
 			AuthorizationEndpoint: doc.AuthorizationEndpoint,
 			TokenEndpoint:         doc.TokenEndpoint,
 			RegistrationEndpoint:  doc.RegistrationEndpoint,
@@ -232,7 +250,7 @@ func Register(ctx context.Context, cfg *Config, redirect string) (*Client, error
 	if cfg.RegistrationEndpoint == "" {
 		return nil, errors.New("this app needs a pre-registered client; add it with a token instead")
 	}
-	if err := netguard.Endpoint(cfg.RegistrationEndpoint); err != nil {
+	if err := discoveredEndpoint(cfg.RegistrationEndpoint, cfg.serverHost); err != nil {
 		return nil, err
 	}
 	body, _ := json.Marshal(map[string]any{
@@ -255,8 +273,8 @@ func Register(ctx context.Context, cfg *Config, redirect string) (*Client, error
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("register: %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		// The body is not passed on: it comes from a remote server.
+		return nil, fmt.Errorf("register: %s", resp.Status)
 	}
 	var out Client
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {

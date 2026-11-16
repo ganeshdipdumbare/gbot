@@ -14,11 +14,11 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
 	"gbot/internal/cron"
+	"gbot/internal/replay"
 	"gbot/internal/store"
 )
 
@@ -149,41 +149,36 @@ func (s *Service) tick(ctx context.Context) {
 		return
 	}
 	for _, r := range due {
-		bot, err := s.Store.GetBotAnySpace(ctx, r.BotID)
-		if err != nil {
+		bot, ok := s.runnableBot(ctx, r)
+		if !ok {
 			continue
 		}
 		s.Fire(ctx, bot, r, "")
 	}
 }
 
+// RunnableBot returns the routine's bot when the routine's creator can still
+// see it. A routine keeps the access of the person who made it, so once
+// that access is gone, the routine stops running.
+func (s *Service) RunnableBot(ctx context.Context, r *store.Routine) (*store.Bot, bool) {
+	return s.runnableBot(ctx, r)
+}
+
+func (s *Service) runnableBot(ctx context.Context, r *store.Routine) (*store.Bot, bool) {
+	base, err := s.Store.GetBotAnySpace(ctx, r.BotID)
+	if err != nil {
+		return nil, false
+	}
+	bot, err := s.Store.GetBotFor(ctx, base.SpaceID, r.UserID, r.BotID)
+	if err != nil {
+		s.Log.Info("routine skipped: its creator no longer has access", "routine", r.ID)
+		return nil, false
+	}
+	return bot, true
+}
+
 // webhookWindow is how far a signed timestamp may drift from our clock.
 const webhookWindow = 5 * time.Minute
-
-// replays remembers accepted webhook signatures for as long as they could
-// still pass the timestamp check.
-var replays = &replayCache{seen: map[string]time.Time{}}
-
-type replayCache struct {
-	mu   sync.Mutex
-	seen map[string]time.Time
-}
-
-// accept reports whether key is new, and records it if so.
-func (c *replayCache) accept(key string, now time.Time) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for k, until := range c.seen {
-		if now.After(until) {
-			delete(c.seen, k)
-		}
-	}
-	if _, dup := c.seen[key]; dup {
-		return false
-	}
-	c.seen[key] = now.Add(2 * webhookWindow)
-	return true
-}
 
 // Verify checks a webhook call. The caller either signs the request
 // (X-GBot-Signature: sha256=<hex hmac>, over "<X-GBot-Timestamp>.<body>")
@@ -213,7 +208,7 @@ func Verify(r *store.Routine, body []byte, signature, timestamp, bearer string, 
 		}
 		// A signature is good once. Within the window it could otherwise be
 		// sent again, so each accepted one is remembered until it expires.
-		return replays.accept(r.ID+"|"+signature, now)
+		return replay.Accept(r.ID+"|"+signature, now, 2*webhookWindow)
 	}
 	if bearer != "" {
 		h := sha256.Sum256([]byte(bearer))

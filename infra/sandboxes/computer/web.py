@@ -250,6 +250,11 @@ def guard_context(ctx):
         fail(f"A page went to {host}, which isn't on this bot's allowed list. It was closed.")
 
 
+def ctx_of(page):
+    """The browser context a page belongs to."""
+    return page.context
+
+
 def guard_page(page):
     """Close a page if it, or any frame in it, left the allowlist, by a
     click, redirect, script or embedded iframe."""
@@ -488,6 +493,7 @@ def dismiss_consent(page):
 def cmd_cookies(page):
     guard_page(page)
     label = dismiss_consent(page)
+    guard_context(ctx_of(page))
     if label:
         print(f'Dismissed the cookie prompt by clicking "{label}". Now on {shown(page.url)} ({page.title()}).')
     else:
@@ -675,6 +681,8 @@ def cmd_snapshot(page):
     settle(page)
     guard_page(page)
     dismissed = dismiss_consent(page)
+    # The consent click can navigate; check before anything is read or shown.
+    guard_context(ctx_of(page))
     data = read_page(page)
     seen = remember(data)
     lines = [

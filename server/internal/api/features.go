@@ -483,8 +483,8 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, "unauthorized")
 		return
 	}
-	bot, err := s.Store.GetBotAnySpace(r.Context(), rt.BotID)
-	if err != nil {
+	bot, ok := s.Routines.RunnableBot(r.Context(), rt)
+	if !ok {
 		writeErr(w, 404, "not found")
 		return
 	}

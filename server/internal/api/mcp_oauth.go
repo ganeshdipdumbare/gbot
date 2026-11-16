@@ -36,6 +36,10 @@ const oauthTTL = 15 * time.Minute
 const oauthBindCookie = "gbot_oauth_bind"
 
 func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
+	if !s.probeLimit.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "too many sign-in attempts, try again in a minute")
+		return
+	}
 	var body struct {
 		Name string `json:"name"`
 		URL  string `json:"url"`
@@ -62,13 +66,16 @@ func (s *Server) startMCPOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := mcpoauth.Discover(ctx, u.String())
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		// The detail names internal hosts and statuses; keep it in the log.
+		s.Log.Warn("mcp oauth discover", "err", err)
+		writeErr(w, 400, "couldn't set up sign-in with that app. Check the address, or add it with a token instead.")
 		return
 	}
 	redirect := base + "/api/mcp/oauth/callback"
 	client, err := mcpoauth.Register(ctx, cfg, redirect)
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		s.Log.Warn("mcp oauth register", "err", err)
+		writeErr(w, 400, "that app didn't accept a sign-in from gbot. Add it with a token instead.")
 		return
 	}
 	state, err := mcpoauth.Random(32)
