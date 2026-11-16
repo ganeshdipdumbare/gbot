@@ -232,7 +232,16 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
             val body = buildJsonObject {
                 put("model", model)
                 put("max_tokens", 1024)
-                put("system", system)
+                // The system prompt and the tool list are the same on every
+                // step of a run and every turn of a chat; caching them cuts
+                // the wait before the first word (and the bill with it).
+                putJsonArray("system") {
+                    addJsonObject {
+                        put("type", "text")
+                        put("text", system)
+                        putJsonObject("cache_control") { put("type", "ephemeral") }
+                    }
+                }
                 put("messages", JsonArray(messages))
                 if (toolJson.isNotEmpty()) put("tools", JsonArray(toolJson))
             }
