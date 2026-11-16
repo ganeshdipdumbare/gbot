@@ -152,6 +152,12 @@ class LocalBrain(
         if (w.durable) db.putQueued(qid, now(), json.encodeToString(Work.serializer(), w))
         queues.getOrPut(chat) { java.util.concurrent.CopyOnWriteArrayList() }.add(QueueItem(qid, queueLabel(w), "queued"))
         emitQueue(chat)
+        // The phone kills a cached process, so a run the person walks away
+        // from would end with no reply and no alert. Android keeps work
+        // alive only for a foreground service; it lets go once nothing is
+        // running. Started here, while the app is still in front, because
+        // the system refuses a foreground service started from the back.
+        dev.gbot.app.live.LocalService.work(ctx)
         val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             // A paused message waits outside the line, so others go ahead.
             while (qid in paused && isActive) delay(300)
@@ -322,6 +328,8 @@ class LocalBrain(
         val exchange = w.exchange.mapNotNull { db.message(it) }
         var status = "failed"
         var outcome = "${bot.name} didn't reply."
+        // A reply the person can actually see: what earns a "done" alert.
+        var landed = false
         if (exchange.isNotEmpty()) {
             val tries = (exchange.last().str("tries")?.toIntOrNull() ?: 0) + 1
             exchange.forEach { patchCard(it, mapOf("status" to "working", "tries" to tries)) }
@@ -451,6 +459,7 @@ class LocalBrain(
                 // Asked from Slack: the answer goes back into that thread too.
                 if (said.isNotEmpty()) w.slack?.let { t -> runCatching { api.slack.post(t, said) } }
                 if (group != null && w.depth < 3) handoff(group, bot, said, w)
+                landed = said.isNotEmpty()
             }
         } catch (e: Throwable) {
             if (e is CancellationException) {
@@ -466,7 +475,9 @@ class LocalBrain(
             if (proof === runProof) proof = null
             browsing.remove(bot.id)
             emitComputer(bot.id, false)
-            emitPresence(bot.id, group, "idle")
+            // In a group the reply itself is the alert; its own chat has
+            // nothing else to show for it, so settle through "done".
+            if (landed && group == null) settleDone(bot) else emitPresence(bot.id, group, "idle")
         }
     }
 
@@ -1039,6 +1050,19 @@ class LocalBrain(
 
     /** The busy bots, for a fresh bot list. */
     fun presenceSnapshot(): Map<String, Presence> = presence.toMap()
+
+    /**
+     * Shows "done" for a moment, then idle — the server's own settle. The
+     * phone used to go straight to idle, so a bot that finished while you
+     * were elsewhere never said so: this is what notifies.
+     */
+    private fun settleDone(bot: Bot) {
+        emitPresence(bot.id, null, "done")
+        scope.launch {
+            delay(2500)
+            if (presence[bot.id]?.state == "done") emitPresence(bot.id, null, "idle")
+        }
+    }
 
     private fun emitPresence(botId: String, group: Group?, state: String, detail: String? = null) {
         val p = Presence(state = state, detail = detail)

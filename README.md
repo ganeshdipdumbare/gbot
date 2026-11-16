@@ -261,6 +261,49 @@ make desktop   # builds apps/desktop/src-tauri/target/release/bundle/macos/gbot.
 make android   # builds apps/android/app/build/outputs/apk/release/app-release.apk
 ```
 
+### macOS says gbot is from an unidentified developer
+
+`make desktop` signs the app, so it is sealed and your Mac keeps whatever you
+granted it between builds. Gatekeeper still asks once, because only Apple can
+vouch for an app and only for a fee. Three ways through, cheapest first.
+
+**Open it anyway.** Right-click gbot.app → **Open** → **Open**, or after a
+refused launch: System Settings → Privacy & Security → **Open Anyway**. Once
+per copy of the app. A copy that arrived in a DMG, by AirDrop or as a download
+carries a quarantine flag, which is what makes macOS refuse it outright:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/gbot.app
+```
+
+**Be your own developer.** Keychain Access → Certificate Assistant → *Create a
+Certificate*, name it `gbot local`, identity type Self Signed Root, type **Code
+Signing**. Then build with it:
+
+```bash
+GBOT_SIGN_IDENTITY="gbot local" make desktop
+```
+
+Gatekeeper still wants that one approval — a certificate you issued yourself
+says who built the app, not that anyone checked it — but macOS now recognises
+the app across rebuilds, so its microphone, network and automation permissions
+stop resetting every time.
+
+**Be a developer Apple knows.** This is the only way the app opens with no
+prompt at all, on your Mac or anyone else's: join the Apple Developer Program
+($99/year), make a *Developer ID Application* certificate, and let Tauri sign
+and notarize the build:
+
+```bash
+export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export APPLE_ID=you@example.com APPLE_TEAM_ID=TEAMID
+export APPLE_PASSWORD=app-specific-password   # appleid.apple.com → App-Specific Passwords
+make desktop
+```
+
+Apple's notary service checks the build and staples its approval to the
+bundle. `make desktop` leaves an app signed that way alone.
+
 Both connect to your gbot server; the phone needs its address on your network.
 The Android app is native (Kotlin + Jetpack Compose) and has everything the
 web app has. It keeps a quiet connection to your server in the background, so
@@ -303,7 +346,9 @@ closed. Integrations speak MCP over HTTP, with the same one-tap sign-in as the
 server, or a token. Slack works through Socket Mode (see [Slack](#slack)).
 Skills load with `use_skill`, the vault types saved secrets into fields on the
 sites they were saved for without showing the value to the model, and every
-provider, notification and voice feature works. Team sharing and spaces stay
+provider, notification and voice feature works. Leaving gbot does not stop a
+run: the phone holds it open until it finishes and then tells you it is done,
+the same alert the server sends. Team sharing and spaces stay
 server features, because they exist to share between people.
 
 Phone limits worth knowing: the model download is 2–4 GB and the largest wants

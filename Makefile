@@ -29,8 +29,9 @@ test: db       ## Go tests (offline mock model) and package tests
 	pnpm --filter @gbot/characters test
 	pnpm --filter @gbot/web typecheck
 
-desktop:       ## build the desktop app (Tauri)
+desktop:       ## build the desktop app (Tauri), signed so macOS opens it
 	pnpm --filter @gbot/desktop build
+	@apps/desktop/sign-macos.sh
 
 android:       ## build the native Android app (Kotlin + Compose)
 	cd apps/android && ./gradlew assembleRelease
