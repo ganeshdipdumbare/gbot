@@ -185,7 +185,7 @@ class LocalApi(
 
     private fun hatchMainBot(): Bot {        val b = Bot(
             id = MAIN_BOT, name = "gbot", title = "Your main bot", look = MAIN_LOOK,
-            instructions = MAIN_PURPOSE, model = defaultModelId(), pinned = true,
+            instructions = MAIN_PURPOSE, model = "", pinned = true,
             createdAt = Instant.now().toString(),
         )
         db.putBot(b)
@@ -196,7 +196,7 @@ class LocalApi(
         val b = Bot(
             id = "b_" + UUID.randomUUID().toString().take(8),
             name = name, title = title, look = look,
-            model = defaultModelId(),
+            model = "",
             createdAt = Instant.now().toString(),
         )
         db.putBot(b)
