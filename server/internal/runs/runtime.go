@@ -983,7 +983,7 @@ func (r *Runtime) pendingReplies(ctx context.Context, b *store.Bot, user string)
 			name = t.Name
 		}
 		if sb.Len() == 0 {
-			sb.WriteString("Replies to messages you sent your teammates (the person can see these cards):\n")
+			sb.WriteString("Replies to messages you sent your teammates. The person can't read them: their card only shows that you messaged the bot, so say what matters yourself.\n")
 		}
 		fmt.Fprintf(&sb, "- %s replied to %q: %s\n", name, short(fmt.Sprint(d["message"]), 200), reply)
 		ids = append(ids, m.ID)

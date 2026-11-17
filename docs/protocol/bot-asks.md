@@ -45,6 +45,12 @@ the same data:
 `delivered` means the message was taken in and nothing needed to go back
 (a tell, or `NO_REPLY`).
 
+The card is about the message, not the answer: in the sender's chat it reads
+"Asked Nori" / "Sent", in the receiver's "Message from Pip" / "Received", and
+opening it shows what was sent. `reply` is kept for the sender's next prompt
+but is never drawn — the asking bot says what matters in its own chat when the
+answers come back (`joinPrompt` tells it so).
+
 ## Limits
 
 - Depth: a bot at depth 2 or deeper can't message anyone (person → A → B → C,

@@ -54,9 +54,9 @@ export function Welcome() {
   return (
     <div className="min-h-full grid place-items-center px-4 py-12">
       <main className="w-full max-w-[360px] entry-in">
-        <div ref={ref} className="flex justify-center items-end gap-1.5 mb-6" aria-hidden>
+        <div ref={ref} className="flex justify-center items-end gap-2 mb-7" aria-hidden>
           {crew.map((c, i) => (
-            <Gbot key={c.seed} look={c.look} seed={c.seed} size={i === 1 ? 44 : 32} lookAt={gaze} mood={i === 1 ? mood : mood === "happy" ? "happy" : "idle"} />
+            <Gbot key={c.seed} look={c.look} seed={c.seed} size={i === 1 ? 92 : 68} lookAt={gaze} mood={i === 1 ? mood : mood === "happy" ? "happy" : "idle"} />
           ))}
         </div>
         <h1 className="text-[22px] font-semibold tracking-[-0.4px] text-center">{signup ? "Create your gbot account" : "Sign in to gbot"}</h1>

@@ -156,7 +156,7 @@ fun ChatScreen(nav: NavHostController, key: ChatKey, prefill: String = "") {
             bot?.name ?: group!!.name, leave, subtitle = job,
             lead = {
                 Box(Modifier.clip(CircleShape).tap { nav.navigate(if (bot != null) R.bot(bot.id) else R.group(group!!.id)) }) {
-                    if (bot != null) Gbot(bot.look, bot.id, 34, mood = moodOf(p, bot), sharedKey = "bot:${bot.id}") else Stack(members, 24, presence)
+                    if (bot != null) Gbot(bot.look, bot.id, 42, mood = moodOf(p, bot), sharedKey = "bot:${bot.id}") else Stack(members, 28, presence)
                 }
             },
         ) {
@@ -319,7 +319,7 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
                 val b = byId[id] ?: return@items
                 val pr = s.presence[id]
                 Row(Modifier.animateItem(fadeInSpec = Motion.quick(), placementSpec = null, fadeOutSpec = Motion.fast()).padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Gbot(b.look, b.id, 32, mood = if (pr?.state == "working") "working" else "thinking")
+                    Gbot(b.look, b.id, 40, mood = if (pr?.state == "working") "working" else "thinking")
                     Spacer(Modifier.width(10.dp))
                     Text((if (group != null) "${b.name} · " else "") + (pr?.detail ?: if (pr?.state == "working") "Working" else "Thinking"), style = T.small, color = g.ink3)
                 }
@@ -381,7 +381,7 @@ private fun Bubble(m: Message, author: Bot?, first: Boolean, last: Boolean, inGr
     else RoundedCornerShape(if (first) big else small, big, big, if (last) big else small)
     Row(Modifier.fillMaxWidth().padding(top = if (first) 10.dp else 2.dp), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         if (!mine && named) {
-            Box(Modifier.width(30.dp)) { if (last && author != null) Gbot(author.look, author.id, 24, mood = if (m.streaming) "working" else "idle") }
+            Box(Modifier.width(40.dp)) { if (last && author != null) Gbot(author.look, author.id, 34, mood = if (m.streaming) "working" else "idle") }
         }
         Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start, modifier = Modifier.widthIn(max = 320.dp)) {
             if (named && first && !mine && author != null) Text(author.name, style = T.tiny, color = g.ink3, modifier = Modifier.padding(start = 4.dp, bottom = 3.dp))
@@ -405,7 +405,7 @@ private fun Bubble(m: Message, author: Bot?, first: Boolean, last: Boolean, inGr
 private fun Hello(bot: Bot) {
     val g = LocalG.current
     Column(Modifier.fillMaxWidth().padding(top = 80.dp, bottom = 30.dp, start = 24.dp, end = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Gbot(bot.look, bot.id, 88, lively = true)
+        Gbot(bot.look, bot.id, 112, lively = true)
         Spacer(Modifier.size(10.dp))
         Text(bot.name, style = T.h2, color = g.ink)
         Spacer(Modifier.size(4.dp))
@@ -417,7 +417,7 @@ private fun Hello(bot: Bot) {
 private fun GroupHello(group: Group, members: List<Bot>) {
     val g = LocalG.current
     Column(Modifier.fillMaxWidth().padding(top = 80.dp, bottom = 30.dp, start = 24.dp, end = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Stack(members, 48)
+        Stack(members, 60)
         Spacer(Modifier.size(10.dp))
         Text(group.name, style = T.h2, color = g.ink)
         Spacer(Modifier.size(4.dp))

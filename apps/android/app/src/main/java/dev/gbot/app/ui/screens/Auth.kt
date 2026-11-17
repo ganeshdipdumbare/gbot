@@ -116,7 +116,7 @@ fun ServerScreen(onDone: () -> Unit, onBack: (() -> Unit)?) {
     }
 
     AuthFrame(onBack) {
-        Gbot(Look(shape = "pill", hue = "grape", eyes = "pill"), "brand", 88, mood = if (busy) "thinking" else "idle")
+        Gbot(Look(shape = "pill", hue = "grape", eyes = "pill"), "brand", 116, mood = if (busy) "thinking" else "idle")
         Text("Connect to gbot", style = T.title, color = g.ink, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Text(
             "Use your computer's Wi‑Fi address, or your bb share link (https://…--8080.getbb.app). For bb links you'll sign in to bb once first.",
@@ -198,7 +198,7 @@ fun LoginScreen(onSignedIn: () -> Unit, onChangeServer: () -> Unit) {
     }
 
     AuthFrame(null) {
-        Gbot(Look(shape = "pill", hue = "grape", eyes = "pill"), "brand", 88, mood = if (error.isNotEmpty()) "blocked" else if (busy) "thinking" else "idle")
+        Gbot(Look(shape = "pill", hue = "grape", eyes = "pill"), "brand", 116, mood = if (error.isNotEmpty()) "blocked" else if (busy) "thinking" else "idle")
         Text(if (signup) "Create your gbot account" else "Sign in to gbot", style = T.title.copy(fontSize = 24.sp), color = g.ink, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         Spacer(Modifier.height(4.dp))
         if (!ready) {

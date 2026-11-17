@@ -120,7 +120,7 @@ export function Sidebar({ activeId, compact, onSelect, onHatch, onSettings, onSe
   return (
     <div className="h-full flex flex-col bg-chrome select-none">
       <div className={compact ? "flex flex-col items-center gap-0.5 py-2 shrink-0" : "flex items-center gap-1 h-11 pl-4 pr-2 shrink-0"}>
-        {!compact && <span className="text-[14px] font-semibold tracking-[-0.2px] flex-1">gbot</span>}
+        {!compact && <span className="text-[16px] font-semibold tracking-[-0.2px] flex-1">gbot</span>}
         {compact && <IconButton label="Search" onClick={onSearch} className="size-7!"><Icon.search /></IconButton>}
         <IconButton label="New group" onClick={onNewGroup} className="size-7!"><Icon.users /></IconButton>
         <IconButton label="New bot" onClick={onHatch} className="size-7!"><Icon.plus /></IconButton>
@@ -190,7 +190,7 @@ export function Sidebar({ activeId, compact, onSelect, onHatch, onSettings, onSe
                       active={groupKey(g.id) === activeId}
                       onClick={() => onSelect(groupKey(g.id))}
                       onHover={(el) => hover(el, g.name, members.map((b) => b.name).join(", "))}
-                      avatar={<div className="size-[42px] grid place-items-center transition-transform duration-200 ease-out group-hover:scale-[1.03]"><Stack bots={members} size={26} presence={presence} /></div>}
+                      avatar={<div className="size-[52px] grid place-items-center transition-transform duration-200 ease-out group-hover:scale-[1.03]"><Stack bots={members} size={28} presence={presence} /></div>}
                       name={g.name}
                       titleText={`${g.name} — ${members.map((b) => b.name).join(", ")}`}
                       time={timeAgo(g.lastMessage?.createdAt)}
@@ -302,7 +302,7 @@ function preview(b: Bot, p?: Presence) {
 const BotAvatar = memo(function BotAvatar({ bot, p }: { bot: Bot; p?: Presence }) {
   return (
     <div className="relative shrink-0 transition-transform duration-200 ease-out group-hover:scale-[1.04]">
-      <Gbot look={bot.look} seed={bot.id} size={42} mood={moodOf(p, bot)} />
+      <Gbot look={bot.look} seed={bot.id} size={52} mood={moodOf(p, bot)} />
       {p?.state === "waiting" && <span className="absolute -top-px -right-px size-2.5 rounded-full bg-danger ring-2 ring-[var(--chrome)]" title="Needs you" />}
       {p?.live && p.state !== "waiting" && <span className="absolute -bottom-px -right-px size-2.5 rounded-full bg-live ring-2 ring-[var(--chrome)]" title="Its computer is on" />}
     </div>

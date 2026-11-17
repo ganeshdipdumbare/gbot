@@ -151,7 +151,7 @@ fun Composer(placeholder: String, busy: Boolean, mentionable: List<Bot>, onSend:
         ) {
             suggestions.forEach { s ->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).tap { setText(s.insert) }.padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (s.bot != null) Gbot(s.bot.look, s.bot.id, 22) else Icon("spark", size = 18.dp, color = g.ink2)
+                    if (s.bot != null) Gbot(s.bot.look, s.bot.id, 28) else Icon("spark", size = 18.dp, color = g.ink2)
                     Spacer(Modifier.width(10.dp))
                     Text(s.label, style = T.body, color = g.ink)
                     if (!s.hint.isNullOrEmpty()) Text("  " + s.hint, style = T.small, color = g.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)

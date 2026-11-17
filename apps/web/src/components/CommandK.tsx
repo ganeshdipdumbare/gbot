@@ -48,7 +48,7 @@ export function CommandK({ open, onClose, onPick, onHatch }: { open: boolean; on
             <li key={b.id}>
               <button onMouseEnter={() => setI(j)} onClick={() => onPick(b.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-2xl text-left cursor-pointer ${i === j ? "bg-surface-2" : ""}`}>
-                {b.bot ? <Gbot look={b.bot.look} seed={b.bot.id} size={32} mood={moodOf(presence[b.bot.id], b.bot)} /> : <Stack bots={b.members ?? []} size={22} />}
+                {b.bot ? <Gbot look={b.bot.look} seed={b.bot.id} size={40} mood={moodOf(presence[b.bot.id], b.bot)} /> : <Stack bots={b.members ?? []} size={28} />}
                 <span className="font-semibold">{b.name}</span>
                 <span className="text-ink-2 text-[13px] truncate">{b.sub}</span>
               </button>

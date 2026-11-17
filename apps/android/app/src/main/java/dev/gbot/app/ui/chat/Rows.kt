@@ -107,20 +107,18 @@ fun Activity(m: Message) {
     }
 }
 
-private val noReplyText = mapOf(
-    "delivered" to "No reply needed", "needs_you" to "Needs the person before it can reply", "failed" to "No reply",
-    "expired" to "Didn't answer in time", "cancelled" to "Stopped before answering",
-)
-private fun oneLine(s: String) = s.replace(Regex("[*_`#>]+"), "").replace(Regex("\\s+"), " ").trim()
-
-/** One bot messaging another: a centered divider; tap to read the exchange. */
+/**
+ * One bot messaging another: a centered divider; tap to read the message.
+ * Messaging is async, so the card is only about the message itself — sent
+ * here, received there. An answer is never folded back into it: the asking
+ * bot speaks it in its own chat when it comes.
+ */
 @Composable
 fun Exchange(m: Message, bots: List<Bot>) {
     val g = LocalG.current
     var open by remember { mutableStateOf(false) }
     val fromId = m.str("from"); val toId = m.str("to")
     val status = m.str("status").orEmpty()
-    val reply = m.str("reply")
     val from = bots.find { it.id == fromId }; val to = bots.find { it.id == toId }
     val outbound = m.botId == fromId
     val peer = if (outbound) to else from
@@ -135,14 +133,13 @@ fun Exchange(m: Message, bots: List<Bot>) {
         else -> "Message from ${from?.name ?: "a bot"}"
     }
     val line = when {
-        !reply.isNullOrEmpty() -> (if (outbound) "${to?.name ?: "Bot"}: " else "Replied: ") + oneLine(reply)
-        status in noReplyText -> noReplyText.getValue(status)
-        status == "working" -> if (outbound) "${to?.name ?: "Bot"} is on it…" else "Working on it…"
-        else -> if (outbound) "Sent" else ""
+        status == "failed" -> "Not delivered"
+        outbound -> "Sent"
+        else -> "Received"
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.clip(RoundedCornerShape(50)).tap { open = true }.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (peer != null) { Gbot(peer.look, peer.id, 16); Spacer(Modifier.width(6.dp)) }
+            if (peer != null) { Gbot(peer.look, peer.id, 22); Spacer(Modifier.width(6.dp)) }
             Text(label, style = T.small, color = g.ink2)
         }
         if (line.isNotEmpty()) Text(line, style = T.tiny.copy(fontSize = 12.5.sp), color = if (status == "failed") g.danger else g.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 320.dp))
@@ -150,24 +147,15 @@ fun Exchange(m: Message, bots: List<Bot>) {
     if (open) Dialog(onDismissRequest = { open = false }) {
         Column(Modifier.clip(RoundedCornerShape(22.dp)).background(if (g.dark) androidx.compose.ui.graphics.Color(0xFF262626) else androidx.compose.ui.graphics.Color.White).padding(18.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(Modifier.align(Alignment.CenterHorizontally).clip(RoundedCornerShape(50)).background(g.surface).padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (left != null) Gbot(left.look, left.id, 18)
+                if (left != null) Gbot(left.look, left.id, 24)
                 Text(" ${left?.name ?: "A bot"}  ${if (outbound) "→" else "←"}  ", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
-                if (right != null) Gbot(right.look, right.id, 18)
+                if (right != null) Gbot(right.look, right.id, 24)
                 Text(" ${right?.name ?: "A bot"}", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
             }
             Turn(from) { Text(m.str("message").orEmpty(), style = T.body, color = g.ink) }
-            if (!reply.isNullOrEmpty() || status != "sent") Turn(to) {
-                if (!reply.isNullOrEmpty()) Markdown(reply) else Text(statusText(status), style = T.body, color = g.ink3)
-            }
             GButton("Close", { open = false }, Modifier.align(Alignment.CenterHorizontally), variant = Variant.Soft)
         }
     }
-}
-
-private fun statusText(status: String): String = noReplyText[status] ?: when (status) {
-    "working" -> "Working on it…"
-    "sent", "" -> "Waiting its turn…"
-    else -> status
 }
 
 /** "Pip", "Pip and Taro", "Pip, Taro and 2 more". */
@@ -181,14 +169,10 @@ private fun names(bots: List<Bot?>): String {
     }
 }
 
-private fun took(ms: Long): String {
-    val s = (ms + 500) / 1000
-    return if (s < 60) "${s}s" else "${s / 60}m ${s % 60}s"
-}
-
 /**
- * A round: the asks one bot sent in one turn, as one line. It counts the
- * answers as they land; tap to read every question and answer.
+ * A round: the messages one bot sent in one turn, as one line; tap to read
+ * them. The answers come back to that bot on their own; they are not shown
+ * here.
  */
 @Composable
 fun RoundCard(ms: List<Message>, bots: List<Bot>) {
@@ -196,18 +180,11 @@ fun RoundCard(ms: List<Message>, bots: List<Bot>) {
     var open by remember { mutableStateOf(false) }
     val from = bots.find { it.id == ms.first().str("from") }
     val tos = ms.map { m -> bots.find { it.id == m.str("to") } }
-    val answered = ms.count { dev.gbot.app.local.askEnded(it.str("status")) }
-    val joined = ms.any { it.str("joined") == "true" }
-    val ms0 = ms.firstNotNullOfOrNull { it.str("tookMs")?.toDoubleOrNull()?.toLong() }
-    val line = when {
-        joined && ms0 != null -> "All answered · ${took(ms0)}"
-        answered == ms.size -> "All answered"
-        else -> "$answered of ${ms.size} answered"
-    }
+    val line = "Sent to ${ms.size} bots"
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.clip(RoundedCornerShape(50)).tap { open = true }.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             tos.filterNotNull().take(3).forEachIndexed { i, b ->
-                Box(Modifier.padding(start = if (i == 0) 0.dp else 2.dp)) { Gbot(b.look, b.id, 16) }
+                Box(Modifier.padding(start = if (i == 0) 0.dp else 2.dp)) { Gbot(b.look, b.id, 22) }
             }
             Spacer(Modifier.width(6.dp))
             Text("Asked ${names(tos)}", style = T.small, color = g.ink2)
@@ -217,31 +194,25 @@ fun RoundCard(ms: List<Message>, bots: List<Bot>) {
     if (open) Dialog(onDismissRequest = { open = false }) {
         Column(Modifier.clip(RoundedCornerShape(22.dp)).background(if (g.dark) androidx.compose.ui.graphics.Color(0xFF262626) else androidx.compose.ui.graphics.Color.White).padding(18.dp).heightIn(max = 600.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(Modifier.align(Alignment.CenterHorizontally).clip(RoundedCornerShape(50)).background(g.surface).padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (from != null) Gbot(from.look, from.id, 18)
-                Text(" ${from?.name ?: "A bot"} asked ${ms.size} bots", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
+                if (from != null) Gbot(from.look, from.id, 24)
+                Text(" ${from?.name ?: "A bot"} messaged ${ms.size} bots", style = T.small.copy(fontWeight = FontWeight.Medium), color = g.ink)
             }
             ms.forEachIndexed { i, m ->
-                val to = tos[i]
-                val reply = m.str("reply")
                 if (i > 0) Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(min = 1.dp, max = 1.dp).background(g.surface2))
-                Turn(from) { Text(m.str("message").orEmpty(), style = T.body, color = g.ink) }
-                Turn(to) {
-                    if (!reply.isNullOrEmpty()) Markdown(reply) else Text(statusText(m.str("status").orEmpty()), style = T.body, color = g.ink3)
-                }
+                Turn(tos[i], "To ${tos[i]?.name ?: "a bot"}") { Text(m.str("message").orEmpty(), style = T.body, color = g.ink) }
             }
-            Text(line, style = T.tiny, color = g.ink3, modifier = Modifier.align(Alignment.CenterHorizontally))
             GButton("Close", { open = false }, Modifier.align(Alignment.CenterHorizontally), variant = Variant.Soft)
         }
     }
 }
 
 @Composable
-private fun Turn(bot: Bot?, content: @Composable () -> Unit) {
+private fun Turn(bot: Bot?, label: String? = null, content: @Composable () -> Unit) {
     val g = LocalG.current
     Row {
-        Box(Modifier.width(30.dp).padding(top = 2.dp)) { if (bot != null) Gbot(bot.look, bot.id, 28) }
+        Box(Modifier.width(40.dp).padding(top = 2.dp)) { if (bot != null) Gbot(bot.look, bot.id, 36) }
         Column(Modifier.weight(1f)) {
-            Text(bot?.name ?: "Removed bot", style = T.tiny, color = g.ink3, modifier = Modifier.padding(bottom = 4.dp))
+            Text(label ?: bot?.name ?: "Removed bot", style = T.tiny, color = g.ink3, modifier = Modifier.padding(bottom = 4.dp))
             Box(Modifier.clip(RoundedCornerShape(16.dp)).background(g.surface).padding(horizontal = 14.dp, vertical = 8.dp)) { content() }
         }
     }
@@ -317,7 +288,7 @@ fun Card(m: Message, bot: Bot, onTakeover: () -> Unit) {
 
     Column(Modifier.padding(vertical = 10.dp).widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(g.surface).border(1.dp, g.warning.copy(alpha = 0.25f), RoundedCornerShape(18.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Gbot(bot.look, bot.id, 18, mood = "waiting")
+            Gbot(bot.look, bot.id, 24, mood = "waiting")
             Spacer(Modifier.width(8.dp))
             Text(bot.name, style = T.small.copy(fontWeight = FontWeight.SemiBold, fontSize = 14.sp), color = g.ink, modifier = Modifier.weight(1f), maxLines = 1)
             Row(Modifier.clip(RoundedCornerShape(50)).background(g.warning.copy(alpha = 0.14f)).padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -364,7 +335,7 @@ fun EventLine(m: Message, author: Bot?, onTap: (() -> Unit)? = null) {
     val err = m.kind == "error"
     val row = Modifier.fillMaxWidth().padding(vertical = 10.dp, horizontal = 12.dp).let { if (onTap != null) it.tap(onClick = onTap) else it }
     Row(row, horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        if (author != null) { Gbot(author.look, author.id, 16, mood = if (err) "blocked" else "idle"); Spacer(Modifier.width(6.dp)) }
+        if (author != null) { Gbot(author.look, author.id, 22, mood = if (err) "blocked" else "idle"); Spacer(Modifier.width(6.dp)) }
         if (m.kind == "routine") { Icon("clock", size = 14.dp, color = g.ink2); Spacer(Modifier.width(4.dp)) }
         if (m.kind == "browser") { Icon("screen", size = 14.dp, color = g.ink2); Spacer(Modifier.width(4.dp)) }
         Markdown(m.content, color = if (err) g.danger else g.ink2, style = T.small.copy(textAlign = TextAlign.Center))
