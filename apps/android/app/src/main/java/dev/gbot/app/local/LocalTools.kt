@@ -293,10 +293,18 @@ fun choiceLines(raw: String, max: Int): List<String> {
         "routine_update", "routine_delete", "task_contract",
     )
 
+    /** A call that can't work, refused before the person is asked to approve it. */
+    fun precheck(name: String, args: JsonObject): String? = when {
+        name in setOf("browser_click", "browser_fill", "browser_enter") && args.int("id") < 0 ->
+            "Give the element's number from browser_read as id."
+        else -> null
+    }
+
     fun describe(name: String, args: JsonObject): String = when (name) {
         "browser_open" -> "Open ${args.str("url")}"
         "browser_click" -> "Click “${lastSnapshotLabel(args.int("id"))}”"
-        "browser_fill" -> "Fill in “${lastSnapshotLabel(args.int("id"))}” with ${args.str("value").take(80)}"
+        "browser_fill" -> "Fill in “${lastSnapshotLabel(args.int("id"))}” with ${args.str("value").take(80)}" +
+            if (args.str("submit") == "true") ", then submit the form" else ""
         "browser_enter" -> "Submit the form"
         "open_in_chrome" -> "Open ${args.str("url")} in Chrome"
         "notify" -> "Show a notification: ${args.str("title")}"
@@ -326,8 +334,9 @@ fun choiceLines(raw: String, max: Int): List<String> {
 
     suspend fun run(name: String, args: JsonObject): String {
         val out = runTool(name, args)
-        // The first browser step of a run says where the person can watch.
-        if (!watchPosted && name.startsWith("browser_")) {
+        // The first browser step that has a page open says where the person
+        // can watch; before that the window would only say "Nothing open yet".
+        if (!watchPosted && name.startsWith("browser_") && browser.url.value.isNotBlank()) {
             watchPosted = true
             host?.watching(hostOf(browser.url.value))
         }
@@ -395,7 +404,9 @@ fun choiceLines(raw: String, max: Int): List<String> {
             }
         }
         "browser_open" -> {
-            val out = browser.open(args.str("url"))
+            val target = args.str("url")
+            if (target.isBlank()) return "Give browser_open a url."
+            val out = browser.open(target)
             noteLabels(out)
             out
         }
@@ -404,19 +415,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
             noteLabels(out)
             out
         }
-        "browser_click" -> {
-            val out = browser.click(args.int("id"))
-            val snap = browser.snapshot()
-            noteLabels(snap)
-            out + "\n" + snap.take(6000)
-        }
-        "browser_fill" -> browser.fill(args.int("id"), args.str("value"))
-        "browser_enter" -> {
-            val out = browser.pressEnter(args.int("id"))
-            val done = runCatching { browser.snapshot() }.getOrElse { "" }
-            noteLabels(done)
-            out + if (done.isBlank()) "" else "\n" + done.take(6000)
-        }
+        "browser_click", "browser_fill", "browser_enter" -> precheck(name, args) ?: element(name, args)
         "browser_back" -> {
             val out = browser.back()
             noteLabels(out)
@@ -486,7 +485,31 @@ fun choiceLines(raw: String, max: Int): List<String> {
                 else -> { h.runRoutine(r.id); "Started “${r.name}”. Its answer arrives in this chat." }
             }
         }
-        else -> "That tool does not exist on this phone."
+        else -> if (name.startsWith("browser_"))
+            "There is no $name on this phone. Your browser tools are browser_open (with a url), then browser_read, browser_click, browser_fill and browser_enter."
+        else "That tool does not exist on this phone."
+    }
+
+    /** Click, fill or press Enter on a numbered element from the last read. */
+    private suspend fun element(name: String, args: JsonObject): String = when (name) {
+        "browser_click" -> {
+            val out = browser.click(args.int("id"))
+            val snap = browser.snapshot()
+            noteLabels(snap)
+            out + "\n" + snap.take(6000)
+        }
+        "browser_fill" -> {
+            val out = browser.fill(args.int("id"), args.str("value"))
+            // The server's browser_type can submit in the same step.
+            if (args.str("submit") != "true" || !out.contains("\"ok\":true")) out
+            else out + "\n" + element("browser_enter", args)
+        }
+        else -> {
+            val out = browser.pressEnter(args.int("id"))
+            val done = runCatching { browser.snapshot() }.getOrElse { "" }
+            noteLabels(done)
+            out + if (done.isBlank()) "" else "\n" + done.take(6000)
+        }
     }
 
     /** Types a saved secret without ever returning its value to the model. */

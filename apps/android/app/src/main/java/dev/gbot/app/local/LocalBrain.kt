@@ -48,7 +48,53 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /** Tools that drive the bot's browser or computer, not just the web. */
-internal fun usesComputer(name: String) = name.startsWith("browser_") || name == "open_in_chrome" || name == "vault_type"
+internal fun usesComputer(name: String) = name in COMPUTER_TOOLS
+
+private val COMPUTER_TOOLS = setOf(
+    "browser_open", "browser_read", "browser_click", "browser_fill", "browser_enter",
+    "browser_back", "browser_forward", "browser_reload", "browser_scroll", "browser_wait",
+    "open_in_chrome", "vault_type",
+)
+
+/**
+ * Browser tool names models bring from elsewhere — the server's own
+ * (browser_navigate, browser_snapshot), Playwright's, or a plain guess —
+ * mapped to the phone's. Without this the call fails as an unknown tool
+ * while the chat says the bot is browsing, and its window stays empty.
+ */
+internal fun canonicalTool(name: String): String = TOOL_ALIASES[name.trim().lowercase()] ?: name.trim()
+
+private val TOOL_ALIASES = mapOf(
+    "browser_navigate" to "browser_open", "browser_goto" to "browser_open", "browser_go_to" to "browser_open",
+    "browser_visit" to "browser_open", "browser_open_url" to "browser_open", "browser_load" to "browser_open",
+    "browser_search" to "browser_open", "open_url" to "browser_open", "navigate" to "browser_open",
+    "browser_snapshot" to "browser_read", "browser_get_content" to "browser_read", "browser_get_text" to "browser_read",
+    "browser_content" to "browser_read", "browser_view" to "browser_read", "browser_page" to "browser_read",
+    "browser_type" to "browser_fill", "browser_input" to "browser_fill",
+    "browser_press" to "browser_enter", "browser_submit" to "browser_enter",
+    "browser_go_back" to "browser_back", "browser_go_forward" to "browser_forward", "browser_refresh" to "browser_reload",
+)
+
+/**
+ * The argument names those borrowed calls bring — the server's
+ * browser_type {ref, text}, a search's {query} — under the phone's own,
+ * so the approval card, the evidence and the tool all read the same
+ * url, id and value.
+ */
+internal fun canonicalArgs(name: String, args: JsonObject): JsonObject {
+    fun pick(vararg keys: String): JsonPrimitive? = keys.firstNotNullOfOrNull { k ->
+        (args[k] as? JsonPrimitive)?.takeIf { it !is JsonNull && it.content.isNotBlank() }
+    }
+    val id = { pick("id", "ref", "element", "index") }
+    val wanted: Map<String, JsonPrimitive?> = when (name) {
+        "browser_open", "open_in_chrome" -> mapOf("url" to pick("url", "query", "q", "link", "address", "href"))
+        "browser_click", "browser_enter" -> mapOf("id" to id())
+        "browser_fill" -> mapOf("id" to id(), "value" to pick("value", "text", "input"))
+        else -> emptyMap()
+    }
+    val fill = wanted.filter { (k, v) -> v != null && args[k] != v }.mapValues { it.value!! }
+    return if (fill.isEmpty()) args else JsonObject(args + fill)
+}
 
 /**
  * The bot's mind, on the phone. One run: think, use tools, answer. The
@@ -668,10 +714,13 @@ class LocalBrain(
         tools: LocalTools,
         bot: Bot,
         group: Group?,
-        name: String,
-        args: JsonObject,
+        called: String,
+        calledArgs: JsonObject,
         stage: (String) -> Unit,
     ): String {
+        val name = canonicalTool(called)
+        val args = canonicalArgs(name, calledArgs)
+        if (name != called) log("tool $called -> $name")
         val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch"
         val onComputer = usesComputer(name)
         if (onComputer) {
@@ -688,6 +737,7 @@ class LocalBrain(
             },
         )
         log("tool $name")
+        tools.precheck(name, args)?.let { return it }
         val world = tools.needsApproval(name) || api.isMcpTool(name)
         if (!ask(bot, group, name, tools.describe(name, args), args, touchesWorld = world)) {
             return "The person declined or blocked this step. Do not retry it; ask what they would like instead."
@@ -698,7 +748,7 @@ class LocalBrain(
         proof?.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
         // the bot is and what they could be watching.
-        if (name.startsWith("browser_")) {
+        if (name.startsWith("browser_") && usesComputer(name)) {
             val host = hostOf(browser.url.value)
             if (host.isNotEmpty()) stage("Browsing $host")
         }
@@ -712,7 +762,7 @@ class LocalBrain(
             "browser_open" -> "opened ${a("url")}"
             "browser_read" -> "read the page"
             "browser_click" -> "clicked [${a("id")}]"
-            "browser_fill" -> "typed into [${a("id")}]"
+            "browser_fill" -> "typed into [${a("id")}]" + if (a("submit") == "true") " and submitted" else ""
             "browser_enter" -> "submitted [${a("id")}]"
             "web_fetch" -> "fetched ${a("url")}"
             "file_write", "file_read" -> "$name: ${a("path")}"

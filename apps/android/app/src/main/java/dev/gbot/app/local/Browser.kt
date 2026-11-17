@@ -158,6 +158,10 @@ class BrowserController(private val ctx: Context) {
         error.value?.let { e ->
             return """{"ok":false,"url":"${json(url.value)}","error":"${json(e)}"}"""
         }
+        // Otherwise it reads as "still loading" and the model waits on a window that never opened.
+        if (url.value.isBlank() && !loading.value) {
+            return """{"ok":false,"url":"","error":"Nothing is open in the browser yet. Use browser_open with a web address first."}"""
+        }
         val raw = eval("window.__gbotSnap ? __gbotSnap() : ''")
         return raw.ifBlank { """{"url":"${json(url.value)}","text":"the page has not finished loading","elements":[]}""" }
     }
