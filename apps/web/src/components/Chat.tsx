@@ -515,7 +515,7 @@ function Activity({ m, enter }: { m: Message; enter: string }) {
 
 // The keys of docs/protocol/bot-asks.md this view reads.
 type ExchangeData = {
-  from: string; to: string; message: string; status: string;
+  from: string; to: string; message: string;
   expect?: "ask" | "tell"; round?: string;
 };
 
@@ -524,6 +524,10 @@ type ExchangeData = {
 // a card is only about the message itself — sent here, received there.
 // An answer is never folded back into it: the asking bot speaks it in its
 // own chat when it comes. Click to read the message.
+//
+// There is no failure line: a card exists only once the message has been
+// handed over, and "failed" is the receiving bot's run failing afterwards,
+// which shows as an error in that bot's own chat.
 function Exchange({ m, enter }: { m: Message; enter: string }) {
   const [open, setOpen] = useState(false);
   const bots = useStore((s) => s.bots);
@@ -533,7 +537,7 @@ function Exchange({ m, enter }: { m: Message; enter: string }) {
   const outbound = m.botId === d.from;
   const peer = outbound ? to : from;
   const label = outbound ? `${d.expect === "tell" ? "Told" : "Asked"} ${to?.name ?? "a bot"}` : `Message from ${from?.name ?? "a bot"}`;
-  const line = exchangeLine(d, outbound);
+  const line = outbound ? "Sent" : "Received";
   return (
     <>
       <div className={`${enter} my-3 flex flex-col items-center gap-0.5 text-center`}>
@@ -542,18 +546,11 @@ function Exchange({ m, enter }: { m: Message; enter: string }) {
           {peer && <Gbot look={peer.look} seed={peer.id} size={22} mood="idle" />}
           <span>{label}</span>
         </button>
-        <span className={`max-w-[min(85%,560px)] truncate text-[12.5px] ${d.status === "failed" ? "text-danger" : "text-ink-3"}`}>{line}</span>
+        <span className="max-w-[min(85%,560px)] truncate text-[12.5px] text-ink-3">{line}</span>
       </div>
       <ExchangeView open={open} onClose={() => setOpen(false)} from={from} to={to} d={d} />
     </>
   );
-}
-
-// The divider's second line: whether the message went or arrived, and
-// nothing about an answer. Nothing waits on a reply here.
-function exchangeLine(d: ExchangeData, outbound: boolean): string {
-  if (d.status === "failed") return "Not delivered";
-  return outbound ? "Sent" : "Received";
 }
 
 // "Pip", "Pip and Taro", "Pip, Taro and 2 more".

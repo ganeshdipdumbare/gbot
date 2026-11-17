@@ -112,13 +112,16 @@ fun Activity(m: Message) {
  * Messaging is async, so the card is only about the message itself — sent
  * here, received there. An answer is never folded back into it: the asking
  * bot speaks it in its own chat when it comes.
+ *
+ * There is no failure line: a card exists only once the message has been
+ * handed over, and "failed" is the receiving bot's run failing afterwards,
+ * which shows as an error in that bot's own chat.
  */
 @Composable
 fun Exchange(m: Message, bots: List<Bot>) {
     val g = LocalG.current
     var open by remember { mutableStateOf(false) }
     val fromId = m.str("from"); val toId = m.str("to")
-    val status = m.str("status").orEmpty()
     val from = bots.find { it.id == fromId }; val to = bots.find { it.id == toId }
     val outbound = m.botId == fromId
     val peer = if (outbound) to else from
@@ -132,17 +135,13 @@ fun Exchange(m: Message, bots: List<Bot>) {
         outbound -> "Asked ${to?.name ?: "a bot"}"
         else -> "Message from ${from?.name ?: "a bot"}"
     }
-    val line = when {
-        status == "failed" -> "Not delivered"
-        outbound -> "Sent"
-        else -> "Received"
-    }
+    val line = if (outbound) "Sent" else "Received"
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.clip(RoundedCornerShape(50)).tap { open = true }.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (peer != null) { Gbot(peer.look, peer.id, 22); Spacer(Modifier.width(6.dp)) }
             Text(label, style = T.small, color = g.ink2)
         }
-        if (line.isNotEmpty()) Text(line, style = T.tiny.copy(fontSize = 12.5.sp), color = if (status == "failed") g.danger else g.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 320.dp))
+        Text(line, style = T.tiny.copy(fontSize = 12.5.sp), color = g.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 320.dp))
     }
     if (open) Dialog(onDismissRequest = { open = false }) {
         Column(Modifier.clip(RoundedCornerShape(22.dp)).background(if (g.dark) androidx.compose.ui.graphics.Color(0xFF262626) else androidx.compose.ui.graphics.Color.White).padding(18.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
