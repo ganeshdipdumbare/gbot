@@ -3,6 +3,7 @@ package dev.gbot.app
 import dev.gbot.app.local.Approval
 import dev.gbot.app.local.BrowserController
 import dev.gbot.app.local.Cron
+import dev.gbot.app.local.canonicalTool
 import dev.gbot.app.local.Mentions
 import dev.gbot.app.local.LocalProviders
 import dev.gbot.app.local.ModelMemory
@@ -52,6 +53,19 @@ class LocalTest {
         assertTrue(usesComputer("browser_click"))
         assertTrue(usesComputer("open_in_chrome"))
         assertTrue(usesComputer("vault_type"))
+        // A browser name the phone doesn't have must not light the computer up.
+        assertFalse(usesComputer("browser_teleport"))
+    }
+
+    @Test
+    fun `browser names from elsewhere reach the phone's own tools`() {
+        assertEquals("browser_open", canonicalTool("browser_navigate"))
+        assertEquals("browser_open", canonicalTool("Browser_Search"))
+        assertEquals("browser_read", canonicalTool("browser_snapshot"))
+        assertEquals("browser_fill", canonicalTool("browser_type"))
+        assertEquals("browser_enter", canonicalTool("browser_press"))
+        assertEquals("browser_open", canonicalTool("browser_open"))
+        assertEquals("web_fetch", canonicalTool("web_fetch"))
     }
 
     @Test

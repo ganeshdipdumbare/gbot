@@ -326,8 +326,9 @@ fun choiceLines(raw: String, max: Int): List<String> {
 
     suspend fun run(name: String, args: JsonObject): String {
         val out = runTool(name, args)
-        // The first browser step of a run says where the person can watch.
-        if (!watchPosted && name.startsWith("browser_")) {
+        // The first browser step that has a page open says where the person
+        // can watch; before that the window would only say "Nothing open yet".
+        if (!watchPosted && name.startsWith("browser_") && browser.url.value.isNotBlank()) {
             watchPosted = true
             host?.watching(hostOf(browser.url.value))
         }
@@ -395,7 +396,10 @@ fun choiceLines(raw: String, max: Int): List<String> {
             }
         }
         "browser_open" -> {
-            val out = browser.open(args.str("url"))
+            // Borrowed names (browser_search, navigate) bring their own field.
+            val target = listOf("url", "query", "q", "link", "address", "href").map(args::str).firstOrNull { it.isNotBlank() }.orEmpty()
+            if (target.isBlank()) return "Give browser_open a url."
+            val out = browser.open(target)
             noteLabels(out)
             out
         }
@@ -486,7 +490,9 @@ fun choiceLines(raw: String, max: Int): List<String> {
                 else -> { h.runRoutine(r.id); "Started “${r.name}”. Its answer arrives in this chat." }
             }
         }
-        else -> "That tool does not exist on this phone."
+        else -> if (name.startsWith("browser_"))
+            "There is no $name on this phone. Your browser tools are browser_open (with a url), then browser_read, browser_click, browser_fill and browser_enter."
+        else "That tool does not exist on this phone."
     }
 
     /** Types a saved secret without ever returning its value to the model. */

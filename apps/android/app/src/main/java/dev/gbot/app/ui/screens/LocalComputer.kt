@@ -125,8 +125,10 @@ fun LocalComputerScreen(nav: NavHostController, id: String) {
             AndroidView(factory = { browser.view() }, modifier = Modifier.fillMaxSize())
 
             if (url.isBlank() || error != null) {
+                // Opaque: g.surface is a 6% tint, and the blank white WebView
+                // behind it washed this text out in dark mode.
                 Column(
-                    Modifier.fillMaxSize().background(g.surface).padding(22.dp),
+                    Modifier.fillMaxSize().background(g.bg).background(g.surface).padding(22.dp),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
