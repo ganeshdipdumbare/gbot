@@ -568,10 +568,16 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	defer doneWithAgent()
 	rules, _ := r.store.ToolRules(bg, req.ID)
 	j.skills, _ = r.store.ListSkills(bg, req.ID)
-	// Bots can message each other, within the request's limits. In a
-	// group, the bots in it are @mentioned instead. A bot answering a
-	// message can't message the sender back: its answer is the reply.
-	if canMessage(j.Depth, r.rounds.sent(j.Root)) {
+	// Bots can message each other. In a group, the bots in it are
+	// @mentioned instead. A bot answering a message can't message the
+	// sender back: its answer is the reply.
+	//
+	// Depth decides whether the tool exists at all; the request's message
+	// budget is checked when one is sent (messageBot), so a bot that has
+	// spent it is refused in words. Taking the tool away instead left the
+	// model with teammates it could remember but no way to reach them,
+	// and it would carry on reporting conversations it never had.
+	if j.Depth < maxAskDepth {
 		var sender string
 		if len(j.exchange) > 0 {
 			sender, _ = j.exchange[0].Data["from"].(string)

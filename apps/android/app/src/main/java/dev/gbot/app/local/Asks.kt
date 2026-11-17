@@ -13,8 +13,12 @@ import java.util.PriorityQueue
 /** person → A (0) → B (1) → C (2), and C can't message anyone. */
 const val MAX_ASK_DEPTH = 2
 
-/** The messages one request from the person can set off, wherever they happen. */
-const val MAX_ASKS_PER_ROOT = 6
+/**
+ * The messages one request from the person can set off, wherever they happen.
+ * A runaway stop, not a working budget: a pair of bots going back and forth
+ * over a real task spends several on each turn.
+ */
+const val MAX_ASKS_PER_ROOT = 12
 
 /** Whether a bot at [depth] may send another message, given [sent] so far for its request. */
 fun canMessage(depth: Int, sent: Int): Boolean = depth < MAX_ASK_DEPTH && sent < MAX_ASKS_PER_ROOT

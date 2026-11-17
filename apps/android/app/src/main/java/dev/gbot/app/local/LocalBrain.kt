@@ -390,8 +390,11 @@ class LocalBrain(
 
             // In a group the teammates are @mentioned instead, and a bot
             // answering a message can't message the sender back: its
-            // answer is the reply.
-            val peers = if (group != null || !canMessage(w.depth, book.sent(w.root))) emptyList()
+            // answer is the reply. Depth decides whether the tool exists;
+            // the request's message budget is checked when one is sent, so
+            // a bot that has spent it is refused in words instead of
+            // losing the tool and inventing the conversation.
+            val peers = if (group != null || w.depth >= MAX_ASK_DEPTH) emptyList()
             else db.bots().filter { it.id != bot.id && it.id != w.from }
             val tools = LocalTools(
                 ctx, db, browser, bot.id,
