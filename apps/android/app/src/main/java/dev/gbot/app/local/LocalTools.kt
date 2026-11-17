@@ -293,10 +293,18 @@ fun choiceLines(raw: String, max: Int): List<String> {
         "routine_update", "routine_delete", "task_contract",
     )
 
+    /** A call that can't work, refused before the person is asked to approve it. */
+    fun precheck(name: String, args: JsonObject): String? = when {
+        name in setOf("browser_click", "browser_fill", "browser_enter") && args.int("id") < 0 ->
+            "Give the element's number from browser_read as id."
+        else -> null
+    }
+
     fun describe(name: String, args: JsonObject): String = when (name) {
         "browser_open" -> "Open ${args.str("url")}"
         "browser_click" -> "Click “${lastSnapshotLabel(args.int("id"))}”"
-        "browser_fill" -> "Fill in “${lastSnapshotLabel(args.int("id"))}” with ${args.str("value").take(80)}"
+        "browser_fill" -> "Fill in “${lastSnapshotLabel(args.int("id"))}” with ${args.str("value").take(80)}" +
+            if (args.str("submit") == "true") ", then submit the form" else ""
         "browser_enter" -> "Submit the form"
         "open_in_chrome" -> "Open ${args.str("url")} in Chrome"
         "notify" -> "Show a notification: ${args.str("title")}"
@@ -407,8 +415,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
             noteLabels(out)
             out
         }
-        "browser_click", "browser_fill", "browser_enter" ->
-            if (args.int("id") < 0) "Give the element's number from browser_read as id." else element(name, args)
+        "browser_click", "browser_fill", "browser_enter" -> precheck(name, args) ?: element(name, args)
         "browser_back" -> {
             val out = browser.back()
             noteLabels(out)
@@ -494,7 +501,8 @@ fun choiceLines(raw: String, max: Int): List<String> {
         "browser_fill" -> {
             val out = browser.fill(args.int("id"), args.str("value"))
             // The server's browser_type can submit in the same step.
-            if (args.str("submit") != "true") out else out + "\n" + element("browser_enter", args)
+            if (args.str("submit") != "true" || !out.contains("\"ok\":true")) out
+            else out + "\n" + element("browser_enter", args)
         }
         else -> {
             val out = browser.pressEnter(args.int("id"))

@@ -737,6 +737,7 @@ class LocalBrain(
             },
         )
         log("tool $name")
+        tools.precheck(name, args)?.let { return it }
         val world = tools.needsApproval(name) || api.isMcpTool(name)
         if (!ask(bot, group, name, tools.describe(name, args), args, touchesWorld = world)) {
             return "The person declined or blocked this step. Do not retry it; ask what they would like instead."
@@ -761,7 +762,7 @@ class LocalBrain(
             "browser_open" -> "opened ${a("url")}"
             "browser_read" -> "read the page"
             "browser_click" -> "clicked [${a("id")}]"
-            "browser_fill" -> "typed into [${a("id")}]"
+            "browser_fill" -> "typed into [${a("id")}]" + if (a("submit") == "true") " and submitted" else ""
             "browser_enter" -> "submitted [${a("id")}]"
             "web_fetch" -> "fetched ${a("url")}"
             "file_write", "file_read" -> "$name: ${a("path")}"
