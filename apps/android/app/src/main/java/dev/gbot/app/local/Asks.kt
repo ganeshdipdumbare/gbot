@@ -184,3 +184,39 @@ class AskBook(private val clock: () -> Long = System::currentTimeMillis) {
 }
 
 fun newId(prefix: String): String = prefix + java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+
+/** The largest picture the phone keeps from a tool, as on the server. */
+const val MAX_PICTURE = 8 shl 20
+
+/** A type as a person would name it: "PNG", "PDF". */
+fun kindOf(mime: String): String {
+    val m = mime.trim().lowercase().substringBefore(';')
+    if (m.isEmpty()) return "file"
+    val sub = m.substringAfter('/', "").ifEmpty { return m }
+    return sub.removePrefix("x-").substringBefore('+').uppercase()
+}
+
+/** A byte count in words. */
+fun sizeOf(n: Int): String = when {
+    n >= 1 shl 20 -> String.format(java.util.Locale.US, "%.1f MB", n.toDouble() / (1 shl 20))
+    n >= 1 shl 10 -> "${n / (1 shl 10)} KB"
+    else -> "$n bytes"
+}
+
+/** The file ending for a picture's type, so a saved file opens elsewhere too. */
+fun extensionOf(mime: String): String = when (kindOf(mime).lowercase()) {
+    "png" -> ".png"
+    "jpeg", "jpg" -> ".jpg"
+    "gif" -> ".gif"
+    "webp" -> ".webp"
+    "svg" -> ".svg"
+    else -> ".img"
+}
+
+/**
+ * Whether a type is a picture gbot keeps and draws. SVG is left out on
+ * purpose: it is a document that can carry script, as on the server.
+ */
+fun showableImage(mime: String): Boolean = mime.trim().lowercase().substringBefore(';') in setOf(
+    "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp",
+)

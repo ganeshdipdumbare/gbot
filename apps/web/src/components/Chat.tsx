@@ -438,6 +438,7 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
   const enter = animate ? "entry-in" : "";
   if (m.role === "event" && m.data?.kind === "activity") return <Activity m={m} enter={enter} />;
   if (m.role === "event" && m.data?.kind === "botmsg") return <Exchange m={m} enter={enter} />;
+  if (m.role === "event" && m.data?.kind === "picture") return <Picture m={m} author={author} enter={enter} />;
   if (m.role === "event") {
     const err = m.data?.kind === "error";
     return (
@@ -509,6 +510,32 @@ function Activity({ m, enter }: { m: Message; enter: string }) {
           </motion.ul>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// A picture a tool handed back, in the chat as its own row. A tool only
+// ever answers the model in text, so this is the one place the person
+// sees it. The bytes come from gbot itself (/api/blobs), never from the
+// site that made it: bot text still can't put an image on the page.
+function Picture({ m, author, enter }: { m: Message; author?: Bot; enter: string }) {
+  const [broken, setBroken] = useState(false);
+  const src = `/api/blobs/${m.data?.blob}`;
+  const alt = m.content || "A picture from a tool";
+  return (
+    <div className={`${enter} group flex items-end gap-1.5 mt-3`}>
+      <div className="w-[34px] shrink-0">{author && <Gbot look={author.look} seed={author.id} size={34} mood="idle" />}</div>
+      <div className="flex flex-col items-start max-w-[min(85%,560px)]">
+        <span className="text-[12px] text-ink-3 mb-1 ml-1">{m.content}</span>
+        {broken ? (
+          <div className="rounded-2xl bg-surface px-3.5 py-2 text-[13px] text-ink-3">This picture couldn't be loaded.</div>
+        ) : (
+          <a href={src} target="_blank" rel="noopener noreferrer" title="Open the picture"
+            className="block rounded-2xl overflow-hidden bg-surface hairline hover:opacity-95 transition-opacity duration-[120ms]">
+            <img src={src} alt={alt} onError={() => setBroken(true)} className="block max-h-[420px] max-w-full w-auto" />
+          </a>
+        )}
+      </div>
     </div>
   );
 }

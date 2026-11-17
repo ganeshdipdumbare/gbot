@@ -1,11 +1,13 @@
 package dev.gbot.app.local
 
 import android.content.Context
+import android.util.Base64
 import dev.gbot.app.net.McpServer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -96,20 +98,54 @@ class Mcp(private val ctx: Context) {
         }
     }
 
-    suspend fun call(server: McpServer, tool: String, args: JsonObject): String = withContext(Dispatchers.IO) {
+    /**
+     * Call one tool. [keepPicture] is handed any picture the server sends,
+     * and returns the line the model reads in its place: a model only ever
+     * gets text back, so a picture reaches the person another way or not
+     * at all.
+     */
+    suspend fun call(
+        server: McpServer,
+        tool: String,
+        args: JsonObject,
+        keepPicture: ((ByteArray, String) -> String)? = null,
+    ): String = withContext(Dispatchers.IO) {
         val s = Session(server)
         s.initialize()
         val res = s.rpc("tools/call", buildJsonObject {
             put("name", tool)
             put("arguments", args)
         }) ?: return@withContext "The integration returned nothing."
-        val content = (res["content"] as? JsonArray).orEmpty().mapNotNull { c ->
-            val o = c.jsonObject
-            if (o["type"]?.jsonPrimitive?.contentOrNull == "text") o["text"]?.jsonPrimitive?.contentOrNull else null
-        }.joinToString("\n")
+        val content = readContent(server.name, (res["content"] as? JsonArray).orEmpty(), keepPicture)
         val err = res["isError"]?.jsonPrimitive?.contentOrNull == "true"
         (if (content.isBlank()) res.toString() else content).let { if (err) "The integration reported an error: $it" else it }
     }
+
+    /** A tool's answer as the model reads it, pictures taken out and kept. */
+    internal fun readContent(server: String, blocks: List<JsonElement>, keepPicture: ((ByteArray, String) -> String)?): String =
+        blocks.mapNotNull { c ->
+            val o = c.jsonObject
+            val resource = o["resource"]?.jsonObject
+            fun str(k: String) = (o[k] ?: resource?.get(k))?.jsonPrimitive?.contentOrNull.orEmpty()
+            val text = str("text")
+            val data = o["data"]?.jsonPrimitive?.contentOrNull ?: resource?.get("blob")?.jsonPrimitive?.contentOrNull
+            val mime = str("mimeType")
+            when {
+                text.isNotEmpty() -> text
+                data != null && showableImage(mime) -> {
+                    val raw = runCatching { Base64.decode(data, Base64.DEFAULT) }.getOrNull()
+                    when {
+                        raw == null || raw.isEmpty() -> "[$server sent a picture gbot couldn't read.]"
+                        raw.size > MAX_PICTURE -> "[$server sent a picture of ${sizeOf(raw.size)}, too big to keep (the limit is ${sizeOf(MAX_PICTURE)}).]"
+                        keepPicture == null -> "[$server sent a picture.]"
+                        else -> keepPicture(raw, mime)
+                    }
+                }
+                data != null -> "[$server sent a ${kindOf(mime)} file, which the chat can't show.]"
+                str("uri").isNotEmpty() -> (str("name") + " " + str("uri")).trim()
+                else -> null
+            }
+        }.joinToString("\n")
 
     fun prefix(id: String) = "mc${id.takeLast(6)}__"
 

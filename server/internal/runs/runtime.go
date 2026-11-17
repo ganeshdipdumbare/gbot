@@ -712,6 +712,10 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 				name, _, _ = strings.Cut(name, ". ")
 				sentTo = append(sentTo, name)
 			}
+			// A tool that handed back a picture put it aside; it goes in
+			// the chat here, where the person is watching, before the
+			// reply that talks about it.
+			r.showPictures(bg, c, b, rc)
 		}
 	}
 
@@ -999,6 +1003,29 @@ func (r *Runtime) pendingReplies(ctx context.Context, b *store.Bot, user string)
 func (r *Runtime) markSeen(ctx context.Context, ids []string) {
 	for _, id := range ids {
 		_, _ = r.store.MergeMessageData(ctx, id, map[string]any{"seen": true})
+	}
+}
+
+// showPictures puts what a tool handed back into the chat, as its own
+// row: the model only ever reads text, so a picture reaches the person
+// this way or not at all.
+func (r *Runtime) showPictures(ctx context.Context, c convo, b *store.Bot, rc *runCtx) {
+	if rc == nil {
+		return
+	}
+	for _, p := range rc.takePictures() {
+		from := p.From
+		if from == "" {
+			from = "a tool"
+		}
+		m := &store.Message{BotID: b.ID, GroupID: c.GroupID, ChatUser: c.User, Role: "event",
+			Content: "Picture from " + from,
+			Data:    map[string]any{"kind": "picture", "blob": p.Blob, "mime": p.Mime, "from": p.From, "size": p.Size}}
+		if err := r.store.AddMessage(ctx, m, nil); err != nil {
+			r.log.Error("show picture", "err", err)
+			continue
+		}
+		r.chat(c, Event{Type: "message", BotID: b.ID, GroupID: c.GroupID, Data: m})
 	}
 }
 

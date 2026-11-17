@@ -728,10 +728,12 @@ class LocalApi(
 
     fun isMcpTool(name: String): Boolean = localMcp().any { it.enabled && name.startsWith(mcp.prefix(it.id)) }
 
-    suspend fun callMcp(name: String, args: JsonObject): String {
+    suspend fun callMcp(name: String, args: JsonObject, keepPicture: ((ByteArray, String, String) -> String)? = null): String {
         val s = localMcp().firstOrNull { name.startsWith(mcp.prefix(it.id)) }
             ?: throw IllegalStateException("That integration is disconnected")
-        return mcp.call(s, name.removePrefix(mcp.prefix(s.id)), args)
+        return mcp.call(s, name.removePrefix(mcp.prefix(s.id)), args) { bytes, mime ->
+            keepPicture?.invoke(bytes, mime, s.name) ?: "[${s.name} sent a picture.]"
+        }
     }
 
     private fun <T> unsupported(): T = throw UnsupportedOperationException("That needs your gbot server")

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -285,27 +286,14 @@ func (r *Runtime) callTool(ctx context.Context, s mcpServer, name string, args m
 	}
 	_ = p.call(ctx, "notifications/initialized", nil, nil)
 	var res struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+		Content    []mcpContent    `json:"content"`
 		Structured json.RawMessage `json:"structuredContent"`
 		IsError    bool            `json:"isError"`
 	}
 	if err := p.call(ctx, "tools/call", map[string]any{"name": name, "arguments": args}, &res); err != nil {
 		return "", err
 	}
-	var b strings.Builder
-	for _, c := range res.Content {
-		if c.Text == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(c.Text)
-	}
-	out := b.String()
+	out := r.readContent(ctx, s.name, res.Content)
 	if out == "" && len(res.Structured) > 0 {
 		out = string(res.Structured)
 	}
@@ -317,6 +305,132 @@ func (r *Runtime) callTool(ctx context.Context, s mcpServer, name string, args m
 		return "", errors.New(r.redact(out))
 	}
 	return out, nil
+}
+
+// mcpContent is one block of a tool's answer. A server may hand back
+// text, a picture, a sound, or a resource that carries either.
+type mcpContent struct {
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	Data     string `json:"data"`     // base64, for image and audio
+	MimeType string `json:"mimeType"` // of Data
+	URI      string `json:"uri"`      // resource_link
+	Name     string `json:"name"`
+	Resource *struct {
+		URI      string `json:"uri"`
+		MimeType string `json:"mimeType"`
+		Text     string `json:"text"`
+		Blob     string `json:"blob"` // base64
+	} `json:"resource"`
+}
+
+// readContent turns a tool's answer into the text the model reads, and
+// keeps any picture for the chat. A model only ever gets text back from a
+// tool, so a picture that is only described to it would be lost: it is
+// saved and shown to the person instead, and the model is told it is
+// there, in the same place in the answer.
+func (r *Runtime) readContent(ctx context.Context, server string, blocks []mcpContent) string {
+	var b strings.Builder
+	line := func(s string) {
+		if s == "" {
+			return
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(s)
+	}
+	for _, c := range blocks {
+		data, mime, text := c.Data, c.MimeType, c.Text
+		if c.Resource != nil {
+			if c.Resource.Text != "" {
+				text = c.Resource.Text
+			}
+			if c.Resource.Blob != "" {
+				data, mime = c.Resource.Blob, c.Resource.MimeType
+			}
+			if text == "" && data == "" && c.Resource.URI != "" {
+				text = "Resource: " + c.Resource.URI
+			}
+		}
+		switch {
+		case text != "":
+			line(text)
+		case data != "" && showableImage(mime):
+			line(r.keepPicture(ctx, server, data, mime))
+		case data != "":
+			raw, _ := base64.StdEncoding.DecodeString(data)
+			line(fmt.Sprintf("[%s sent a %s file of %s, which the chat can't show.]", server, kindOf(mime), sizeOf(len(raw))))
+		case c.URI != "":
+			line(strings.TrimSpace(c.Name + " " + c.URI))
+		}
+	}
+	return b.String()
+}
+
+// showableImage reports whether a type is a picture gbot will keep and
+// draw. SVG is left out on purpose: it is a document, it can carry
+// script, and gbot serves what a tool sent from its own origin.
+func showableImage(mime string) bool {
+	switch strings.TrimSpace(strings.ToLower(strings.Split(mime, ";")[0])) {
+	case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp":
+		return true
+	}
+	return false
+}
+
+// keepPicture saves a picture for the chat and returns the line the model
+// reads in its place.
+func (r *Runtime) keepPicture(ctx context.Context, server, data, mime string) string {
+	rc := runFrom(ctx)
+	raw, err := base64.StdEncoding.DecodeString(data)
+	switch {
+	case err != nil || len(raw) == 0:
+		return fmt.Sprintf("[%s sent a picture gbot couldn't read.]", server)
+	case len(raw) > store.MaxBlob:
+		return fmt.Sprintf("[%s sent a picture of %s, too big to keep (the limit is %s).]", server, sizeOf(len(raw)), sizeOf(store.MaxBlob))
+	case rc == nil:
+		return fmt.Sprintf("[%s sent a picture.]", server)
+	}
+	id, err := r.store.AddBlob(context.WithoutCancel(ctx), &store.Blob{BotID: rc.botID, User: rc.userID, Mime: mime, Bytes: raw})
+	if err != nil {
+		r.log.Error("save picture", "err", err)
+		return fmt.Sprintf("[%s sent a picture gbot couldn't keep.]", server)
+	}
+	rc.addPicture(picture{Blob: id, Mime: mime, From: server, Size: len(raw)})
+	return fmt.Sprintf("[A picture from %s is in the chat where you are answering: %s, %s. The person can see it. Say what it shows; don't describe it as a file or a link.]", server, kindOf(mime), sizeOf(len(raw)))
+}
+
+// kindOf names a type the way a person would ("PNG", "a PDF").
+func kindOf(mime string) string {
+	mime = strings.TrimSpace(strings.ToLower(mime))
+	if mime == "" {
+		return "file"
+	}
+	if i := strings.Index(mime, ";"); i >= 0 {
+		mime = mime[:i]
+	}
+	_, sub, ok := strings.Cut(mime, "/")
+	if !ok || sub == "" {
+		return mime
+	}
+	sub = strings.TrimPrefix(sub, "x-")
+	if i := strings.Index(sub, "+"); i > 0 {
+		sub = sub[:i]
+	}
+	return strings.ToUpper(sub)
+}
+
+// sizeOf is a byte count in words.
+func sizeOf(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%d KB", n/(1<<10))
+	default:
+		return fmt.Sprintf("%d bytes", n)
+	}
 }
 
 // mcpProbe talks just enough streamable HTTP to initialize a server and

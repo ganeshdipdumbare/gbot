@@ -357,3 +357,40 @@ func (s *Server) pollEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"events": events, "next": next, "reset": reset})
 }
+
+// blob serves a picture a bot's tool handed back. Anyone who may open
+// that bot's chat may see it; a picture with no bot belongs to the person
+// who asked for it.
+func (s *Server) blob(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	b, err := s.Store.Blob(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) || strings.Contains(err.Error(), "invalid input syntax") {
+			writeErr(w, 404, "not found")
+			return
+		}
+		s.Log.Error("blob", "err", err)
+		writeErr(w, 500, "could not load it")
+		return
+	}
+	switch {
+	case b.BotID != "":
+		if _, err := s.Store.GetBotFor(r.Context(), u.SpaceID, u.ID, b.BotID); err != nil {
+			writeErr(w, 404, "not found")
+			return
+		}
+	case b.User != u.ID:
+		writeErr(w, 404, "not found")
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", b.Mime)
+	// Opened on its own, it is still only a picture: no script, no
+	// network, nothing that could act as this origin.
+	h.Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; sandbox")
+	// The bytes never change, and the id is unguessable.
+	h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	h.Set("Content-Disposition", "inline")
+	h.Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(b.Bytes)
+}

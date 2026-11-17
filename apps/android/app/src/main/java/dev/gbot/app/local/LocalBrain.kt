@@ -743,7 +743,11 @@ class LocalBrain(
             return "The person declined or blocked this step. Do not retry it; ask what they would like instead."
         }
         val out = runCatching {
-            (if (api.isMcpTool(name)) api.callMcp(name, args) else tools.run(name, args)).take(4000)
+            if (api.isMcpTool(name)) {
+                api.callMcp(name, args) { bytes, mime, from -> keepPicture(bot, group, bytes, mime, from) }.take(4000)
+            } else {
+                tools.run(name, args).take(4000)
+            }
         }.getOrElse { "The tool failed: ${it.message}" }
         proof?.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
@@ -1050,6 +1054,34 @@ class LocalBrain(
     }
 
     /** A quiet line in the transcript: something happened, no reply needed. */
+    /**
+     * Save a picture a tool handed back and put it in the chat as its own
+     * row, then tell the model it is there. A tool only ever answers the
+     * model in text, so this is the one way a picture reaches the person.
+     */
+    private fun keepPicture(bot: Bot, group: Group?, bytes: ByteArray, mime: String, from: String): String {
+        val dir = java.io.File(ctx.filesDir, "pictures").apply { mkdirs() }
+        val file = java.io.File(dir, "pic_" + UUID.randomUUID().toString().take(8) + extensionOf(mime))
+        return try {
+            file.writeBytes(bytes)
+            event(
+                bot, group, "Picture from $from",
+                buildJsonObject {
+                    put("kind", "picture")
+                    put("file", file.absolutePath)
+                    put("mime", mime)
+                    put("from", from)
+                    put("size", bytes.size)
+                },
+            )
+            "[A picture from $from is in the chat where you are answering: ${kindOf(mime)}, ${sizeOf(bytes.size)}. " +
+                "The person can see it. Say what it shows; don't describe it as a file or a link.]"
+        } catch (e: Throwable) {
+            log("could not keep the picture", e)
+            "[$from sent a picture gbot couldn't keep.]"
+        }
+    }
+
     private fun event(bot: Bot, group: Group?, content: String, data: JsonObject? = null): GMessage {
         val m = GMessage(
             id = "m_" + UUID.randomUUID().toString().take(8), botId = bot.id, groupId = group?.id, role = "event",
