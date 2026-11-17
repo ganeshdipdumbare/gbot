@@ -147,7 +147,7 @@ fun HomeScreen(nav: NavHostController) {
         // Header, as the web sidebar: name, new group, new bot.
         Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 8.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                GbotLogo { mainBot?.let { nav.navigate(R.chat(it.id)) } }
+                GbotLogo(38) { mainBot?.let { nav.navigate(R.chat(it.id)) } }
                 Text("gbot", style = T.body.copy(fontWeight = FontWeight.SemiBold, fontSize = 17.sp, letterSpacing = (-0.3).sp), color = g.ink)
             }
             IconBtn("users", "New group", { nav.navigate(R.NEW_GROUP) })
@@ -211,7 +211,7 @@ fun HomeScreen(nav: NavHostController) {
         ModalBottomSheet(onDismissRequest = { menu = null }, containerColor = if (g.dark) Color(0xFF262626) else Color.White) {
             Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 24.dp)) {
                 Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Gbot(b.look, b.id, 36)
+                    Gbot(b.look, b.id, 44)
                     Spacer(Modifier.width(10.dp))
                     Column { Text(b.name, style = T.h2, color = g.ink); if (b.title.isNotEmpty()) Text(b.title, style = T.small, color = g.ink2) }
                 }
@@ -256,7 +256,7 @@ fun HomeScreen(nav: NavHostController) {
             if (hidden.isEmpty()) Text("No hidden bots.", style = T.body, color = g.ink2)
             hidden.forEach { b ->
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                    Gbot(b.look, b.id, 36, mood = moodOf(s.presence[b.id], b))
+                    Gbot(b.look, b.id, 44, mood = moodOf(s.presence[b.id], b))
                     Spacer(Modifier.width(10.dp))
                     Text(b.name, style = T.body, color = g.ink, modifier = Modifier.weight(1f))
                     GButton("Show", { app.store.setHidden(s.hidden - b.id) }, variant = Variant.Soft, small = true)
@@ -302,7 +302,7 @@ private fun RowShell(onClick: () -> Unit, onLong: () -> Unit, avatar: @Composabl
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).pressable(onLong = onLong, onClick = onClick).padding(horizontal = 10.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { avatar() }
+        Box(Modifier.size(54.dp), contentAlignment = Alignment.Center) { avatar() }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -334,7 +334,7 @@ fun BotRow(b: Bot, p: Presence?, computerOn: Boolean, unread: Int, onClick: () -
     val busy = isBusy(p)
     val blocked = p?.state == "blocked"
     RowShell(
-        onClick, onLong, { Gbot(b.look, b.id, 42, mood = moodOf(p, b), live = p?.live == true || computerOn, sharedKey = "bot:${b.id}") },
+        onClick, onLong, { Gbot(b.look, b.id, 52, mood = moodOf(p, b), live = p?.live == true || computerOn, sharedKey = "bot:${b.id}") },
         b.name, b.pinned, timeAgoLive(b.lastMessage?.createdAt),
         if (busy) statusOf(p!!) else preview(b.lastMessage?.content).ifEmpty { b.title.ifEmpty { "General-purpose bot" } },
         if (busy) (if (blocked) g.danger else g.live) else if (unread > 0) g.ink else g.ink2, busy || unread > 0, unread,
@@ -347,7 +347,7 @@ private fun GroupRow(gr: Group, bots: List<Bot>, presence: Map<String, Presence>
     val members = gr.botIds.mapNotNull { id -> bots.find { it.id == id } }
     val working = members.find { presence[it.id]?.state in listOf("thinking", "working") }
     RowShell(
-        onClick, onLong, { Stack(members, 26, presence) }, gr.name, false, timeAgoLive(gr.lastMessage?.createdAt),
+        onClick, onLong, { Stack(members, 28, presence) }, gr.name, false, timeAgoLive(gr.lastMessage?.createdAt),
         if (working != null) "${working.name} is ${presence[working.id]?.state}…" else preview(gr.lastMessage?.content).ifEmpty { members.joinToString(", ") { it.name } },
         if (working != null) g.live else if (unread > 0) g.ink else g.ink2, working != null || unread > 0, unread,
     )
@@ -357,7 +357,7 @@ private fun GroupRow(gr: Group, bots: List<Bot>, presence: Map<String, Presence>
 private fun SkeletonRow() {
     val g = LocalG.current
     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(42.dp).shimmer().clip(CircleShape).background(g.surface2))
+        Box(Modifier.size(52.dp).shimmer().clip(CircleShape).background(g.surface2))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.shimmer(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.width(110.dp).height(12.dp).clip(RoundedCornerShape(6.dp)).background(g.surface2))

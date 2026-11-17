@@ -81,7 +81,7 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
         {onMenu && <IconButton label="Bots" onClick={onMenu}><Icon.menu /></IconButton>}
         {bot ? (
           <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-10 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
-            <Gbot look={bot.look} seed={bot.id} size={26} mood={moodOf(p, bot)} />
+            <Gbot look={bot.look} seed={bot.id} size={36} mood={moodOf(p, bot)} />
             <span className="flex flex-col min-w-0 text-left">
               <span className="text-[15px] font-semibold leading-5 tracking-[-0.2px] truncate">{bot.name}</span>
               <span className="text-[12px] leading-4 text-ink-3 truncate">{botJob(p, bot.title)}</span>
@@ -89,7 +89,7 @@ export function Chat({ chatKey, onMenu, onSettings, onHatch, onComputer, panelOp
           </button>
         ) : (
           <button onClick={onSettings} className="flex items-center gap-2 min-w-0 h-10 rounded-lg px-1.5 hover:bg-hover transition-colors duration-[120ms] cursor-pointer">
-            <Stack bots={members} size={20} presence={presence} />
+            <Stack bots={members} size={28} presence={presence} />
             <span className="flex flex-col min-w-0 text-left">
               <span className="text-[15px] font-semibold leading-5 tracking-[-0.2px] truncate">{group!.name}</span>
               <span className="text-[12px] leading-4 text-ink-3 truncate">{members.map((b) => b.name).join(", ")}</span>
@@ -378,7 +378,7 @@ function Transcript({ chatKey, bot, group, members, messages, presence, error, o
             return (
               <motion.div key={"typing" + id} initial={{ opacity: 0, y: 8, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, transition: { duration: 0.1 } }}
                 transition={bouncy} className="flex items-center gap-2.5 mt-3 py-1">
-                <Gbot look={b.look} seed={b.id} size={32} mood={p?.state === "working" ? "working" : "thinking"} />
+                <Gbot look={b.look} seed={b.id} size={40} mood={p?.state === "working" ? "working" : "thinking"} />
                 <span className="text-[13px] text-ink-3">
                   {group && <span className="text-ink-2">{b.name} · </span>}
                   {p?.detail || (p?.state === "working" ? "Working" : "Thinking")}
@@ -413,7 +413,7 @@ function Hello({ bot }: { bot: Bot }) {
   const [ref, gaze] = useGaze<HTMLDivElement>();
   return (
     <div className="entry-in text-center pt-[14vh] pb-8">
-      <div ref={ref} className="inline-block"><Gbot look={bot.look} seed={bot.id} size={72} lookAt={gaze} /></div>
+      <div ref={ref} className="inline-block"><Gbot look={bot.look} seed={bot.id} size={96} lookAt={gaze} /></div>
       <h2 className="text-[17px] font-semibold tracking-[-0.3px] mt-3">{bot.name}</h2>
       <p className="text-[13px] text-ink-2 mt-1 max-w-[360px] mx-auto">
         Tell {bot.name} what its job is, in plain words. It remembers, uses its own computer, and asks before anything risky.
@@ -425,7 +425,7 @@ function Hello({ bot }: { bot: Bot }) {
 function GroupHello({ group, members }: { group: Group; members: Bot[] }) {
   return (
     <div className="entry-in text-center pt-[14vh] pb-8">
-      <div className="flex justify-center"><Stack bots={members} size={44} /></div>
+      <div className="flex justify-center"><Stack bots={members} size={56} /></div>
       <h2 className="text-[17px] font-semibold tracking-[-0.3px] mt-3">{group.name}</h2>
       <p className="text-[13px] text-ink-2 mt-1 max-w-[380px] mx-auto">
         {members[0]?.name} leads. @mention anyone to bring them in; they hand work to each other.
@@ -442,7 +442,7 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
     const err = m.data?.kind === "error";
     return (
       <div className={`${enter} flex justify-center items-center gap-1.5 my-3 text-[13px] text-center ${err ? "text-danger" : "text-ink-2"}`}>
-        {author && <Gbot look={author.look} seed={author.id} size={16} mood={err ? "blocked" : "idle"} />}
+        {author && <Gbot look={author.look} seed={author.id} size={22} mood={err ? "blocked" : "idle"} />}
         {m.data?.kind === "routine" && <span className="[&_svg]:size-3.5"><Icon.clock /></span>}
         <span className="prose-bot [&_strong]:text-ink [&_strong]:font-medium" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
       </div>
@@ -458,7 +458,7 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
     <div className={`${enter} group flex items-end gap-1.5 ${first ? "mt-3" : "mt-0.5"} ${mine ? "justify-end" : ""}`}
       style={{ transformOrigin: mine ? "bottom right" : "bottom left" }} title={new Date(m.createdAt).toLocaleString()}>
       {mine && !m.pending && <Actions m={m} chatKey={chatKey} failed={failed} />}
-      {!mine && named && <div className="w-6 shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={24} mood={m.streaming ? "working" : "idle"} />}</div>}
+      {!mine && named && <div className="w-[34px] shrink-0">{last && author && <Gbot look={author.look} seed={author.id} size={34} mood={m.streaming ? "working" : "idle"} />}</div>}
       <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[min(85%,560px)]`}>
         {named && first && !mine && author && <span className="text-[12px] text-ink-3 mb-1 ml-1">{author.name}</span>}
         <div className={`px-3.5 py-2 text-[15px] leading-[22px] ${shape} ${mine
@@ -515,26 +515,21 @@ function Activity({ m, enter }: { m: Message; enter: string }) {
 
 // The keys of docs/protocol/bot-asks.md this view reads.
 type ExchangeData = {
-  from: string; to: string; message: string; reply?: string; status: string;
-  expect?: "ask" | "tell"; round?: string; joined?: boolean; tookMs?: number;
+  from: string; to: string; message: string;
+  expect?: "ask" | "tell"; round?: string;
 };
-
-// What the other side shows when there is no reply text.
-const noReplyText: Record<string, string> = {
-  delivered: "No reply needed", needs_you: "Needs the person before it can reply", failed: "No reply",
-  expired: "Didn't answer in time", cancelled: "Stopped before answering",
-};
-const ended = new Set(["replied", "delivered", "failed", "needs_you", "expired", "cancelled"]);
-const statusText = (status: string) => noReplyText[status] ?? (status === "working" ? "Working on it…" : status === "sent" ? "Waiting its turn…" : status);
-
-// The reply as one plain line for the divider's second line.
-const oneLine = (s: string) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
 
 // One bot messaging another, as in Grok Bot: a centered divider in each
-// chat ("Messaged Maya" / "Message from Trader") with a line under it
-// that updates in place when the reply arrives. Nothing here waits: the
-// sender has already moved on, and the reply simply appears when it lands.
-// Click to open the exchange.
+// chat ("Messaged Maya" / "Message from Trader"). Messaging is async, so
+// a card is only about the message itself — sent here, received there.
+// An answer is never folded back into it: the asking bot speaks it in its
+// own chat when it comes. Click to read the message.
+//
+// It shows no status: both cards are written when the message is handed
+// over, so "Sent" and "Received" hold from the first paint. What becomes
+// of the answer after that is the asking bot's business, and it says so in
+// its own words; "failed" in particular is not a delivery failure, only
+// the server's catch-all for no answer coming back.
 function Exchange({ m, enter }: { m: Message; enter: string }) {
   const [open, setOpen] = useState(false);
   const bots = useStore((s) => s.bots);
@@ -544,31 +539,20 @@ function Exchange({ m, enter }: { m: Message; enter: string }) {
   const outbound = m.botId === d.from;
   const peer = outbound ? to : from;
   const label = outbound ? `${d.expect === "tell" ? "Told" : "Asked"} ${to?.name ?? "a bot"}` : `Message from ${from?.name ?? "a bot"}`;
-  const line = exchangeLine(d, outbound, to?.name);
+  const line = outbound ? "Sent" : "Received";
   return (
     <>
       <div className={`${enter} my-3 flex flex-col items-center gap-0.5 text-center`}>
         <button onClick={() => setOpen(true)} aria-label={`${label}. Open the exchange`}
           className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[13px] text-ink-2 hover:bg-hover hover:text-ink cursor-pointer transition-colors duration-[120ms]">
-          {peer && <Gbot look={peer.look} seed={peer.id} size={16} mood="idle" />}
+          {peer && <Gbot look={peer.look} seed={peer.id} size={22} mood="idle" />}
           <span>{label}</span>
         </button>
-        <span className={`max-w-[min(85%,560px)] truncate text-[12.5px] ${d.status === "failed" ? "text-danger" : "text-ink-3"}`}>{line}</span>
+        <span className="max-w-[min(85%,560px)] truncate text-[12.5px] text-ink-3">{line}</span>
       </div>
       <ExchangeView open={open} onClose={() => setOpen(false)} from={from} to={to} d={d} />
     </>
   );
-}
-
-// The divider’s second line. Before a reply there is nothing to wait on:
-// the sender just shows that it was sent.
-function exchangeLine(d: ExchangeData, outbound: boolean, toName?: string): string {
-  if (d.reply) return `${outbound ? `${toName ?? "Bot"}: ` : "Replied: "}${oneLine(d.reply)}`;
-  if (d.status === "failed") return noReplyText.failed;
-  if (d.status === "delivered") return noReplyText.delivered;
-  if (noReplyText[d.status]) return noReplyText[d.status];
-  if (d.status === "working") return outbound ? `${toName ?? "Bot"} is on it…` : "Working on it…";
-  return outbound ? "Sent" : "";
 }
 
 // "Pip", "Pip and Taro", "Pip, Taro and 2 more".
@@ -580,31 +564,24 @@ function names(list: (Bot | undefined)[]): string {
   return `${n[0]}, ${n[1]} and ${n.length - 2} more`;
 }
 
-function took(ms: number): string {
-  const s = Math.round(ms / 1000);
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
-// A round: the asks one bot sent in one turn, as one line that counts the
-// answers as they land. Open it to read every question and answer.
+// A round: the messages one bot sent in one turn, as one line. Open it to
+// read them. The answers come back to that bot on their own; they are not
+// shown here.
 function RoundCard({ ms, enter }: { ms: Message[]; enter: string }) {
   const [open, setOpen] = useState(false);
   const bots = useStore((s) => s.bots);
   const ds = ms.map((m) => m.data as ExchangeData);
   const from = bots.find((b) => b.id === ds[0].from);
   const tos = ds.map((d) => bots.find((b) => b.id === d.to));
-  const answered = ds.filter((d) => ended.has(d.status)).length;
-  const tookMs = ds.find((d) => typeof d.tookMs === "number")?.tookMs;
-  const line = ds.some((d) => d.joined) && tookMs != null ? `All answered · ${took(tookMs)}`
-    : answered === ds.length ? "All answered" : `${answered} of ${ds.length} answered`;
+  const line = `Sent to ${ds.length} bots`;
   const label = `Asked ${names(tos)}`;
   return (
     <>
       <div className={`${enter} my-3 flex flex-col items-center gap-0.5 text-center`}>
-        <button onClick={() => setOpen(true)} aria-label={`${label}. ${line}. Open the answers`}
+        <button onClick={() => setOpen(true)} aria-label={`${label}. ${line}. Open the messages`}
           className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[13px] text-ink-2 hover:bg-hover hover:text-ink cursor-pointer transition-colors duration-[120ms]">
           <span className="flex items-center gap-0.5">
-            {tos.filter(Boolean).slice(0, 3).map((b) => <Gbot key={b!.id} look={b!.look} seed={b!.id} size={16} mood="idle" />)}
+            {tos.filter(Boolean).slice(0, 3).map((b) => <Gbot key={b!.id} look={b!.look} seed={b!.id} size={22} mood="idle" />)}
           </span>
           <span>{label}</span>
         </button>
@@ -613,20 +590,16 @@ function RoundCard({ ms, enter }: { ms: Message[]; enter: string }) {
       <Modal open={open} onClose={() => setOpen(false)} width={560}>
         <div className="px-5 pb-5 pt-6 space-y-5">
           <div className="mx-auto flex w-fit items-center gap-2 rounded-full bg-surface px-3.5 py-1.5 text-[14px]">
-            {from && <Gbot look={from.look} seed={from.id} size={18} mood="idle" />}
-            <span className="font-medium">{from?.name ?? "A bot"} asked {ds.length} bots</span>
+            {from && <Gbot look={from.look} seed={from.id} size={24} mood="idle" />}
+            <span className="font-medium">{from?.name ?? "A bot"} messaged {ds.length} bots</span>
           </div>
           {ds.map((d, i) => (
-            <div key={ms[i].id} className={`space-y-4 ${i > 0 ? "border-t border-line pt-5" : ""}`}>
-              <ExchangeTurn bot={from}><div className="whitespace-pre-wrap break-words">{d.message}</div></ExchangeTurn>
-              <ExchangeTurn bot={tos[i]}>
-                {d.reply
-                  ? <div className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.reply) }} />
-                  : <div className="text-ink-3">{statusText(d.status)}</div>}
+            <div key={ms[i].id} className={i > 0 ? "border-t border-line pt-5" : ""}>
+              <ExchangeTurn bot={tos[i]} label={`To ${tos[i]?.name ?? "a bot"}`}>
+                <div className="whitespace-pre-wrap break-words">{d.message}</div>
               </ExchangeTurn>
             </div>
           ))}
-          <div className="text-center text-[12px] text-ink-3">{line}</div>
           <div className="flex justify-center pt-1">
             <button onClick={() => setOpen(false)} className="rounded-full bg-surface hover:bg-hover px-4 py-2 text-[14px] cursor-pointer transition-colors duration-[120ms]">Close</button>
           </div>
@@ -636,28 +609,20 @@ function RoundCard({ ms, enter }: { ms: Message[]; enter: string }) {
   );
 }
 
-// The exchange itself: both bots, the message, and the reply once it
-// arrives. View only.
+// The message itself: both bots and what was sent. View only; an answer
+// is not part of it.
 function ExchangeView({ open, onClose, from, to, d }: { open: boolean; onClose: () => void; from?: Bot; to?: Bot; d: ExchangeData }) {
-  const pending = d.status === "sent"; // no reply yet; the view just leaves that turn out
   return (
     <Modal open={open} onClose={onClose} width={560}>
       <div className="px-5 pb-5 pt-6 space-y-5">
         <div className="mx-auto flex w-fit items-center gap-2 rounded-full bg-surface px-3.5 py-1.5 text-[14px]">
-          {from && <Gbot look={from.look} seed={from.id} size={18} mood="idle" />}
+          {from && <Gbot look={from.look} seed={from.id} size={24} mood="idle" />}
           <span className="font-medium">{from?.name ?? "A bot"}</span>
           <span className="text-ink-3">⇄</span>
-          {to && <Gbot look={to.look} seed={to.id} size={18} mood="idle" />}
+          {to && <Gbot look={to.look} seed={to.id} size={24} mood="idle" />}
           <span className="font-medium">{to?.name ?? "A bot"}</span>
         </div>
         <ExchangeTurn bot={from}><div className="whitespace-pre-wrap break-words">{d.message}</div></ExchangeTurn>
-        {(d.reply || !pending) && (
-          <ExchangeTurn bot={to}>
-            {d.reply
-              ? <div className="prose-bot" dangerouslySetInnerHTML={{ __html: renderMarkdown(d.reply) }} />
-              : <div className="text-ink-3">{statusText(d.status)}</div>}
-          </ExchangeTurn>
-        )}
         <div className="flex justify-center pt-1">
           <button onClick={onClose} className="rounded-full bg-surface hover:bg-hover px-4 py-2 text-[14px] cursor-pointer transition-colors duration-[120ms]">Close Chat</button>
         </div>
@@ -666,12 +631,12 @@ function ExchangeView({ open, onClose, from, to, d }: { open: boolean; onClose: 
   );
 }
 
-function ExchangeTurn({ bot, children }: { bot?: Bot; children: React.ReactNode }) {
+function ExchangeTurn({ bot, label, children }: { bot?: Bot; label?: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2.5">
-      <div className="w-7 shrink-0 pt-0.5">{bot && <Gbot look={bot.look} seed={bot.id} size={28} mood="idle" />}</div>
+      <div className="w-9 shrink-0 pt-0.5">{bot && <Gbot look={bot.look} seed={bot.id} size={36} mood="idle" />}</div>
       <div className="min-w-0 flex-1">
-        <div className="text-[12px] text-ink-3 mb-1">{bot?.name ?? "Removed bot"}</div>
+        <div className="text-[12px] text-ink-3 mb-1">{label ?? bot?.name ?? "Removed bot"}</div>
         <div className="rounded-2xl bg-surface px-3.5 py-2 text-[15px] leading-[22px]">{children}</div>
       </div>
     </div>

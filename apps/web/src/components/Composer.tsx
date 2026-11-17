@@ -100,7 +100,7 @@ export function Composer({ placeholder, busy, mentionable, onSend, onStop, autoF
                     className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left cursor-pointer ${i === pick ? "bg-selected" : ""}`}
                     role="option" aria-selected={i === pick}
                   >
-                    {s.bot ? <Gbot look={s.bot.look} seed={s.bot.id} size={20} /> : <span className="text-ink-2"><Icon.spark /></span>}
+                    {s.bot ? <Gbot look={s.bot.look} seed={s.bot.id} size={26} /> : <span className="text-ink-2"><Icon.spark /></span>}
                     <span className="text-[14px]">{s.label}</span>
                     {s.hint && <span className="text-[13px] text-ink-3 truncate">{s.hint}</span>}
                   </button>

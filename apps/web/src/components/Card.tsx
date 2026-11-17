@@ -74,7 +74,7 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
     <div className="entry-in my-3 max-w-[min(100%,520px)] rounded-2xl bg-surface px-3 pt-2.5 pb-3 text-[14px] leading-5"
       role="group" aria-label={`${bot.name} needs you`}>
       <div className="flex items-center gap-2">
-        <Gbot look={bot.look} seed={bot.id} size={18} mood="waiting" />
+        <Gbot look={bot.look} seed={bot.id} size={24} mood="waiting" />
         <span className="font-semibold truncate">{bot.name}</span>
         <span className="ml-auto inline-flex items-center gap-1 rounded-full px-[7px] text-[12px] leading-[19px] bg-[color-mix(in_srgb,var(--warning)_14%,transparent)] text-warning shrink-0">
           <span className="size-1.5 rounded-full bg-current" />{label}

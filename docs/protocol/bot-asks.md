@@ -45,6 +45,30 @@ the same data:
 `delivered` means the message was taken in and nothing needed to go back
 (a tell, or `NO_REPLY`).
 
+The card is about the message, not the answer: in the sender's chat it reads
+"Asked Nori" / "Sent", in the receiver's "Message from Pip" / "Received", and
+opening it shows what was sent. `reply` is kept for the sender's next prompt
+but is never drawn — the asking bot says what matters in its own chat when the
+answers come back (`joinPrompt` tells it so).
+
+`status` isn't drawn either. It tracks the receiving bot's run, not the
+hand-over: both cards are written together the moment the message is passed on
+(a message that can't be handed over makes no card at all), so "Sent" and
+"Received" are true from the first paint and stay true. What `status` then
+records is the answer's fate, and that belongs to the bot that asked: it gets
+all of it through `joinPrompt` and says what matters in its own chat.
+
+Don't read `failed` as a delivery failure, and don't count on the receiving
+chat to explain one. On the server `failed` is where a run starts
+(`runtime.go`) and what it keeps whenever no answer comes back. Most of those
+paths do say something in that bot's chat: an error for a run that errored, a
+reply the provider blocked, no model being connected, or an agent that
+wouldn't start, and "Stopped" for a run stopped part-way. Two say nothing —
+a finish with empty text, and a run that gives up before it begins (the
+requester can't be loaded, or the run row won't start). `cancelled` is the
+phone's: the server never writes it. `expired` is an ask still out when the
+round timed out, which includes one the receiver never picked up.
+
 ## Limits
 
 - Depth: a bot at depth 2 or deeper can't message anyone (person → A → B → C,

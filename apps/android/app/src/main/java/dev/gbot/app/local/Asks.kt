@@ -38,7 +38,7 @@ fun joinPrompt(answers: List<Answer>): String = buildString {
             if (line.isBlank()) append("\n") else append("  ${line.trimEnd(' ', '\t')}\n")
         }
     }
-    append("\nUse these to finish what the person asked. Answer the person now, and don't ask these bots the same thing again.")
+    append("\nThe person can't read these answers: their card only shows that you messaged the bot. Use them to finish what the person asked, say what matters in your own words now, and don't ask these bots the same thing again.")
 }
 
 private fun answerText(a: Answer): String {

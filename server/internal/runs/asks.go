@@ -63,7 +63,7 @@ func joinPrompt(answers []answer) string {
 			}
 		}
 	}
-	sb.WriteString("\nUse these to finish what the person asked. Answer the person now, and don't ask these bots the same thing again.")
+	sb.WriteString("\nThe person can't read these answers: their card only shows that you messaged the bot. Use them to finish what the person asked, say what matters in your own words now, and don't ask these bots the same thing again.")
 	return sb.String()
 }
 
