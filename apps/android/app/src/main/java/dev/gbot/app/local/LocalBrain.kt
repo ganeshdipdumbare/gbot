@@ -76,6 +76,27 @@ private val TOOL_ALIASES = mapOf(
 )
 
 /**
+ * The argument names those borrowed calls bring — the server's
+ * browser_type {ref, text}, a search's {query} — under the phone's own,
+ * so the approval card, the evidence and the tool all read the same
+ * url, id and value.
+ */
+internal fun canonicalArgs(name: String, args: JsonObject): JsonObject {
+    fun pick(vararg keys: String): JsonPrimitive? = keys.firstNotNullOfOrNull { k ->
+        (args[k] as? JsonPrimitive)?.takeIf { it !is JsonNull && it.content.isNotBlank() }
+    }
+    val id = { pick("id", "ref", "element", "index") }
+    val wanted: Map<String, JsonPrimitive?> = when (name) {
+        "browser_open", "open_in_chrome" -> mapOf("url" to pick("url", "query", "q", "link", "address", "href"))
+        "browser_click", "browser_enter" -> mapOf("id" to id())
+        "browser_fill" -> mapOf("id" to id(), "value" to pick("value", "text", "input"))
+        else -> emptyMap()
+    }
+    val fill = wanted.filter { (k, v) -> v != null && args[k] != v }.mapValues { it.value!! }
+    return if (fill.isEmpty()) args else JsonObject(args + fill)
+}
+
+/**
  * The bot's mind, on the phone. One run: think, use tools, answer. The
  * conversation is rebuilt from the last few turns each time, so a run can
  * be stopped or the app closed without losing the chat. Groups reuse the
@@ -694,10 +715,11 @@ class LocalBrain(
         bot: Bot,
         group: Group?,
         called: String,
-        args: JsonObject,
+        calledArgs: JsonObject,
         stage: (String) -> Unit,
     ): String {
         val name = canonicalTool(called)
+        val args = canonicalArgs(name, calledArgs)
         if (name != called) log("tool $called -> $name")
         val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch"
         val onComputer = usesComputer(name)
@@ -725,7 +747,7 @@ class LocalBrain(
         proof?.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
         // the bot is and what they could be watching.
-        if (name.startsWith("browser_")) {
+        if (name.startsWith("browser_") && usesComputer(name)) {
             val host = hostOf(browser.url.value)
             if (host.isNotEmpty()) stage("Browsing $host")
         }

@@ -3,6 +3,7 @@ package dev.gbot.app
 import dev.gbot.app.local.Approval
 import dev.gbot.app.local.BrowserController
 import dev.gbot.app.local.Cron
+import dev.gbot.app.local.canonicalArgs
 import dev.gbot.app.local.canonicalTool
 import dev.gbot.app.local.Mentions
 import dev.gbot.app.local.LocalProviders
@@ -66,6 +67,24 @@ class LocalTest {
         assertEquals("browser_enter", canonicalTool("browser_press"))
         assertEquals("browser_open", canonicalTool("browser_open"))
         assertEquals("web_fetch", canonicalTool("web_fetch"))
+    }
+
+    @Test
+    fun `borrowed arguments land where the approval card and tool read them`() {
+        fun obj(s: String) = kotlinx.serialization.json.Json.parseToJsonElement(s) as kotlinx.serialization.json.JsonObject
+        fun str(o: kotlinx.serialization.json.JsonObject, k: String) = o[k]?.jsonPrimitive?.contentOrNull
+
+        // A search's query becomes the url the card shows and the window opens.
+        assertEquals("cheap flights", str(canonicalArgs("browser_open", obj("""{"query":"cheap flights"}""")), "url"))
+        // The server's browser_type {ref, text, submit}.
+        val typed = canonicalArgs("browser_fill", obj("""{"ref":3,"text":"hi","submit":true}"""))
+        assertEquals("3", str(typed, "id"))
+        assertEquals("hi", str(typed, "value"))
+        assertEquals("true", str(typed, "submit"))
+        assertEquals("5", str(canonicalArgs("browser_click", obj("""{"ref":5}""")), "id"))
+        // The phone's own names win, and nothing is invented.
+        assertEquals("https://a.b", str(canonicalArgs("browser_open", obj("""{"url":"https://a.b","query":"x"}""")), "url"))
+        assertEquals(null, str(canonicalArgs("browser_enter", obj("""{"key":"Enter"}""")), "id"))
     }
 
     @Test
