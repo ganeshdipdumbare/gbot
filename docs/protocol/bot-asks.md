@@ -59,13 +59,15 @@ records is the answer's fate, and that belongs to the bot that asked: it gets
 all of it through `joinPrompt` and says what matters in its own chat.
 
 Don't read `failed` as a delivery failure, and don't count on the receiving
-chat to explain one. On the server `failed` is simply where a run starts
-(`runtime.go`) and what it keeps when no answer comes back: an errored run, a
-reply the provider blocked, a run stopped part-way, a finish with empty text,
-or one that never reached a model at all. Only the first two leave an error in
-that bot's chat; a stop leaves "Stopped", the rest leave nothing. `cancelled`
-is the phone's: the server never writes it. `expired` is an ask still out when
-the round timed out, which includes one the receiver never picked up.
+chat to explain one. On the server `failed` is where a run starts
+(`runtime.go`) and what it keeps whenever no answer comes back. Most of those
+paths do say something in that bot's chat: an error for a run that errored, a
+reply the provider blocked, no model being connected, or an agent that
+wouldn't start, and "Stopped" for a run stopped part-way. Two say nothing —
+a finish with empty text, and a run that gives up before it begins (the
+requester can't be loaded, or the run row won't start). `cancelled` is the
+phone's: the server never writes it. `expired` is an ask still out when the
+round timed out, which includes one the receiver never picked up.
 
 ## Limits
 
