@@ -114,9 +114,10 @@ fun Activity(m: Message) {
  * bot speaks it in its own chat when it comes.
  *
  * It shows no status: both cards are written when the message is handed
- * over, so "Sent" and "Received" hold from the first paint. What happens to
- * the answer after that — failed, expired, cancelled — is the asking bot's
- * business, and it says so in its own words.
+ * over, so "Sent" and "Received" hold from the first paint. What becomes of
+ * the answer after that is the asking bot's business, and it says so in its
+ * own words; "failed" in particular is not a delivery failure, only the
+ * catch-all for no answer coming back.
  */
 @Composable
 fun Exchange(m: Message, bots: List<Bot>) {

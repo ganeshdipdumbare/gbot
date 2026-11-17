@@ -55,11 +55,17 @@ answers come back (`joinPrompt` tells it so).
 hand-over: both cards are written together the moment the message is passed on
 (a message that can't be handed over makes no card at all), so "Sent" and
 "Received" are true from the first paint and stay true. What `status` then
-records — `failed` for a run that errored or a reply the provider blocked,
-`expired` for an ask still waiting when the round timed out, `cancelled` for
-one stopped mid-run — is the answer's fate, which belongs to the bot that
-asked: it gets all of it in `joinPrompt` and says what matters in its own
-chat. A `failed` run also shows its error in the receiving bot's chat.
+records is the answer's fate, and that belongs to the bot that asked: it gets
+all of it through `joinPrompt` and says what matters in its own chat.
+
+Don't read `failed` as a delivery failure, and don't count on the receiving
+chat to explain one. On the server `failed` is simply where a run starts
+(`runtime.go`) and what it keeps when no answer comes back: an errored run, a
+reply the provider blocked, a run stopped part-way, a finish with empty text,
+or one that never reached a model at all. Only the first two leave an error in
+that bot's chat; a stop leaves "Stopped", the rest leave nothing. `cancelled`
+is the phone's: the server never writes it. `expired` is an ask still out when
+the round timed out, which includes one the receiver never picked up.
 
 ## Limits
 
