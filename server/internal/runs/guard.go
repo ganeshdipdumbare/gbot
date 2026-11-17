@@ -27,6 +27,9 @@ type runCtx struct {
 	tainted bool
 	// sources are the pages this run opened, for the Sources section.
 	sources []source
+	// pictures are what a tool handed back for the person to look at,
+	// waiting to be shown in the chat.
+	pictures []picture
 	// contract is what the person agreed the task means; evidence is what
 	// the run actually did; receipt is the independent check's verdict.
 	contract *contract
@@ -69,6 +72,30 @@ func (rc *runCtx) addSource(title, url string) {
 	if len(rc.sources) < 30 {
 		rc.sources = append(rc.sources, source{Title: strings.TrimSpace(title), URL: url})
 	}
+}
+
+// A picture a tool handed back: saved, and waiting for the chat.
+type picture struct {
+	Blob string
+	Mime string
+	From string // the integration that sent it
+	Size int
+}
+
+func (rc *runCtx) addPicture(p picture) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.pictures = append(rc.pictures, p)
+}
+
+// takePictures hands over what is waiting, leaving nothing behind: each
+// picture is shown once.
+func (rc *runCtx) takePictures() []picture {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	out := rc.pictures
+	rc.pictures = nil
+	return out
 }
 
 // sourcesMarkdown is the backstop for a web answer that did not cite its

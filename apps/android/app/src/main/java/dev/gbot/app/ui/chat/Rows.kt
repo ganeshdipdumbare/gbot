@@ -40,6 +40,12 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import dev.gbot.app.ui.Pictures
+import dev.gbot.app.ui.shimmer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,6 +109,49 @@ fun Activity(m: Message) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A picture a tool handed back, in the chat as its own row: a diagram from
+ * an integration, a screenshot. A tool only ever answers the model in
+ * text, so this is the one place the person sees it. Tap it to fill the
+ * screen.
+ */
+@Composable
+fun PictureRow(m: Message, author: Bot?) {
+    val g = LocalG.current
+    var open by remember { mutableStateOf(false) }
+    var img by remember(m.id) { mutableStateOf<ImageBitmap?>(null) }
+    var missing by remember(m.id) { mutableStateOf(false) }
+    LaunchedEffect(m.id) {
+        img = Pictures.load(m.id, m.str("file"), m.str("blob"))
+        missing = img == null
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.Bottom) {
+        Box(Modifier.width(40.dp)) { if (author != null) Gbot(author.look, author.id, 34) }
+        Column(Modifier.widthIn(max = 320.dp)) {
+            Text(m.content, style = T.tiny, color = g.ink3, modifier = Modifier.padding(start = 4.dp, bottom = 3.dp))
+            val shape = RoundedCornerShape(18.dp)
+            Box(Modifier.clip(shape).background(g.surface).border(1.dp, g.line, shape).pressable { if (img != null) open = true }) {
+                when {
+                    img != null -> Image(
+                        img!!, m.content, Modifier.heightIn(max = 260.dp).widthIn(max = 320.dp),
+                        contentScale = ContentScale.Fit,
+                    )
+                    missing -> Text(
+                        "This picture couldn't be loaded.", style = T.small, color = g.ink3,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    )
+                    else -> Box(Modifier.size(200.dp, 120.dp).shimmer())
+                }
+            }
+        }
+    }
+    if (open) Dialog(onDismissRequest = { open = false }) {
+        Box(Modifier.clip(RoundedCornerShape(22.dp)).background(g.bg).pressable { open = false }) {
+            img?.let { Image(it, m.content, Modifier.fillMaxWidth(), contentScale = ContentScale.Fit) }
         }
     }
 }

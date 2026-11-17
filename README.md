@@ -173,6 +173,14 @@ one sign-in; GitHub takes a personal token. Any other HTTP MCP server can be
 added with a URL and a token. Tokens are sealed with the server key, scoped to
 your account, and never shown to bots.
 
+An integration that draws — Excalidraw, a chart tool, anything that hands back
+a picture — shows it in the chat as its own row, because a tool can only ever
+answer a bot in text. The picture is kept with your other data (the server
+stores it and serves it to your session alone; the phone keeps it in the app's
+own storage) and the bot is told it is there, so it talks about what it drew
+instead of describing a file. PNG, JPEG, GIF, WEBP and BMP are shown; anything
+else is named in the reply but not kept.
+
 ### Slack
 
 A bot can answer in a Slack channel. gbot does not host a Slack app, so you

@@ -94,6 +94,14 @@ class Screens {
               {"id":"o7","botId":"b4","role":"event","content":"Messaged Nori","data":{"kind":"botmsg","ask":"ak_4","from":"b4","to":"b2","message":"One-line launch tweet?","expect":"ask","round":"rd_2","root":"rt_2","depth":1,"status":"replied","reply":"Ship day: gbot bots now work as a team."},"createdAt":"${ago(1)}"},
               {"id":"o8","botId":"b4","role":"event","content":"Messaged Juno","data":{"kind":"botmsg","ask":"ak_5","from":"b4","to":"b3","message":"One-line launch tweet?","expect":"ask","round":"rd_2","root":"rt_2","depth":1,"status":"working"},"createdAt":"${ago(1)}"}
             ]}""",
+            "/api/bots/b2/messages" to """{"messages":[
+              {"id":"n1","botId":"b2","role":"user","content":"Draw me how a decoder-only LLM is put together","createdAt":"${ago(4)}"},
+              {"id":"n2","botId":"b2","role":"event","content":"","data":{"kind":"activity","steps":[{"label":"Used","detail":"Excalidraw · draw","ok":true}]},"createdAt":"${ago(3)}"},
+              {"id":"n3","botId":"b2","role":"event","content":"Picture from Excalidraw","data":{"kind":"picture","blob":"pic1","mime":"image/png","from":"Excalidraw","size":18204},"createdAt":"${ago(3)}"},
+              {"id":"n4","botId":"b2","role":"bot","content":"Tokens go in at the left, run through the stack of blocks, and come out as the next token. Attention is where tokens read each other; the MLP is where most of the weights sit.","createdAt":"${ago(2)}"}
+            ]}""",
+            "/api/bots/b2/queue" to """{"items":[]}""",
+            "/api/bots/b2/computer" to """{"state":"asleep","controller":"bot","network":true,"available":true,"backend":"microsandbox"}""",
             "/api/bots/b4/queue" to """{"items":[]}""",
             "/api/bots/b4/computer" to """{"state":"asleep","controller":"bot","network":true,"available":true,"backend":"microsandbox"}""",
             "/api/settings/rules" to """{"rules":[{"tool":"browser_open","rule":"allow"}]}""",
@@ -116,10 +124,37 @@ class Screens {
         javaClass.getResourceAsStream("/screen.jpg")!!.use { it.readBytes() }
     }
 
+    /**
+     * A drawing an integration handed back, so the picture row shows a
+     * real picture rather than a grey box.
+     */
+    private val diagram: ByteArray by lazy {
+        val bmp = Bitmap.createBitmap(660, 360, Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        c.drawColor(android.graphics.Color.WHITE)
+        val line = android.graphics.Paint().apply {
+            isAntiAlias = true; color = 0xFF6965DB.toInt(); strokeWidth = 5f
+            style = android.graphics.Paint.Style.STROKE
+        }
+        val fill = android.graphics.Paint().apply { isAntiAlias = true; color = 0xFFEDECFB.toInt() }
+        val ink = android.graphics.Paint().apply { isAntiAlias = true; color = 0xFF1A1A1A.toInt(); textSize = 26f }
+        listOf("tokens" to 30f, "attention" to 250f, "MLP" to 470f).forEachIndexed { i, (label, x) ->
+            c.drawRoundRect(x, 120f, x + 160f, 240f, 18f, 18f, fill)
+            c.drawRoundRect(x, 120f, x + 160f, 240f, 18f, 18f, line)
+            c.drawText(label, x + 24f, 190f, ink)
+            if (i < 2) c.drawLine(x + 165f, 180f, x + 215f, 180f, line)
+        }
+        java.io.ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+    }
+
     @Before fun setUp() {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.url.encodedPath
+                if (path.startsWith("/api/blobs/")) {
+                    return MockResponse.Builder().code(200).addHeader("Content-Type", "image/png")
+                        .body(okio.Buffer().write(diagram)).build()
+                }
                 if (path.endsWith("/computer/screen")) {
                     return MockResponse.Builder().code(200).addHeader("Content-Type", "image/jpeg")
                         .body(okio.Buffer().write(screenFrame)).build()
@@ -207,6 +242,9 @@ class Screens {
         val bmp = rule.onNode(androidx.compose.ui.test.isDialog()).captureToImage().asAndroidBitmap()
         File(File("build/shots").apply { mkdirs() }, "clear-chat.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
+
+    /** A picture an integration drew, in the chat. */
+    @Test fun picture() = shot("picture") { ChatScreen(rememberNavController(), "b2") }
 
     /** A round's popup: every question and answer in one place. */
     @Test fun roundPopup() {

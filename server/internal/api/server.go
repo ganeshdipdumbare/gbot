@@ -102,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/bots/{id}", s.authed(s.getBot))
 	mux.Handle("PATCH /api/bots/{id}", s.authed(s.updateBot))
 	mux.Handle("DELETE /api/bots/{id}", s.authed(s.archiveBot))
+	mux.Handle("GET /api/blobs/{id}", s.authed(s.blob))
 	mux.Handle("GET /api/bots/{id}/messages", s.authed(s.listMessages))
 	mux.Handle("POST /api/bots/{id}/messages", s.authed(s.sendMessage))
 	mux.Handle("DELETE /api/bots/{id}/messages", s.authed(s.clearChat))
