@@ -73,7 +73,11 @@ round timed out, which includes one the receiver never picked up.
 
 - Depth: a bot at depth 2 or deeper can't message anyone (person → A → B → C,
   and C stops).
-- At most 6 messages (asks and tells) for each request from the person.
+- At most 12 messages (asks and tells) for each request from the person. This
+  is a runaway stop, not a working budget. It is checked when a message is
+  sent, never by taking `message_bot` away: a bot whose request has run out is
+  refused in words, so it can tell the person, instead of quietly carrying on
+  as though it were still talking to its teammates.
 - A bot answering an ask can't message the bot that asked it: its answer is
   the reply.
 - Round timeout: 10 minutes on the server, 20 on the phone (runs wait in line

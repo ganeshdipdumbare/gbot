@@ -13,9 +13,14 @@ const (
 	// can't message anyone.
 	maxAskDepth = 2
 	// maxAsksPerRoot bounds the messages one request from the person can
-	// set off, wherever they happen in the chain.
-	maxAsksPerRoot = 6
+	// set off, wherever they happen in the chain. It is a runaway stop,
+	// not a working budget: a pair of bots going back and forth over a
+	// real task spends several on each turn.
+	maxAsksPerRoot = 12
 )
+
+// MaxAsksPerRequest is maxAsksPerRoot, for tests outside this package.
+const MaxAsksPerRequest = maxAsksPerRoot
 
 // canMessage reports whether a bot at depth may send another message,
 // given how many this request has already sent.
