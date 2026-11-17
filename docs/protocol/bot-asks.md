@@ -51,10 +51,15 @@ opening it shows what was sent. `reply` is kept for the sender's next prompt
 but is never drawn — the asking bot says what matters in its own chat when the
 answers come back (`joinPrompt` tells it so).
 
-`status` isn't drawn either. Every status past `sent` means the message
-arrived: `failed` is the receiving bot's *run* failing after it took the
-message, not a delivery failure, and its error already shows in that bot's own
-chat. A message that can't be handed over never makes a card at all.
+`status` isn't drawn either. It tracks the receiving bot's run, not the
+hand-over: both cards are written together the moment the message is passed on
+(a message that can't be handed over makes no card at all), so "Sent" and
+"Received" are true from the first paint and stay true. What `status` then
+records — `failed` for a run that errored or a reply the provider blocked,
+`expired` for an ask still waiting when the round timed out, `cancelled` for
+one stopped mid-run — is the answer's fate, which belongs to the bot that
+asked: it gets all of it in `joinPrompt` and says what matters in its own
+chat. A `failed` run also shows its error in the receiving bot's chat.
 
 ## Limits
 

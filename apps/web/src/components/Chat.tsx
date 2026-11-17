@@ -525,9 +525,10 @@ type ExchangeData = {
 // An answer is never folded back into it: the asking bot speaks it in its
 // own chat when it comes. Click to read the message.
 //
-// There is no failure line: a card exists only once the message has been
-// handed over, and "failed" is the receiving bot's run failing afterwards,
-// which shows as an error in that bot's own chat.
+// It shows no status: both cards are written when the message is handed
+// over, so "Sent" and "Received" hold from the first paint. What happens
+// to the answer after that — failed, expired, cancelled — is the asking
+// bot's business, and it says so in its own words.
 function Exchange({ m, enter }: { m: Message; enter: string }) {
   const [open, setOpen] = useState(false);
   const bots = useStore((s) => s.bots);
