@@ -90,7 +90,7 @@ class AsksTest {
         assertFalse(book.take("rt_1", 0))
         assertFalse("the deepest bot can't send", book.take("rt_2", MAX_ASK_DEPTH))
         book.call("rt_1"); book.call("rt_1")
-        assertTrue(book.traceLine("rt_1").contains("asks=6"))
+        assertTrue(book.traceLine("rt_1").contains("asks=$MAX_ASKS_PER_ROOT"))
         assertTrue(book.traceLine("rt_1").contains("calls=2"))
     }
 

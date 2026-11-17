@@ -1,9 +1,9 @@
 {
-  "limits": { "maxDepth": 2, "maxPerRoot": 6 },
+  "limits": { "maxDepth": 2, "maxPerRoot": 12 },
   "canMessage": [
     { "depth": 0, "sent": 0, "ok": true },
-    { "depth": 1, "sent": 5, "ok": true },
-    { "depth": 1, "sent": 6, "ok": false },
+    { "depth": 1, "sent": 11, "ok": true },
+    { "depth": 1, "sent": 12, "ok": false },
     { "depth": 2, "sent": 0, "ok": false },
     { "depth": 3, "sent": 0, "ok": false }
   ],
