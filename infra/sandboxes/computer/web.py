@@ -418,6 +418,15 @@ BANNER_DONE_JS = """el => {
   return false;
 }"""
 
+# Removes the done marks from the page and any open shadow roots.
+UNMARK_JS = """() => {
+  const walk = (root) => {
+    root.querySelectorAll('[data-gbot-done]').forEach((e) => e.removeAttribute('data-gbot-done'));
+    for (const e of root.querySelectorAll('*')) { if (e.shadowRoot) walk(e.shadowRoot); }
+  };
+  walk(document);
+}"""
+
 BANNER_MARK_JS = """el => {
   const overlay = (n) => {
     const s = getComputedStyle(n);
@@ -554,21 +563,39 @@ def dismiss_consent(page, retry=False):
     return ""
 
 
+def unmark_banners(page):
+    """Removes the data-gbot-done marks, in every frame and shadow root, so
+    the next step scans afresh. The marks only guard one pass of clicks."""
+    for frame in page.frames:
+        try:
+            frame.evaluate(UNMARK_JS)
+        except Exception:
+            pass
+
+
 def clear_banners(page, first_wait=0.0):
     """Clears cookie and consent banners until none is left, up to three
     clicks (sites often show a second one). first_wait gives a late banner
     time to appear after navigation. Every click is reported. Returns the
-    labels clicked."""
+    labels clicked.
+
+    Within this pass, a banner that was acted on is not clicked again, so
+    a reject never follows an accept. The marks are removed at the end, so
+    a banner that survives (a click the page swallowed, say) can still be
+    handled by a later step or by browser_cookies."""
     if first_wait:
         time.sleep(first_wait)
     labels = []
-    for i in range(3):
-        # Only the first pass waits for a late banner; later passes scan once,
-        # so a step with no banner costs one scan.
-        label = dismiss_consent(page, retry=(i == 0 and first_wait > 0))
-        if not label:
-            break
-        labels.append(label)
+    try:
+        for i in range(3):
+            # Only the first pass waits for a late banner; later passes scan
+            # once, so a step with no banner costs one scan.
+            label = dismiss_consent(page, retry=(i == 0 and first_wait > 0))
+            if not label:
+                break
+            labels.append(label)
+    finally:
+        unmark_banners(page)
     return labels
 
 

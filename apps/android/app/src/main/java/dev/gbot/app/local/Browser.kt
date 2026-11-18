@@ -117,12 +117,18 @@ class BrowserController(private val ctx: Context) {
     /**
      * Accepts cookie and consent banners so the window the person watches shows
      * the page. Up to three in a row, since sites often stack a second one.
+     * The "already acted on" marks only guard this pass; they are removed at
+     * the end, so a banner that survives can be handled by a later step.
      */
     private suspend fun clearBanners() {
-        repeat(3) {
-            val label = eval("window.__gbotBanners ? __gbotBanners() : ''")
-            if (label.isBlank()) return
-            kotlinx.coroutines.delay(400)
+        try {
+            repeat(3) {
+                val label = eval("window.__gbotBanners ? __gbotBanners() : ''")
+                if (label.isBlank()) return
+                kotlinx.coroutines.delay(400)
+            }
+        } finally {
+            eval("window.__gbotUnmark ? __gbotUnmark() : ''")
         }
     }
 
@@ -267,6 +273,16 @@ class BrowserController(private val ctx: Context) {
     }
     var body = document.body ? document.body.innerText : '';
     return JSON.stringify({title:document.title, url:location.href, text:String(body).replace(/\n{3,}/g,'\n\n').slice(0,6000), elements:out});
+  };
+  // Removes the data-gbot-done marks from the page and any open shadow roots.
+  window.__gbotUnmark = function(){
+    (function walk(root){
+      var marked = root.querySelectorAll('[data-gbot-done]');
+      for (var i = 0; i < marked.length; i++) marked[i].removeAttribute('data-gbot-done');
+      var all = root.querySelectorAll('*');
+      for (var j = 0; j < all.length; j++) if (all[j].shadowRoot) walk(all[j].shadowRoot);
+    })(document);
+    return '';
   };
   // Accepts a cookie or consent banner (reject or close only when nothing
   // accepts), so the page underneath is visible. Marketing copy is never clicked.
