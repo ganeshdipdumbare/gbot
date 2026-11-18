@@ -541,11 +541,11 @@ function Picture({ m, author, enter }: { m: Message; author?: Bot; enter: string
   );
 }
 
-// A list a tool handed back (hotels, products, places), drawn as cards
-// instead of a block of text. Every field comes from the tool's own data
+// A list the bot showed with show_results (hotels, products, places), drawn
+// as cards instead of a block of text. Every field is what the bot passed in,
 // as the server kept it: the link must be https, and the picture is one
 // gbot fetched and keeps (/api/blobs), so a card can't put anything on the
-// page that the tool didn't send.
+// page that the bot didn't send.
 type ResultItem = {
   title: string; subtitle?: string; image?: string; mime?: string;
   link?: string; fields?: { label: string; value: string }[];

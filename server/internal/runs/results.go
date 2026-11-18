@@ -1,25 +1,22 @@
 package runs
 
-// Result cards: when a tool hands back a list of records (hotels, products,
-// places), the chat shows them as cards. The model still reads the text of
-// the answer. The cards are a second view for the person, built only from
-// the structured data, so the model's prose can't invent a link or a picture
-// on the page: links must be https, and images are fetched by gbot and kept
-// as blobs, the same as tool pictures.
+// Result cards: when the bot has a list of things to compare (hotels,
+// products, places), it hands the list to show_results and the chat shows
+// them as cards. The bot's prose still says what matters. The cards are a
+// second view for the person, built only from what the bot passed in, so
+// a link is always https, and images are fetched by gbot and kept as blobs,
+// the same as tool pictures.
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"gbot/internal/netguard"
 	"gbot/internal/store"
@@ -49,11 +46,29 @@ type resultField struct {
 	Value string `json:"value"`
 }
 
-// resultSet is one tool answer that became cards, waiting for the chat.
+// resultSet is one list of cards, waiting for the chat.
 type resultSet struct {
-	From  string
 	Title string
 	Items []resultCard
+}
+
+// resultsIn is the list the bot hands over to be shown as cards.
+type resultsIn struct {
+	Title string       `json:"title,omitempty" desc:"a short heading for the list, e.g. 'Hotels in Darjeeling, 9-13 Dec'"`
+	Items []resultItem `json:"items" desc:"2 to 12 records, each taken from a tool answer you have read"`
+}
+
+type resultItem struct {
+	Title    string       `json:"title" desc:"the name of the thing"`
+	Subtitle string       `json:"subtitle,omitempty" desc:"a place, a date or a short description"`
+	Link     string       `json:"link,omitempty" desc:"an https page the person can open, exactly as a tool gave it"`
+	Image    string       `json:"image,omitempty" desc:"an https picture URL, exactly as a tool gave it"`
+	Fields   []resultLine `json:"fields,omitempty" desc:"up to 6 label and value lines, e.g. price, rating, dates"`
+}
+
+type resultLine struct {
+	Label string `json:"label" desc:"e.g. Price"`
+	Value string `json:"value" desc:"e.g. $33.50 a night"`
 }
 
 func (rc *runCtx) addResults(s resultSet) {
@@ -71,45 +86,77 @@ func (rc *runCtx) takeResults() []resultSet {
 	return out
 }
 
-// keepResults reads a tool's structured answer as a list of cards and keeps
-// it for the chat. It returns a line for the model when cards were kept, so
-// the model knows they are there, or "" when the answer is not a list.
-func (r *Runtime) keepResults(ctx context.Context, server string, raw []byte) string {
+// showResultsTool is the show_results tool the bot calls. It keeps the list
+// for the chat and returns a line for the model.
+func (r *Runtime) showResultsTool(ctx context.Context, in resultsIn) (string, error) {
 	rc := runFrom(ctx)
-	if rc == nil || len(raw) == 0 {
-		return ""
+	if rc == nil {
+		return "", errors.New("no run")
 	}
-	title, rows := resultRows(raw)
-	if len(rows) < 2 {
-		return ""
+	set, ok := resultSetFrom(in)
+	if !ok {
+		return "", errors.New("give at least two items, each with a title")
 	}
-	if len(rows) > maxResultCards {
-		rows = rows[:maxResultCards]
-	}
-	set := resultSet{From: server, Title: title}
-	for _, row := range rows {
-		if card, ok := cardFromRow(row); ok {
+	r.keepImages(ctx, rc, set.Items)
+	rc.addResults(set)
+	return fmt.Sprintf("Shown %d results as cards in the chat, where you are answering. The person can see them. Summarize what matters; don't list every row again.", len(set.Items)), nil
+}
+
+// resultSetFrom checks and caps what the bot passed in. It needs at least
+// two cards with a title, so one item is just a sentence, not a list.
+func resultSetFrom(in resultsIn) (resultSet, bool) {
+	set := resultSet{Title: clipText(in.Title)}
+	for i, it := range in.Items {
+		if i == maxResultCards {
+			break
+		}
+		if card, ok := cardFromItem(it); ok {
 			set.Items = append(set.Items, card)
 		}
 	}
-	// Thumbnails are fetched side by side, so one slow host can't hold the
-	// tool answer for the sum of all of them.
+	return set, len(set.Items) >= 2
+}
+
+// cardFromItem maps one item to a card. Unsafe links and images are dropped
+// rather than failing the whole list.
+func cardFromItem(it resultItem) (resultCard, bool) {
+	title := clipText(it.Title)
+	if title == "" {
+		return resultCard{}, false
+	}
+	card := resultCard{
+		Title:    title,
+		Subtitle: clipText(it.Subtitle),
+		Link:     safeLink(it.Link),
+		imageSrc: safeLink(it.Image),
+	}
+	for _, f := range it.Fields {
+		if len(card.Fields) == maxResultFields {
+			break
+		}
+		label, value := clipText(f.Label), clipText(f.Value)
+		if label == "" || value == "" {
+			continue
+		}
+		card.Fields = append(card.Fields, resultField{Label: label, Value: value})
+	}
+	return card, true
+}
+
+// keepImages fetches the card thumbnails side by side, so one slow host
+// can't hold the answer for the sum of all of them.
+func (r *Runtime) keepImages(ctx context.Context, rc *runCtx, cards []resultCard) {
 	var wg sync.WaitGroup
-	for i := range set.Items {
-		if src := set.Items[i].imageSrc; src != "" {
+	for i := range cards {
+		if src := cards[i].imageSrc; src != "" {
 			wg.Add(1)
 			go func(c *resultCard) {
 				defer wg.Done()
 				c.Image, c.Mime = r.keepImage(ctx, rc, src)
-			}(&set.Items[i])
+			}(&cards[i])
 		}
 	}
 	wg.Wait()
-	if len(set.Items) < 2 {
-		return ""
-	}
-	rc.addResults(set)
-	return fmt.Sprintf("[%d results from %s are in the chat as cards, where you are answering. The person can see them. Summarize what matters; don't list every row again.]", len(set.Items), server)
 }
 
 // keepImage fetches a remote thumbnail through the guarded client and keeps
@@ -150,103 +197,10 @@ func (r *Runtime) keepImage(ctx context.Context, rc *runCtx, src string) (string
 	return id, mime
 }
 
-// resultRows finds the list of records in a structured answer: the answer
-// itself when it is a list, or the first list of records in an object.
-func resultRows(raw []byte) (string, []map[string]any) {
-	var v any
-	if json.Unmarshal(raw, &v) != nil {
-		return "", nil
-	}
-	switch t := v.(type) {
-	case []any:
-		return "", objectsOf(t)
-	case map[string]any:
-		title, _ := t["title"].(string)
-		keys := make([]string, 0, len(t))
-		for k := range t {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if arr, ok := t[k].([]any); ok {
-				if rows := objectsOf(arr); len(rows) > 0 {
-					return clipText(title), rows
-				}
-			}
-		}
-	}
-	return "", nil
-}
-
-func objectsOf(a []any) []map[string]any {
-	var out []map[string]any
-	for _, x := range a {
-		if m, ok := x.(map[string]any); ok {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
-var (
-	titleKeys    = []string{"title", "name", "label"}
-	subtitleKeys = []string{"subtitle", "location", "address", "city", "description", "summary"}
-	linkKeys     = []string{"url", "link", "href"}
-	imageKeys    = []string{"image", "image_url", "imageUrl", "thumbnail", "thumbnail_url", "photo", "picture"}
-)
-
-// cardFromRow maps one record to a card. A record needs a title; every
-// other field is optional. The fields not used elsewhere become label and
-// value lines, in key order, up to a fixed count.
-func cardFromRow(row map[string]any) (resultCard, bool) {
-	used := map[string]bool{}
-	pick := func(keys ...string) string {
-		for _, k := range keys {
-			if s := scalarText(row[k]); s != "" {
-				used[k] = true
-				return s
-			}
-		}
-		return ""
-	}
-	title := pick(titleKeys...)
-	if title == "" {
-		return resultCard{}, false
-	}
-	card := resultCard{Title: clipText(title), Subtitle: clipText(pick(subtitleKeys...))}
-	for _, k := range linkKeys {
-		if link := safeLink(scalarText(row[k])); link != "" {
-			card.Link = link
-			used[k] = true
-			break
-		}
-	}
-	for _, k := range imageKeys {
-		if src := safeLink(scalarText(row[k])); src != "" {
-			card.imageSrc = src
-			used[k] = true
-			break
-		}
-	}
-	keys := make([]string, 0, len(row))
-	for k := range row {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if used[k] || len(card.Fields) == maxResultFields {
-			continue
-		}
-		if val := scalarText(row[k]); val != "" {
-			card.Fields = append(card.Fields, resultField{Label: humanize(k), Value: clipText(val)})
-		}
-	}
-	return card, true
-}
-
 // safeLink returns s if it is an absolute https URL, or "" otherwise. A
 // javascript:, data: or plain http link is never shown.
 func safeLink(s string) string {
+	s = strings.TrimSpace(s)
 	if s == "" || len(s) > maxResultLink {
 		return ""
 	}
@@ -257,35 +211,7 @@ func safeLink(s string) string {
 	return u.String()
 }
 
-// scalarText is a value as a short line of text. Nested objects and lists
-// and empty values give "".
-func scalarText(v any) string {
-	switch t := v.(type) {
-	case string:
-		return strings.TrimSpace(t)
-	case float64:
-		return strconv.FormatFloat(t, 'f', -1, 64)
-	case bool:
-		if t {
-			return "yes"
-		}
-		return "no"
-	}
-	return ""
-}
-
-// humanize turns a key like price_per_night into "Price per night".
-func humanize(k string) string {
-	s := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(k, "_", " "), "-", " "))
-	r := []rune(s)
-	if len(r) == 0 {
-		return k
-	}
-	r[0] = unicode.ToUpper(r[0])
-	return string(r)
-}
-
-// clip shortens a line to a fixed length, on a rune boundary.
+// clipText shortens a line to a fixed length, on a rune boundary.
 func clipText(s string) string {
 	s = strings.TrimSpace(s)
 	r := []rune(s)
@@ -302,17 +228,13 @@ func (r *Runtime) showResults(ctx context.Context, c convo, b *store.Bot, rc *ru
 		return
 	}
 	for _, set := range rc.takeResults() {
-		from := set.From
-		if from == "" {
-			from = "a tool"
-		}
 		title := set.Title
 		if title == "" {
-			title = "Results from " + from
+			title = "Results"
 		}
 		m := &store.Message{BotID: b.ID, GroupID: c.GroupID, ChatUser: c.User, Role: "event",
 			Content: title,
-			Data:    map[string]any{"kind": "results", "from": from, "title": title, "items": set.Items}}
+			Data:    map[string]any{"kind": "results", "title": title, "items": set.Items}}
 		if err := r.store.AddMessage(ctx, m, nil); err != nil {
 			r.log.Error("show results", "err", err)
 			continue

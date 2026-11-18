@@ -198,6 +198,13 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 			return clip(sb.String(), 8000), nil
 		}))
 
+	// A list to compare (hotels, products, places) is shown as cards. The
+	// bot picks the list; a tool's answer is never turned into cards by itself.
+	tools = append(tools, kritrim.NewTool("show_results", "Show a list of 2 to 12 things to compare as cards in the chat, e.g. hotels, products or places. Use it when the person would scan the list better than read it. Each item comes from a tool answer you have read; links and pictures must be https addresses from that answer. Then reply in prose about what matters.",
+		func(ctx context.Context, in resultsIn) (string, error) {
+			return r.showResultsTool(ctx, in)
+		}))
+
 	// The intent contract and its independent check. The contract is an
 	// approval card: the person signs off on what "done" means before the
 	// work starts. task_verify judges the run's evidence, not the answer.
@@ -792,6 +799,7 @@ var toolLabels = map[string]string{
 	"vault_type":          "Using a saved secret",
 	"task_contract":       "Agreeing on the plan",
 	"task_verify":         "Checking the work",
+	"show_results":        "Showing results as cards",
 	"message_bot":         "Talking to a teammate",
 	"ask_user":            "Has a question",
 	"request_takeover":    "Needs you on its computer",

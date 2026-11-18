@@ -43,10 +43,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
 /**
- * A list a tool handed back (hotels, products, places), drawn as cards
- * instead of a block of text. It mirrors the web card: every field is what
- * the server kept from the tool's data, the link is https only, and the
- * picture is one gbot fetched and stores as a blob.
+ * A list the bot showed with show_results (hotels, products, places), drawn
+ * as cards instead of a block of text. It mirrors the web card: every field
+ * is what the bot passed in, the link is https only, and the picture is one
+ * gbot fetched and stores as a blob.
  */
 @Composable
 fun ResultsRow(m: Message, author: Bot?) {
