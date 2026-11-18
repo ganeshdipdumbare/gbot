@@ -109,7 +109,30 @@ class BrowserController(private val ctx: Context) {
         error.value?.let { e ->
             return """{"ok":false,"url":"${json(target)}","error":"${json(e)}"}"""
         }
+        // Banners often arrive a moment after the page; give them time to show.
+        kotlinx.coroutines.delay(1000)
         return snapshot()
+    }
+
+    /**
+     * Accepts cookie and consent banners so the window the person watches shows
+     * the page. Up to three in a row, since sites often stack a second one.
+     * The "already acted on" marks only guard this pass; they are removed at
+     * the end, so a banner that survives can be handled by a later step.
+     */
+    private suspend fun clearBanners() {
+        var clicked = false
+        try {
+            repeat(3) {
+                val label = eval("window.__gbotBanners ? __gbotBanners() : ''")
+                if (label.isBlank()) return
+                clicked = true
+                kotlinx.coroutines.delay(400)
+            }
+        } finally {
+            // Marks are only set by a click, so a step with no clicks skips the page walk.
+            if (clicked) eval("window.__gbotUnmark ? __gbotUnmark() : ''")
+        }
     }
 
     suspend fun back(): String {
@@ -162,6 +185,7 @@ class BrowserController(private val ctx: Context) {
         if (url.value.isBlank() && !loading.value) {
             return """{"ok":false,"url":"","error":"Nothing is open in the browser yet. Use browser_open with a web address first."}"""
         }
+        clearBanners()
         val raw = eval("window.__gbotSnap ? __gbotSnap() : ''")
         return raw.ifBlank { """{"url":"${json(url.value)}","text":"the page has not finished loading","elements":[]}""" }
     }
@@ -252,6 +276,102 @@ class BrowserController(private val ctx: Context) {
     }
     var body = document.body ? document.body.innerText : '';
     return JSON.stringify({title:document.title, url:location.href, text:String(body).replace(/\n{3,}/g,'\n\n').slice(0,6000), elements:out});
+  };
+  // Removes the data-gbot-done marks from the page and any open shadow roots.
+  window.__gbotUnmark = function(){
+    (function walk(root){
+      var marked = root.querySelectorAll('[data-gbot-done]');
+      for (var i = 0; i < marked.length; i++) marked[i].removeAttribute('data-gbot-done');
+      var all = root.querySelectorAll('*');
+      for (var j = 0; j < all.length; j++) if (all[j].shadowRoot) walk(all[j].shadowRoot);
+    })(document);
+    return '';
+  };
+  // Accepts a cookie or consent banner (reject or close only when nothing
+  // accepts), so the page underneath is visible. Marketing copy is never clicked.
+  window.__gbotBanners = function(){
+    // Accept only whole cookie-accept labels, and only in a banner that says
+    // "cookie". Substring matches would press "Disagree" or "OK" on a terms
+    // or confirm dialog, which agrees for the person.
+    var ACCEPT = ['accept', 'accept all', 'accept cookies', 'accept all cookies', 'allow', 'allow all', 'allow cookies', 'allow all cookies', 'got it'];
+    // Once a control in a banner is clicked, the banner's container is marked
+    // data-gbot-done. Later passes leave every control in a marked banner alone.
+    function doneBanner(el){
+      var n = el;
+      while (n) {
+        if (n.nodeType === 1 && n.hasAttribute('data-gbot-done')) return true;
+        n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+      }
+      return false;
+    }
+    function markBanner(el){
+      var n = el;
+      while (n) {
+        if (n.nodeType === 1 && overlay(n)) { n.setAttribute('data-gbot-done', '1'); return; }
+        n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+      }
+      el.setAttribute('data-gbot-done', '1');
+    }
+    var LEAST = /(reject|decline|deny|refuse|only necessary|necessary only|essential only|use necessary|continue without)/i;
+    var CLOSE = /(close|dismiss|×|✕)/i;
+    var MARKET = /(subscribe|subscription|donate|donation|support us|membership|newsletter|offer|deal|trial|shop|buy|upgrade|premium)/i;
+    function overlay(n){
+      var s = getComputedStyle(n);
+      return s.position === 'fixed' || s.position === 'sticky' || n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG';
+    }
+    // The keyword ("cookie", "consent" or "privacy") of the banner around el, or ''.
+    function keywordOf(el){
+      var n = el;
+      while (n) {
+        if (n.nodeType === 1 && overlay(n)) {
+          var t = (n.innerText || '').toLowerCase();
+          if (t.indexOf('cookie') >= 0) return 'cookie';
+          if (t.indexOf('consent') >= 0 || t.indexOf('privacy') >= 0) return 'consent';
+        }
+        n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+      }
+      return '';
+    }
+    var cands = [];
+    var btns = document.querySelectorAll('button,[role=button],input[type=button],input[type=submit],input[type=reset]');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      var r = b.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      // A banner already acted on is left alone, so a reject or close in the
+      // same banner is not clicked after its accept.
+      if (doneBanner(b)) continue;
+      // A submit or reset control, or one inside a form, can send the form.
+      // type="button" never submits, so it is always safe to click.
+      var type = (b.getAttribute('type') || '').toLowerCase();
+      if (type === 'submit' || type === 'reset') continue;
+      if (type !== 'button' && b.closest('form')) continue;
+      var t = String(b.innerText || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 80 || MARKET.test(t)) continue;
+      if (b.closest('a[href]')) continue;
+      // Automatic clicks only touch cookie banners. A privacy or consent prompt
+      // without the word "cookie" is left for the person.
+      var kw = keywordOf(b);
+      if (kw !== 'cookie') continue;
+      cands.push({el: b, label: t, kw: kw});
+    }
+    function firstAccept(){
+      for (var k = 0; k < cands.length; k++) {
+        var c = cands[k];
+        var label = c.label.toLowerCase().replace(/[.!]+/g, '').trim();
+        if (c.kw === 'cookie' && ACCEPT.indexOf(label) >= 0) return c;
+      }
+      return null;
+    }
+    function first(re){
+      for (var k = 0; k < cands.length; k++) if (re.test(cands[k].label)) return cands[k];
+      return null;
+    }
+    var pick = firstAccept() || first(LEAST) || first(CLOSE);
+    if (!pick) return '';
+    pick.el.click();
+    markBanner(pick.el);
+    return pick.label;
   };
   window.__gbotClick = function(id){
     var el = document.querySelector('[data-gbot="'+id+'"]');
