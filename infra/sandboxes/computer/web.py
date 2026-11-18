@@ -101,9 +101,10 @@ SNAPSHOT_JS = r"""(start) => {
         if (s.position === 'fixed' || s.position === 'sticky' ||
             n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG') {
           const t = (n.innerText || '').toLowerCase();
-          // "cookie" only, the same rule that lets the bot accept a banner.
-          // A terms or privacy dialog is not flagged as a banner to dismiss.
-          if (t.includes('cookie')) return true;
+          // Flag consent and privacy prompts too, so the model knows one is in
+          // the way. The hint tells it to ask before agreeing to anything that
+          // isn't a cookie banner.
+          if (t.includes('cookie') || t.includes('consent') || t.includes('privacy')) return true;
         }
       }
       n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
@@ -438,7 +439,6 @@ def consent_candidates(page):
     """Visible buttons and links that look like cookie or consent controls,
     across the page and any of its frames."""
     found = []
-    seen = set()
     for frame in page.frames:
         for role in ("button",):
             try:
@@ -461,21 +461,21 @@ def consent_candidates(page):
                 # not el.type: a button with no type attribute reports "submit"
                 # there, which would exclude nearly every banner button.
                 try:
-                    plain = loc.evaluate("el => { const t = (el.getAttribute('type') || '').toLowerCase(); return el.tagName === 'BUTTON' && t !== 'submit' && !el.hasAttribute('href') && (t === 'button' || !el.closest('form')); }")
+                    # data-gbot-clicked marks a control already clicked, so a
+                    # banner that stays put is not clicked again.
+                    plain = loc.evaluate("el => { const t = (el.getAttribute('type') || '').toLowerCase(); return el.tagName === 'BUTTON' && !el.hasAttribute('data-gbot-clicked') && t !== 'submit' && !el.hasAttribute('href') && (t === 'button' || !el.closest('form')); }")
                 except Exception:
                     plain = False
                 if not plain:
                     continue
-                key = label.lower()
-                if key in seen:
-                    continue
                 # Only controls inside a cookie/consent overlay count, so a
                 # marketing link like "Reject all and subscribe" or a
                 # footer "Cookie policy" is never mistaken for a banner.
+                # Not de-duplicated by label: stacked layers can each offer
+                # "Accept all", and each must be reachable.
                 keyword = cookie_overlay(loc)
                 if not keyword:
                     continue
-                seen.add(key)
                 found.append((loc, label, keyword))
     return found
 
@@ -483,7 +483,9 @@ def consent_candidates(page):
 def dismiss_consent(page, retry=False):
     """Clicks the accept option of a cookie prompt if one is showing, else
     its reject or close option. retry waits briefly for a banner that is
-    still loading. Returns the label clicked, or an empty string."""
+    still loading. A control that cannot be clicked (covered by a layer
+    above it) is passed over for the next. Returns the label clicked, or
+    an empty string."""
     candidates = []
     for attempt in range(2 if retry else 1):
         candidates = consent_candidates(page)
@@ -498,22 +500,30 @@ def dismiss_consent(page, retry=False):
     accept = [c for c in candidates if c[2] == "cookie" and ACCEPT.match(c[1].strip(" .!"))]
     least = [c for c in candidates if LEAST.search(c[1])]
     close = [c for c in candidates if CLOSE.search(c[1])]
-    if not (accept or least or close):
-        return ""
-    loc, label = (accept or least or close)[0][:2]
-    try:
-        # Pin the node before clicking, so the click cannot land elsewhere.
-        loc.element_handle(timeout=500).click(timeout=ACTION_TIMEOUT)
-    except Exception:
-        return ""
-    settle(page)
-    return label
+    for loc, label, _ in accept + least + close:
+        try:
+            # Pin the node before clicking, so the click cannot land elsewhere.
+            handle = loc.element_handle(timeout=500)
+            handle.click(timeout=1500)
+        except Exception:
+            continue
+        # Mark the node so a later pass does not click it again if the banner
+        # is still there. The mark is on the element, so two stacked layers
+        # with identical buttons are still two different controls.
+        try:
+            handle.evaluate("e => e.setAttribute('data-gbot-clicked', '1')")
+        except Exception:
+            pass
+        settle(page)
+        return label
+    return ""
 
 
 def clear_banners(page, first_wait=0.0):
-    """Clears cookie and consent banners until none is left, up to three in a
-    row (sites often show a second one). first_wait gives a late banner time
-    to appear after navigation. Returns the labels clicked."""
+    """Clears cookie and consent banners until none is left, up to three
+    clicks (sites often show a second one). first_wait gives a late banner
+    time to appear after navigation. Every click is reported. Returns the
+    labels clicked."""
     if first_wait:
         time.sleep(first_wait)
     labels = []
@@ -521,9 +531,7 @@ def clear_banners(page, first_wait=0.0):
         # Only the first pass waits for a late banner; later passes scan once,
         # so a step with no banner costs one scan.
         label = dismiss_consent(page, retry=(i == 0 and first_wait > 0))
-        # A label that comes back means the click did not remove the banner;
-        # stop rather than click the same control again.
-        if not label or label in labels:
+        if not label:
             break
         labels.append(label)
     return labels
@@ -769,7 +777,7 @@ def cmd_snapshot(page):
     if seen >= 3:
         lines.append(f"The page looks unchanged after {seen} snapshots. Don't repeat the same click: scroll, go back, wait, or try another element.")
     if data["consentCount"]:
-        lines.append(f"{data['consentCount']} cookie/consent control(s) are marked; dismiss them before using the page.")
+        lines.append(f"{data['consentCount']} cookie/consent control(s) are marked. Dismiss a cookie prompt before using the page. For any other consent or terms prompt, ask the person before agreeing to or rejecting it.")
     if data["items"]:
         lines.append("Elements (use these numbers with browser_click and browser_type):")
         lines += [describe_item(i) for i in data["items"]]

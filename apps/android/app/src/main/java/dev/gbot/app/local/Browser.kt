@@ -301,6 +301,8 @@ class BrowserController(private val ctx: Context) {
       var b = btns[i];
       var r = b.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) continue;
+      // Already clicked and still here: do not click it again.
+      if (b.hasAttribute('data-gbot-clicked')) continue;
       // A submit or reset control, or one inside a form, can send the form.
       // type="button" never submits, so it is always safe to click.
       var type = (b.getAttribute('type') || '').toLowerCase();
@@ -328,6 +330,7 @@ class BrowserController(private val ctx: Context) {
     var pick = firstAccept() || first(LEAST) || first(CLOSE);
     if (!pick) return '';
     pick.el.click();
+    pick.el.setAttribute('data-gbot-clicked', '1');
     return pick.label;
   };
   window.__gbotClick = function(id){
