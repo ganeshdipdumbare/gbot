@@ -342,7 +342,7 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 					}
 					return r.computer.WebSnapshot(ctx, comp)
 				}),
-			kritrim.Risky(kritrim.NewTool("browser_cookies", "Dismiss a cookie or consent prompt so you can keep browsing. Prefers the least-permissive option (Reject all, Necessary only), then accepts if that's all there is. browser_snapshot also does this automatically; call it when a prompt appears after a click.",
+			kritrim.Risky(kritrim.NewTool("browser_cookies", "Dismiss a cookie or consent prompt so you can keep browsing. Accepts the prompt (Accept all, Allow all), or rejects or closes it when no accept option is offered. Banners are already cleared after each browser step; call this if one is still showing.",
 				func(ctx context.Context, _ struct{}) (string, error) {
 					if err := ensure(ctx); err != nil {
 						return "", err

@@ -47,7 +47,10 @@ STATE = "/tmp/gbot/web-last.json"
 CONSENT = re.compile(
     r"(cookie|consent|privacy|accept|agree|allow|reject|decline|deny|refuse|"
     r"necessary|essential|got it|okay|\bok\b|continue|close|dismiss)", re.I)
-ACCEPT = re.compile(r"(accept|agree|allow all|allow cookies|got it|\bok\b)", re.I)
+# Accept only when the whole label is a cookie-accept phrase. Substring
+# matching would press "Disagree", "I don't accept" or a bare "OK" on a
+# terms or confirm dialog, which is agreeing for the person.
+ACCEPT = re.compile(r"^(accept( all)?( cookies?)?|allow( all)?( cookies?)?|got it)$", re.I)
 LEAST = re.compile(
     r"(reject|decline|deny|refuse|only necessary|necessary only|essential only|"
     r"use necessary|continue without)", re.I)
@@ -98,7 +101,9 @@ SNAPSHOT_JS = r"""(start) => {
         if (s.position === 'fixed' || s.position === 'sticky' ||
             n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG') {
           const t = (n.innerText || '').toLowerCase();
-          if (t.includes('cookie') || t.includes('consent') || t.includes('privacy')) return true;
+          // "cookie" only, the same rule that lets the bot accept a banner.
+          // A terms or privacy dialog is not flagged as a banner to dismiss.
+          if (t.includes('cookie')) return true;
         }
       }
       n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
@@ -401,32 +406,32 @@ def describe_item(i):
 
 
 def cookie_overlay(loc):
-    """True when the element sits in a banner, dialog or sticky overlay
-    that talks about cookies or consent. Article text, footer policy
-    links and marketing promos don't qualify."""
+    """The keyword ("cookie", "consent" or "privacy") of the banner, dialog
+    or sticky overlay the element sits in, or "" if there is none. Article
+    text, footer policy links and marketing promos don't qualify."""
     try:
-        return bool(loc.evaluate("""el => {
+        return loc.evaluate("""el => {
           const overlay = (n) => {
             const s = getComputedStyle(n);
             return s.position === 'fixed' || s.position === 'sticky' ||
               n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG';
           };
-          const mentions = (n) => {
+          const keyword = (n) => {
             const t = (n.innerText || '').toLowerCase();
-            return t.includes('cookie') || t.includes('consent') || t.includes('privacy');
+            return ['cookie', 'consent', 'privacy'].find((k) => t.includes(k)) || '';
           };
           let n = el;
           while (n) {
-            if (overlay(n) && mentions(n)) return true;
+            if (overlay(n) && keyword(n)) return keyword(n);
             if (n.parentElement) { n = n.parentElement; continue; }
             // Cross open shadow roots, where web-component banners live.
             const root = n.getRootNode ? n.getRootNode() : null;
             n = root && root.host ? root.host : null;
           }
-          return false;
-        }"""))
+          return '';
+        }""") or ""
     except Exception:
-        return False
+        return ""
 
 
 def consent_candidates(page):
@@ -467,33 +472,35 @@ def consent_candidates(page):
                 # Only controls inside a cookie/consent overlay count, so a
                 # marketing link like "Reject all and subscribe" or a
                 # footer "Cookie policy" is never mistaken for a banner.
-                if not cookie_overlay(loc):
+                keyword = cookie_overlay(loc)
+                if not keyword:
                     continue
                 seen.add(key)
-                found.append((loc, label))
+                found.append((loc, label, keyword))
     return found
 
 
-def dismiss_consent(page):
+def dismiss_consent(page, retry=False):
     """Clicks the accept option of a cookie prompt if one is showing, else
-    its reject or close option. Returns the label clicked, or an empty string."""
+    its reject or close option. retry waits briefly for a banner that is
+    still loading. Returns the label clicked, or an empty string."""
     candidates = []
-    # Consent scripts often run a moment after the page settles.
-    for _ in range(2):
+    for attempt in range(2 if retry else 1):
         candidates = consent_candidates(page)
         if candidates:
             break
-        time.sleep(0.25)
+        if attempt == 0 and retry:
+            time.sleep(0.25)
     if not candidates:
         return ""
-    # Only controls inside a cookie/consent overlay reach here (see
-    # consent_candidates). Accept is tried first; reject or close is the fallback.
-    accept = [c for c in candidates if ACCEPT.search(c[1])]
+    # Accept needs the word "cookie" in the banner, so a terms or privacy
+    # dialog never gets agreed to. Reject or close is the fallback.
+    accept = [c for c in candidates if c[2] == "cookie" and ACCEPT.match(c[1].strip(" .!"))]
     least = [c for c in candidates if LEAST.search(c[1])]
     close = [c for c in candidates if CLOSE.search(c[1])]
     if not (accept or least or close):
         return ""
-    loc, label = (accept or least or close)[0]
+    loc, label = (accept or least or close)[0][:2]
     try:
         # Pin the node before clicking, so the click cannot land elsewhere.
         loc.element_handle(timeout=500).click(timeout=ACTION_TIMEOUT)
@@ -510,19 +517,27 @@ def clear_banners(page, first_wait=0.0):
     if first_wait:
         time.sleep(first_wait)
     labels = []
-    for _ in range(3):
-        label = dismiss_consent(page)
-        if not label:
+    for i in range(3):
+        # Only the first pass waits for a late banner; later passes scan once,
+        # so a step with no banner costs one scan.
+        label = dismiss_consent(page, retry=(i == 0 and first_wait > 0))
+        # A label that comes back means the click did not remove the banner;
+        # stop rather than click the same control again.
+        if not label or label in labels:
             break
         labels.append(label)
     return labels
+
+
+def labels_text(labels):
+    return ", then ".join(f'"{l}"' for l in labels)
 
 
 def banner_note(labels):
     """What was clicked, for the step's output, so the model knows the page changed."""
     if not labels:
         return ""
-    return " Cleared a cookie banner by clicking " + ", then ".join(f'"{l}"' for l in labels) + "."
+    return f" Cleared a cookie banner by clicking {labels_text(labels)}."
 
 
 def cmd_cookies(page):
@@ -530,7 +545,7 @@ def cmd_cookies(page):
     labels = clear_banners(page)
     guard_context(ctx_of(page))
     if labels:
-        print(f'Dismissed the cookie prompt by clicking "{labels[0]}". Now on {shown(page.url)} ({page.title()}).')
+        print(f'Dismissed the cookie prompt by clicking {labels_text(labels)}. Now on {shown(page.url)} ({page.title()}).')
     else:
         print("No cookie or consent prompt is showing.")
     print(source_line(page))
@@ -747,7 +762,7 @@ def cmd_snapshot(page):
         f"URL: {shown(data['url'])}",
     ]
     if cleared:
-        lines.append(f'Cleared a cookie banner by clicking "{cleared[0]}", so you can keep browsing.')
+        lines.append(f"Cleared a cookie banner by clicking {labels_text(cleared)}, so you can keep browsing.")
     s = data["scroll"]
     place = "top" if s["atTop"] else "bottom" if s["atBottom"] else f"{s['y']} of {s['height']}"
     lines.append(f"Scroll: {place} (viewport {s['viewport']}px).")

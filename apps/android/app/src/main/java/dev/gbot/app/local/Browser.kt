@@ -271,7 +271,10 @@ class BrowserController(private val ctx: Context) {
   // Accepts a cookie or consent banner (reject or close only when nothing
   // accepts), so the page underneath is visible. Marketing copy is never clicked.
   window.__gbotBanners = function(){
-    var ACCEPT = /(accept|agree|allow all|allow cookies|got it|\bok\b)/i;
+    // Accept only whole cookie-accept labels, and only in a banner that says
+    // "cookie". Substring matches would press "Disagree" or "OK" on a terms
+    // or confirm dialog, which agrees for the person.
+    var ACCEPT = ['accept', 'accept all', 'accept cookies', 'accept all cookies', 'allow', 'allow all', 'allow cookies', 'allow all cookies', 'got it'];
     var LEAST = /(reject|decline|deny|refuse|only necessary|necessary only|essential only|use necessary|continue without)/i;
     var CLOSE = /(close|dismiss|×|✕)/i;
     var MARKET = /(subscribe|subscription|donate|donation|support us|membership|newsletter|offer|deal|trial|shop|buy|upgrade|premium)/i;
@@ -279,30 +282,50 @@ class BrowserController(private val ctx: Context) {
       var s = getComputedStyle(n);
       return s.position === 'fixed' || s.position === 'sticky' || n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG';
     }
-    function inBanner(el){
+    // The keyword ("cookie", "consent" or "privacy") of the banner around el, or ''.
+    function keywordOf(el){
       var n = el;
       while (n) {
         if (n.nodeType === 1 && overlay(n)) {
           var t = (n.innerText || '').toLowerCase();
-          if (t.indexOf('cookie') >= 0 || t.indexOf('consent') >= 0 || t.indexOf('privacy') >= 0) return true;
+          if (t.indexOf('cookie') >= 0) return 'cookie';
+          if (t.indexOf('consent') >= 0 || t.indexOf('privacy') >= 0) return 'consent';
         }
         n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
       }
-      return false;
+      return '';
     }
     var cands = [];
-    var btns = document.querySelectorAll('button,[role=button],input[type=button],input[type=submit]');
+    var btns = document.querySelectorAll('button,[role=button],input[type=button],input[type=submit],input[type=reset]');
     for (var i = 0; i < btns.length; i++) {
       var b = btns[i];
       var r = b.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) continue;
+      // A submit or reset control, or one inside a form, can send the form.
+      // type="button" never submits, so it is always safe to click.
+      var type = (b.getAttribute('type') || '').toLowerCase();
+      if (type === 'submit' || type === 'reset') continue;
+      if (type !== 'button' && b.closest('form')) continue;
       var t = String(b.innerText || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
       if (!t || t.length > 80 || MARKET.test(t)) continue;
-      if (b.closest('a[href]') || !inBanner(b)) continue;
-      cands.push({el: b, label: t});
+      if (b.closest('a[href]')) continue;
+      var kw = keywordOf(b);
+      if (!kw) continue;
+      cands.push({el: b, label: t, kw: kw});
     }
-    function first(re){ for (var k = 0; k < cands.length; k++) if (re.test(cands[k].label)) return cands[k]; return null; }
-    var pick = first(ACCEPT) || first(LEAST) || first(CLOSE);
+    function firstAccept(){
+      for (var k = 0; k < cands.length; k++) {
+        var c = cands[k];
+        var label = c.label.toLowerCase().replace(/[.!]+/g, '').trim();
+        if (c.kw === 'cookie' && ACCEPT.indexOf(label) >= 0) return c;
+      }
+      return null;
+    }
+    function first(re){
+      for (var k = 0; k < cands.length; k++) if (re.test(cands[k].label)) return cands[k];
+      return null;
+    }
+    var pick = firstAccept() || first(LEAST) || first(CLOSE);
     if (!pick) return '';
     pick.el.click();
     return pick.label;
