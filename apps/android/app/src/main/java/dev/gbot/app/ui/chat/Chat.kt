@@ -339,6 +339,7 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
                         r.round?.isEmpty() == true -> Unit
                         r.round != null -> RoundCard(r.round, s.bots)
                         m.role == "event" && m.kind == "picture" -> PictureRow(m, author)
+                        m.role == "event" && m.kind == "results" -> ResultsRow(m, author)
                         m.role == "event" && m.kind == "botmsg" -> Exchange(m, s.bots)
                         m.role == "event" && m.kind == "browser" -> EventLine(m, author, onWatch)
                         m.role == "event" -> EventLine(m, author)

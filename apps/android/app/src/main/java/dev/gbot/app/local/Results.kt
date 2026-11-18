@@ -1,0 +1,158 @@
+package dev.gbot.app.local
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.put
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.File
+import java.net.URI
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+
+/**
+ * The phone's copy of the server's result cards (server/internal/runs/
+ * results.go): when a tool hands back a list of records, the chat shows
+ * them as cards. The same rules apply here: a record needs a title, links
+ * must be https, and a picture is fetched and kept on the phone, never
+ * shown from a site the tool named.
+ */
+class LocalResults(
+    private val dir: File,
+    private val http: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build(),
+) {
+    /** A set of cards, or null when the answer is not a list of records. */
+    data class ResultSet(val title: String, val items: JsonArray)
+
+    fun build(raw: String): ResultSet? {
+        val (title, found) = rows(raw)
+        if (found.size < 2) return null
+        val cards = found.take(MAX_CARDS).mapNotNull { card(it) }
+        if (cards.size < 2) return null
+        return ResultSet(title, buildJsonArray { cards.forEach { add(it) } })
+    }
+
+    /** The list of records in a structured answer, and its title. */
+    internal fun rows(raw: String): Pair<String, List<JsonObject>> {
+        val el = runCatching { Json.parseToJsonElement(raw) }.getOrNull() ?: return "" to emptyList()
+        return when (el) {
+            is JsonArray -> "" to objects(el)
+            is JsonObject -> {
+                val title = clip(text(el, "title").orEmpty())
+                for (k in el.keys.sorted()) {
+                    val arr = el[k] as? JsonArray ?: continue
+                    val found = objects(arr)
+                    if (found.isNotEmpty()) return title to found
+                }
+                "" to emptyList()
+            }
+            else -> "" to emptyList()
+        }
+    }
+
+    /** One record as a card, or null when it has no title. */
+    internal fun card(row: JsonObject): JsonObject? {
+        val used = mutableSetOf<String>()
+        fun pick(vararg keys: String): String? = keys.firstNotNullOfOrNull { k ->
+            scalar(row[k])?.also { used += k }
+        }
+        val title = pick(*TITLE) ?: return null
+        val subtitle = pick(*SUBTITLE)
+        val link = firstHttps(row, LINK, used)
+        val image = firstHttps(row, IMAGE, used)
+        val kept = image?.let { keepImage(it) }
+        return buildJsonObject {
+            put("title", clip(title))
+            subtitle?.let { put("subtitle", clip(it)) }
+            link?.let { put("link", it) }
+            kept?.let { (path, mime) ->
+                put("file", path)
+                put("mime", mime)
+            }
+            val fields = row.keys.sorted().filter { it !in used }.mapNotNull { k ->
+                scalar(row[k])?.let { k to it }
+            }.take(MAX_FIELDS)
+            if (fields.isNotEmpty()) {
+                put("fields", buildJsonArray {
+                    fields.forEach { (k, v) ->
+                        add(buildJsonObject { put("label", humanize(k)); put("value", clip(v)) })
+                    }
+                })
+            }
+        }
+    }
+
+    /** Fetches a thumbnail over https and keeps it under the app's files. */
+    private fun keepImage(src: String): Pair<String, String>? {
+        if (!isHttps(src)) return null
+        return runCatching {
+            http.newCall(Request.Builder().url(src).build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val mime = resp.header("Content-Type").orEmpty().substringBefore(';').trim().lowercase()
+                if (!showableImage(mime)) return@use null
+                val bytes = resp.body.bytes()
+                if (bytes.isEmpty() || bytes.size > MAX_PICTURE) return@use null
+                dir.mkdirs()
+                val file = File(dir, "res_" + UUID.randomUUID().toString().take(8) + extensionOf(mime))
+                file.writeBytes(bytes)
+                file.absolutePath to mime
+            }
+        }.getOrNull()
+    }
+
+    /** The first key holding an https address; other values are never used. */
+    private fun firstHttps(row: JsonObject, keys: Array<String>, used: MutableSet<String>): String? {
+        for (k in keys) {
+            val v = scalar(row[k]) ?: continue
+            if (!isHttps(v)) continue
+            used += k
+            return v
+        }
+        return null
+    }
+
+    private fun objects(a: JsonArray): List<JsonObject> = a.mapNotNull { it as? JsonObject }
+
+    private companion object {
+        const val MAX_CARDS = 12
+        const val MAX_FIELDS = 6
+        const val MAX_TEXT = 160
+        val TITLE = arrayOf("title", "name", "label")
+        val SUBTITLE = arrayOf("subtitle", "location", "address", "city", "description", "summary")
+        val LINK = arrayOf("url", "link", "href")
+        val IMAGE = arrayOf("image", "image_url", "imageUrl", "thumbnail", "thumbnail_url", "photo", "picture")
+
+        fun isHttps(s: String): Boolean = runCatching {
+            val u = URI(s)
+            u.scheme == "https" && !u.host.isNullOrEmpty() && s.length <= 2000
+        }.getOrDefault(false)
+
+        fun scalar(v: JsonElement?): String? {
+            val p = v as? JsonPrimitive ?: return null
+            if (p.isString) return p.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+            p.booleanOrNull?.let { return if (it) "yes" else "no" }
+            return p.doubleOrNull?.let { d -> if (d % 1.0 == 0.0) d.toLong().toString() else d.toString() }
+        }
+
+        fun text(o: JsonObject, key: String): String? = scalar(o[key])
+
+        fun humanize(k: String): String {
+            val s = k.replace('_', ' ').replace('-', ' ').trim()
+            return if (s.isEmpty()) k else s.substring(0, 1).uppercase() + s.substring(1)
+        }
+
+        fun clip(s: String): String {
+            val t = s.trim()
+            return if (t.length <= MAX_TEXT) t else t.take(MAX_TEXT - 1) + "…"
+        }
+    }
+}

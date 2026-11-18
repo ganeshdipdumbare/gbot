@@ -108,6 +108,7 @@ class Mcp(private val ctx: Context) {
         server: McpServer,
         tool: String,
         args: JsonObject,
+        keepResults: ((String) -> String)? = null,
         keepPicture: ((ByteArray, String) -> String)? = null,
     ): String = withContext(Dispatchers.IO) {
         val s = Session(server)
@@ -116,7 +117,12 @@ class Mcp(private val ctx: Context) {
             put("name", tool)
             put("arguments", args)
         }) ?: return@withContext "The integration returned nothing."
-        val content = readContent(server.name, (res["content"] as? JsonArray).orEmpty(), keepPicture)
+        val text = readContent(server.name, (res["content"] as? JsonArray).orEmpty(), keepPicture)
+        // A JSON list of records is also shown as cards; the model reads the
+        // text either way.
+        val trimmed = text.trim()
+        val note = if (keepResults != null && (trimmed.startsWith("[") || trimmed.startsWith("{"))) keepResults(trimmed) else ""
+        val content = listOf(text, note).filter { it.isNotBlank() }.joinToString("\n")
         val err = res["isError"]?.jsonPrimitive?.contentOrNull == "true"
         (if (content.isBlank()) res.toString() else content).let { if (err) "The integration reported an error: $it" else it }
     }
