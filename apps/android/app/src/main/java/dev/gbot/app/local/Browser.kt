@@ -121,14 +121,17 @@ class BrowserController(private val ctx: Context) {
      * the end, so a banner that survives can be handled by a later step.
      */
     private suspend fun clearBanners() {
+        var clicked = false
         try {
             repeat(3) {
                 val label = eval("window.__gbotBanners ? __gbotBanners() : ''")
                 if (label.isBlank()) return
+                clicked = true
                 kotlinx.coroutines.delay(400)
             }
         } finally {
-            eval("window.__gbotUnmark ? __gbotUnmark() : ''")
+            // Marks are only set by a click, so a step with no clicks skips the page walk.
+            if (clicked) eval("window.__gbotUnmark ? __gbotUnmark() : ''")
         }
     }
 

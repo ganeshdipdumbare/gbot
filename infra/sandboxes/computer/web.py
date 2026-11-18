@@ -595,7 +595,10 @@ def clear_banners(page, first_wait=0.0):
                 break
             labels.append(label)
     finally:
-        unmark_banners(page)
+        # Marks are only set by a click, and a click always yields a label, so
+        # a step with no clicks has nothing to unmark and skips the page walk.
+        if labels:
+            unmark_banners(page)
     return labels
 
 
