@@ -1,5 +1,7 @@
 package dev.gbot.app.local
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -16,11 +18,16 @@ class LocalResultsTest {
     // No picture URLs in these tests, so nothing is fetched over the network.
     private val results = LocalResults(File(System.getProperty("java.io.tmpdir"), "gbot-results-test"))
 
+    private fun args(s: String): JsonObject = Json.parseToJsonElement(s).jsonObject
+
     @Test
-    fun listAnswerBecomesCards() {
-        val set = results.build("""[{"name":"Echo Hotel","location":"The Mall","rating":9.6,"url":"https://e.com/x"},{"name":"Longitude","rating":8.8}]""")
+    fun itemsBecomeCards() {
+        val set = results.build(args("""{"title":"Hotels","items":[
+            {"title":"Echo Hotel","subtitle":"The Mall","link":"https://e.com/x","fields":[{"label":"Rating","value":"9.6"}]},
+            {"title":"Longitude"}]}"""))
         assertNotNull(set)
-        val first = set!!.items[0].jsonObject
+        assertEquals("Hotels", set!!.title)
+        val first = set.items[0].jsonObject
         assertEquals("Echo Hotel", first["title"]!!.jsonPrimitive.content)
         assertEquals("The Mall", first["subtitle"]!!.jsonPrimitive.content)
         assertEquals("https://e.com/x", first["link"]!!.jsonPrimitive.content)
@@ -31,21 +38,36 @@ class LocalResultsTest {
 
     @Test
     fun unsafeLinkIsDropped() {
-        val set = results.build("""[{"name":"A","url":"javascript:alert(1)"},{"name":"B"}]""")
+        val set = results.build(args("""{"items":[{"title":"A","link":"javascript:alert(1)"},{"title":"B"}]}"""))
         assertNotNull(set)
         assertFalse(set!!.items[0].jsonObject.containsKey("link"))
     }
 
     @Test
-    fun wrappedListFindsRecords() {
-        val set = results.build("""{"title":"Hotels","results":[{"name":"A"},{"name":"B"}]}""")
-        assertEquals("Hotels", set!!.title)
+    fun itemWithoutTitleIsSkipped() {
+        val set = results.build(args("""{"items":[{"subtitle":"no name"},{"title":"A"},{"title":"B"}]}"""))!!
         assertEquals(2, set.items.size)
     }
 
     @Test
-    fun largeNumbersKeepTheirDigits() {
-        val set = results.build("""[{"name":"A","n":1e20},{"name":"B"}]""")!!
+    fun fieldsNeedBothLabelAndValue() {
+        val set = results.build(args("""{"items":[{"title":"A","fields":[{"label":"","value":"x"},{"label":"Price"},{"label":"Dates","value":"9-13 Dec"}]},{"title":"B"}]}"""))!!
+        val fields = set.items[0].jsonObject["fields"]!!.jsonArray
+        assertEquals(1, fields.size)
+        assertEquals("Dates", fields[0].jsonObject["label"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun listIsCappedAtTwelve() {
+        val items = (1..20).joinToString(",") { """{"title":"Item $it"}""" }
+        val set = results.build(args("""{"items":[$items]}"""))!!
+        assertEquals(LocalResults.MAX_CARDS, set.items.size)
+    }
+
+    @Test
+    fun numbersKeepPlainDigits() {
+        // A model may send a bare number where the schema asks for text.
+        val set = results.build(args("""{"items":[{"title":"A","fields":[{"label":"n","value":1e20}]},{"title":"B"}]}"""))!!
         val field = set.items[0].jsonObject["fields"]!!.jsonArray[0].jsonObject
         assertEquals("100000000000000000000", field["value"]!!.jsonPrimitive.content)
     }
@@ -62,18 +84,19 @@ class LocalResultsTest {
     @Test
     fun privateImageLiteralIsNotFetched() {
         // Rejected before any connection is made, so no network is used.
-        val set = results.build("""[{"name":"A","image":"https://192.168.1.1/x.png"},{"name":"B"}]""")!!
+        val set = results.build(args("""{"items":[{"title":"A","image":"https://192.168.1.1/x.png"},{"title":"B"}]}"""))!!
         assertFalse(set.items[0].jsonObject.containsKey("file"))
     }
 
     @Test
-    fun singleRecordIsNotCards() {
-        assertNull(results.build("""[{"name":"A"}]"""))
+    fun oneItemIsNotCards() {
+        assertNull(results.build(args("""{"items":[{"title":"A"}]}""")))
     }
 
     @Test
-    fun plainTextIsNotCards() {
-        assertNull(results.build("Booked 2 nights at the Mall."))
-        assertTrue(results.build("not json").let { it == null })
+    fun onlyHttpsCountsAsLink() {
+        assertTrue(LocalResults.isHttps("https://example.com/a"))
+        assertFalse(LocalResults.isHttps("http://example.com/a"))
+        assertFalse(LocalResults.isHttps("data:text/html,x"))
     }
 }

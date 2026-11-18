@@ -6,43 +6,37 @@ import (
 	"testing"
 )
 
-func TestResultRowsReadsListAnswer(t *testing.T) {
-	title, rows := resultRows([]byte(`[{"name":"A"},{"name":"B"}]`))
-	if title != "" || len(rows) != 2 {
-		t.Fatalf("list answer: got title %q, %d rows", title, len(rows))
+func TestResultSetNeedsTwoTitledItems(t *testing.T) {
+	one := resultsIn{Items: []resultItem{{Title: "A"}}}
+	if _, ok := resultSetFrom(one); ok {
+		t.Fatal("one item is a sentence, not a list")
+	}
+	two := resultsIn{Title: "  Hotels  ", Items: []resultItem{{Title: "A"}, {Subtitle: "no title"}, {Title: "B"}}}
+	set, ok := resultSetFrom(two)
+	if !ok || len(set.Items) != 2 || set.Title != "Hotels" {
+		t.Fatalf("two titled items: ok=%v set=%+v", ok, set)
 	}
 }
 
-func TestResultRowsFindsListInObject(t *testing.T) {
-	title, rows := resultRows([]byte(`{"title":"Hotels","results":[{"name":"A"},{"name":"B"}]}`))
-	if title != "Hotels" || len(rows) != 2 {
-		t.Fatalf("object answer: got title %q, %d rows", title, len(rows))
+func TestResultSetCapsItems(t *testing.T) {
+	in := resultsIn{}
+	for i := 0; i < 20; i++ {
+		in.Items = append(in.Items, resultItem{Title: "x"})
+	}
+	set, _ := resultSetFrom(in)
+	if len(set.Items) != maxResultCards {
+		t.Fatalf("items should be capped at %d, got %d", maxResultCards, len(set.Items))
 	}
 }
 
-func TestResultRowsIgnoresPlainText(t *testing.T) {
-	if _, rows := resultRows([]byte(`not json`)); rows != nil {
-		t.Fatalf("plain text should give no rows, got %d", len(rows))
-	}
-}
-
-func TestCardFromRowMapsFieldsAndDropsUnsafeLinks(t *testing.T) {
-	row := map[string]any{
-		"name":            "Echo Hotel and Spa",
-		"location":        "The Mall",
-		"rating":          9.6,
-		"price_per_night": "$33.50",
-		"booked":          true,
-		"url":             "javascript:alert(1)",
-		"image":           "http://example.com/a.jpg",
-		"nested":          map[string]any{"x": 1},
-	}
-	card, ok := cardFromRow(row)
-	if !ok {
-		t.Fatal("row with a title should make a card")
-	}
-	if card.Title != "Echo Hotel and Spa" || card.Subtitle != "The Mall" {
-		t.Fatalf("title/subtitle: %+v", card)
+func TestCardFromItemDropsUnsafeLinksAndImages(t *testing.T) {
+	card, ok := cardFromItem(resultItem{
+		Title: "Echo Hotel and Spa",
+		Link:  "javascript:alert(1)",
+		Image: "http://example.com/a.jpg",
+	})
+	if !ok || card.Title != "Echo Hotel and Spa" {
+		t.Fatalf("card: %+v ok=%v", card, ok)
 	}
 	if card.Link != "" {
 		t.Fatalf("javascript: link must be dropped, got %q", card.Link)
@@ -50,45 +44,31 @@ func TestCardFromRowMapsFieldsAndDropsUnsafeLinks(t *testing.T) {
 	if card.imageSrc != "" {
 		t.Fatalf("http image must not be fetched, got %q", card.imageSrc)
 	}
-	got := map[string]string{}
-	for _, f := range card.Fields {
-		got[f.Label] = f.Value
-	}
-	if got["Rating"] != "9.6" || got["Price per night"] != "$33.50" || got["Booked"] != "yes" {
-		t.Fatalf("fields: %+v", card.Fields)
-	}
-	if _, ok := got["Nested"]; ok {
-		t.Fatal("nested objects must not become fields")
-	}
 }
 
-func TestCardFromRowNeedsTitle(t *testing.T) {
-	if _, ok := cardFromRow(map[string]any{"price": "$5"}); ok {
-		t.Fatal("a row without a title should not make a card")
-	}
-}
-
-func TestCardFromRowHttpsLinkAndImage(t *testing.T) {
-	card, _ := cardFromRow(map[string]any{"title": "X", "url": "https://example.com/x", "thumbnail": "https://example.com/x.jpg"})
+func TestCardFromItemHttpsLinkAndImage(t *testing.T) {
+	card, _ := cardFromItem(resultItem{Title: "X", Link: "https://example.com/x", Image: "https://example.com/x.jpg"})
 	if card.Link != "https://example.com/x" || card.imageSrc != "https://example.com/x.jpg" {
 		t.Fatalf("https link/image: %+v", card)
 	}
 }
 
-func TestCardFieldLimit(t *testing.T) {
-	row := map[string]any{"title": "X"}
-	for _, k := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
-		row[k] = k
+func TestCardFieldLimitAndEmptyLines(t *testing.T) {
+	it := resultItem{Title: "X", Fields: []resultLine{{Label: "", Value: "lost"}, {Label: "Empty", Value: "  "}}}
+	for _, l := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		it.Fields = append(it.Fields, resultLine{Label: l, Value: "v"})
 	}
-	card, _ := cardFromRow(row)
+	card, _ := cardFromItem(it)
 	if len(card.Fields) != maxResultFields {
 		t.Fatalf("fields should be capped at %d, got %d", maxResultFields, len(card.Fields))
+	}
+	if card.Fields[0].Label != "a" {
+		t.Fatalf("empty label or value must be skipped, got %+v", card.Fields)
 	}
 }
 
 func TestClipKeepsRunesWhole(t *testing.T) {
-	long := strings.Repeat("é", 300)
-	out := clipText(long)
+	out := clipText(strings.Repeat("é", 300))
 	if len([]rune(out)) != maxResultText {
 		t.Fatalf("clip length: %d runes", len([]rune(out)))
 	}
@@ -96,25 +76,17 @@ func TestClipKeepsRunesWhole(t *testing.T) {
 
 func TestSafeLink(t *testing.T) {
 	cases := map[string]bool{
-		"https://example.com/a": true,
-		"http://example.com/a":  false,
-		"javascript:alert(1)":   false,
-		"data:text/html,x":      false,
-		"":                      false,
+		"https://example.com/a":    true,
+		"  https://example.com/a ": true,
+		"http://example.com/a":     false,
+		"javascript:alert(1)":      false,
+		"data:text/html,x":         false,
+		"":                         false,
 	}
 	for in, want := range cases {
 		if (safeLink(in) != "") != want {
 			t.Errorf("safeLink(%q): want ok=%v", in, want)
 		}
-	}
-}
-
-func TestHumanize(t *testing.T) {
-	if got := humanize("price_per_night"); got != "Price per night" {
-		t.Fatalf("humanize: %q", got)
-	}
-	if got := humanize("über_rating"); got != "Über rating" {
-		t.Fatalf("humanize non-ASCII: %q", got)
 	}
 }
 

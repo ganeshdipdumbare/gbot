@@ -746,10 +746,10 @@ class LocalBrain(
             return "The person declined or blocked this step. Do not retry it; ask what they would like instead."
         }
         val out = runCatching {
-            if (api.isMcpTool(name)) {
-                api.callMcp(name, args, keepResults = { raw, from -> keepResults(bot, group, from, raw) }) { bytes, mime, from ->
-                    keepPicture(bot, group, bytes, mime, from)
-                }.take(4000)
+            if (name == "show_results") {
+                showResults(bot, group, args)
+            } else if (api.isMcpTool(name)) {
+                api.callMcp(name, args) { bytes, mime, from -> keepPicture(bot, group, bytes, mime, from) }.take(4000)
             } else {
                 tools.run(name, args).take(4000)
             }
@@ -930,6 +930,7 @@ class LocalBrain(
             appendLine("- open_in_chrome when a site needs their own browser; vault_type for a saved secret, never a password you typed.")
             appendLine("- ask_user for any question or choice — a card, not plain text. notify, remember, forget, recall, profile, use_skill, file_*, routine_*.")
             appendLine("- task_contract then task_verify for a multi-step deliverable they will check; a quick answer needs neither. Never claim success against a failed check.")
+            appendLine("- show_results for a list of 2+ things to compare (hotels, products, places) after you have read them from a tool: they appear as cards. Then say what matters in prose.")
             if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots; asks come back together.")
             if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot can't be archived.")
             if (api.localMcp().any { it.enabled && it.status == "connected" }) appendLine("- Tools starting with mc… come from connected integrations.")
@@ -1088,23 +1089,22 @@ class LocalBrain(
     }
 
     /**
-     * A list a tool handed back (hotels, products, places) as cards in the
-     * chat, the phone's copy of the server's results rows. Returns the line
-     * the model reads in its place, or "" when the answer is not a list.
+     * The bot's list to compare, as cards in the chat: the phone's copy of
+     * the server's show_results. Returns the line the model reads back.
      */
-    private fun keepResults(bot: Bot, group: Group?, from: String, raw: String): String {
-        val set = LocalResults(java.io.File(ctx.filesDir, "pictures")).build(raw) ?: return ""
+    private fun showResults(bot: Bot, group: Group?, args: JsonObject): String {
+        val set = LocalResults(java.io.File(ctx.filesDir, "pictures")).build(args)
+            ?: return "Give at least two items, each with a title."
+        val title = set.title.ifEmpty { "Results" }
         event(
-            bot, group, set.title.ifEmpty { "Results from $from" },
+            bot, group, title,
             buildJsonObject {
                 put("kind", "results")
-                put("from", from)
-                put("title", set.title.ifEmpty { "Results from $from" })
+                put("title", title)
                 put("items", set.items)
             },
         )
-        val n = set.items.size
-        return "[$n results from $from are in the chat as cards, where you are answering. The person can see them. Summarize what matters; don't list every row again.]"
+        return "Shown ${set.items.size} results as cards in the chat, where you are answering. The person can see them. Summarize what matters; don't list every row again."
     }
 
     private fun event(bot: Bot, group: Group?, content: String, data: JsonObject? = null): GMessage {

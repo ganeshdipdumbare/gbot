@@ -75,7 +75,7 @@ func (r *Runtime) captureEvidence(rc *runCtx, e *kritrim.ToolEvent) {
 	switch e.Call.Name {
 	case "ask_user", "request_takeover", "routine_list", "routine_run", "routine_create",
 		"routine_update", "routine_delete", "task_contract", "task_verify", "remember", "recall",
-		"current_time", "message_bot", "vault_type":
+		"current_time", "message_bot", "vault_type", "show_results":
 		return
 	}
 	name := e.Call.Name

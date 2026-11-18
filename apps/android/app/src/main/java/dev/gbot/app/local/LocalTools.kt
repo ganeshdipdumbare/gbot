@@ -190,6 +190,12 @@ fun choiceLines(raw: String, max: Int): List<String> {
                 "options", "string", "Choices, one per line (optional)", required = listOf("question"),
             ),
         ),
+        ToolSchema(
+            "show_results",
+            "Show a list of 2 to 12 things to compare as cards in the chat, e.g. hotels, products or places. Use it when the person would scan the list better than read it. " +
+                "Each item comes from a tool answer you have read; links and pictures must be https addresses from that answer. Then reply in prose about what matters.",
+            resultsParams(),
+        ),
         ToolSchema("file_list", "List the files in your own folder on this phone.", params()),
         ToolSchema(
             "file_read", "Read one of the files in your folder.",
@@ -591,6 +597,40 @@ fun choiceLines(raw: String, max: Int): List<String> {
                 }
             })
             put("required", kotlinx.serialization.json.JsonArray(required.map { JsonPrimitive(it) }))
+        }
+
+        /** The show_results input: a title and a list of records, each with a title. */
+        private fun resultsParams(): JsonObject = buildJsonObject {
+            put("type", "object")
+            put("properties", buildJsonObject {
+                put("title", buildJsonObject { put("type", "string"); put("description", "A short heading for the list") })
+                put("items", buildJsonObject {
+                    put("type", "array")
+                    put("description", "2 to 12 records, each taken from a tool answer you have read")
+                    put("items", buildJsonObject {
+                        put("type", "object")
+                        put("properties", buildJsonObject {
+                            put("title", buildJsonObject { put("type", "string"); put("description", "The name of the thing") })
+                            put("subtitle", buildJsonObject { put("type", "string"); put("description", "A place, a date or a short description") })
+                            put("link", buildJsonObject { put("type", "string"); put("description", "An https page, exactly as a tool gave it") })
+                            put("image", buildJsonObject { put("type", "string"); put("description", "An https picture URL, exactly as a tool gave it") })
+                            put("fields", buildJsonObject {
+                                put("type", "array")
+                                put("description", "Up to 6 label and value lines, e.g. price, rating")
+                                put("items", buildJsonObject {
+                                    put("type", "object")
+                                    put("properties", buildJsonObject {
+                                        put("label", buildJsonObject { put("type", "string") })
+                                        put("value", buildJsonObject { put("type", "string") })
+                                    })
+                                })
+                            })
+                        })
+                        put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("title"))))
+                    })
+                })
+            })
+            put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("items"))))
         }
     }
 }

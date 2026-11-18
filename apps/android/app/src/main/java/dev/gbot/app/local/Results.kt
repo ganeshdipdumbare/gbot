@@ -1,6 +1,5 @@
 package dev.gbot.app.local
 
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -28,10 +27,10 @@ import java.util.concurrent.TimeUnit
 
 /**
  * The phone's copy of the server's result cards (server/internal/runs/
- * results.go): when a tool hands back a list of records, the chat shows
- * them as cards. The same rules apply here: a record needs a title, links
- * must be https, and a picture is fetched and kept on the phone, never
- * shown from a site the tool named.
+ * results.go). The bot calls show_results with a list it has read from a
+ * tool; the chat shows it as cards. The same rules apply here: an item needs
+ * a title, links must be https, and a picture is fetched and kept on the
+ * phone, never shown from a site the bot didn't give as https.
  */
 class LocalResults(
     private val dir: File,
@@ -43,64 +42,45 @@ class LocalResults(
         .proxy(Proxy.NO_PROXY)
         .build(),
 ) {
-    /** A set of cards, or null when the answer is not a list of records. */
+    /** A set of cards, ready for the chat. */
     data class ResultSet(val title: String, val items: JsonArray)
 
-    fun build(raw: String): ResultSet? {
-        val (title, found) = rows(raw)
-        if (found.size < 2) return null
-        // Cards are built side by side, so the thumbnails download together.
+    /** The cards for a show_results call, or null when fewer than two have a title. */
+    fun build(args: JsonObject): ResultSet? {
+        val title = text(args, "title")?.let { clip(it) }.orEmpty()
+        val items = (args["items"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.take(MAX_CARDS)
+        // Thumbnails download side by side, so one slow host can't hold the answer.
         val cards = runBlocking {
-            found.take(MAX_CARDS).map { async(Dispatchers.IO) { card(it) } }.awaitAll().filterNotNull()
+            items.map { async(Dispatchers.IO) { card(it) } }.awaitAll().filterNotNull()
         }
         if (cards.size < 2) return null
         return ResultSet(title, buildJsonArray { cards.forEach { add(it) } })
     }
 
-    /** The list of records in a structured answer, and its title. */
-    internal fun rows(raw: String): Pair<String, List<JsonObject>> {
-        val el = runCatching { Json.parseToJsonElement(raw) }.getOrNull() ?: return "" to emptyList()
-        return when (el) {
-            is JsonArray -> "" to objects(el)
-            is JsonObject -> {
-                val title = clip(text(el, "title").orEmpty())
-                for (k in el.keys.sorted()) {
-                    val arr = el[k] as? JsonArray ?: continue
-                    val found = objects(arr)
-                    if (found.isNotEmpty()) return title to found
-                }
-                "" to emptyList()
-            }
-            else -> "" to emptyList()
-        }
-    }
-
-    /** One record as a card, or null when it has no title. */
-    internal fun card(row: JsonObject): JsonObject? {
-        val used = mutableSetOf<String>()
-        fun pick(vararg keys: String): String? = keys.firstNotNullOfOrNull { k ->
-            scalar(row[k])?.also { used += k }
-        }
-        val title = pick(*TITLE) ?: return null
-        val subtitle = pick(*SUBTITLE)
-        val link = firstHttps(row, LINK, used)
-        val image = firstHttps(row, IMAGE, used)
-        val kept = image?.let { keepImage(it) }
+    /** One item as a card, or null when it has no title. */
+    internal fun card(item: JsonObject): JsonObject? {
+        val title = text(item, "title")?.let { clip(it) } ?: return null
+        val subtitle = text(item, "subtitle")?.let { clip(it) }
+        val link = text(item, "link")?.takeIf { isHttps(it) }
+        val kept = text(item, "image")?.takeIf { isHttps(it) }?.let { keepImage(it) }
+        val fields = (item["fields"] as? JsonArray).orEmpty().mapNotNull { f ->
+            val o = f as? JsonObject ?: return@mapNotNull null
+            val label = text(o, "label")?.let { clip(it) } ?: return@mapNotNull null
+            val value = text(o, "value")?.let { clip(it) } ?: return@mapNotNull null
+            label to value
+        }.take(MAX_FIELDS)
         return buildJsonObject {
-            put("title", clip(title))
-            subtitle?.let { put("subtitle", clip(it)) }
+            put("title", title)
+            subtitle?.let { put("subtitle", it) }
             link?.let { put("link", it) }
             kept?.let { (path, mime) ->
                 put("file", path)
                 put("mime", mime)
             }
-            val fields = row.keys.sorted().filter { it !in used }.mapNotNull { k ->
-                scalar(row[k])?.let { k to it }
-            }.take(MAX_FIELDS)
             if (fields.isNotEmpty()) {
                 put("fields", buildJsonArray {
-                    fields.forEach { (k, v) ->
-                        add(buildJsonObject { put("label", humanize(k)); put("value", clip(v)) })
+                    fields.forEach { (label, value) ->
+                        add(buildJsonObject { put("label", label); put("value", value) })
                     }
                 })
             }
@@ -109,7 +89,6 @@ class LocalResults(
 
     /** Fetches a thumbnail over https and keeps it under the app's files. */
     private fun keepImage(src: String): Pair<String, String>? {
-        if (!isHttps(src)) return null
         // OkHttp doesn't ask the resolver for an IP-literal host, so check
         // a literal address here.
         val host = URI(src).host.trim('[', ']')
@@ -132,31 +111,14 @@ class LocalResults(
         }.getOrNull()
     }
 
-    /** The first key holding an https address; other values are never used. */
-    private fun firstHttps(row: JsonObject, keys: Array<String>, used: MutableSet<String>): String? {
-        for (k in keys) {
-            val v = scalar(row[k]) ?: continue
-            if (!isHttps(v)) continue
-            used += k
-            return v
-        }
-        return null
-    }
-
-    private fun objects(a: JsonArray): List<JsonObject> = a.mapNotNull { it as? JsonObject }
-
     internal companion object {
         const val MAX_CARDS = 12
         const val MAX_FIELDS = 6
         const val MAX_TEXT = 160
-        val TITLE = arrayOf("title", "name", "label")
-        val SUBTITLE = arrayOf("subtitle", "location", "address", "city", "description", "summary")
-        val LINK = arrayOf("url", "link", "href")
-        val IMAGE = arrayOf("image", "image_url", "imageUrl", "thumbnail", "thumbnail_url", "photo", "picture")
 
         /**
          * Resolves a host to public addresses only, like the server's dialer:
-         * a tool's answer can't make the phone reach the LAN, the router or
+         * a link or picture can't make the phone reach the LAN, the router or
          * a link-local address. Connections go to the addresses returned
          * here, so a host can't switch to a private one afterwards.
          */
@@ -175,7 +137,7 @@ class LocalResults(
         }
 
         fun isHttps(s: String): Boolean = runCatching {
-            val u = URI(s)
+            val u = URI(s.trim())
             u.scheme == "https" && !u.host.isNullOrEmpty() && s.length <= 2000
         }.getOrDefault(false)
 
@@ -190,11 +152,6 @@ class LocalResults(
         }
 
         fun text(o: JsonObject, key: String): String? = scalar(o[key])
-
-        fun humanize(k: String): String {
-            val s = k.replace('_', ' ').replace('-', ' ').trim()
-            return if (s.isEmpty()) k else s.substring(0, 1).uppercase() + s.substring(1)
-        }
 
         fun clip(s: String): String {
             val t = s.trim()
