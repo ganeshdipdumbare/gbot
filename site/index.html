@@ -86,7 +86,7 @@
         </li>
         <li data-reveal>
           <h3>Asks before it acts</h3>
-          <p>Anything risky arrives as a card in the chat: approve, decline, or always allow. Questions use the same card.</p>
+          <p>Anything risky arrives as a card in the chat: approve, decline, or always allow. Pick Ask, Auto or Never ask, with allow and block lists. Questions use the same card.</p>
         </li>
         <li data-reveal>
           <h3>Its own computer</h3>
@@ -99,6 +99,18 @@
         <li data-reveal>
           <h3>Group chats</h3>
           <p>Up to six bots in one room. The first leads, @mentions bring others in, and they hand work to each other.</p>
+        </li>
+        <li data-reveal>
+          <h3>A vault for passwords</h3>
+          <p>Passwords and tokens are sealed and never shown to a model. A bot can type one into a password field, but only on the sites you list for it.</p>
+        </li>
+        <li data-reveal>
+          <h3>Skills</h3>
+          <p>Reusable how-to notes a bot loads when a task needs them, so it follows your way of doing things without re-learning it each chat.</p>
+        </li>
+        <li data-reveal>
+          <h3>Slack</h3>
+          <p>Mention a bot in a channel and it answers in the thread, with the same memory, tools and approvals it has in its own chat.</p>
         </li>
         <li data-reveal>
           <h3>Local first</h3>
@@ -416,7 +428,7 @@
     <section class="section trust" aria-label="How it stays yours">
       <div data-reveal>
         <h3>Your data stays home</h3>
-        <p>Chats, memory and files live on your machine. Cloud models are opt-in, and each account brings its own keys.</p>
+        <p>Chats, memory, files and saved passwords live on your machine. Cloud models are opt-in, and each account brings its own keys.</p>
       </div>
       <div data-reveal>
         <h3>Sandboxed computers</h3>
@@ -461,7 +473,11 @@
         </details>
         <details>
           <summary>What can a bot actually do?</summary>
-          <p>Browse and fill forms in its own browser, write and read files, remember things, run routines, and talk to other bots. Anything risky waits for your approval.</p>
+          <p>Browse and fill forms in its own browser, sign in with a password from the vault, write and read files, remember things, run routines, and talk to other bots. Anything risky waits for your approval.</p>
+        </details>
+        <details>
+          <summary>How are my passwords kept?</summary>
+          <p>In the vault, under Settings → Vault. Each value is sealed, and neither the API nor the model ever gets it back. A bot can type a saved password into a password field, but only on the sites you listed for that secret (subdomains included), and submitting presses Enter. Using a secret follows the same approval rules as any other risky step.</p>
         </details>
       </div>
     </section>
