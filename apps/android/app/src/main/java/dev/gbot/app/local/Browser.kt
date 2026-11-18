@@ -109,7 +109,21 @@ class BrowserController(private val ctx: Context) {
         error.value?.let { e ->
             return """{"ok":false,"url":"${json(target)}","error":"${json(e)}"}"""
         }
+        // Banners often arrive a moment after the page; give them time to show.
+        kotlinx.coroutines.delay(1000)
         return snapshot()
+    }
+
+    /**
+     * Accepts cookie and consent banners so the window the person watches shows
+     * the page. Up to three in a row, since sites often stack a second one.
+     */
+    private suspend fun clearBanners() {
+        repeat(3) {
+            val label = eval("window.__gbotBanners ? __gbotBanners() : ''")
+            if (label.isBlank()) return
+            kotlinx.coroutines.delay(400)
+        }
     }
 
     suspend fun back(): String {
@@ -162,6 +176,7 @@ class BrowserController(private val ctx: Context) {
         if (url.value.isBlank() && !loading.value) {
             return """{"ok":false,"url":"","error":"Nothing is open in the browser yet. Use browser_open with a web address first."}"""
         }
+        clearBanners()
         val raw = eval("window.__gbotSnap ? __gbotSnap() : ''")
         return raw.ifBlank { """{"url":"${json(url.value)}","text":"the page has not finished loading","elements":[]}""" }
     }
@@ -252,6 +267,45 @@ class BrowserController(private val ctx: Context) {
     }
     var body = document.body ? document.body.innerText : '';
     return JSON.stringify({title:document.title, url:location.href, text:String(body).replace(/\n{3,}/g,'\n\n').slice(0,6000), elements:out});
+  };
+  // Accepts a cookie or consent banner (reject or close only when nothing
+  // accepts), so the page underneath is visible. Marketing copy is never clicked.
+  window.__gbotBanners = function(){
+    var ACCEPT = /(accept|agree|allow all|allow cookies|got it|\bok\b)/i;
+    var LEAST = /(reject|decline|deny|refuse|only necessary|necessary only|essential only|use necessary|continue without)/i;
+    var CLOSE = /(close|dismiss|×|✕)/i;
+    var MARKET = /(subscribe|subscription|donate|donation|support us|membership|newsletter|offer|deal|trial|shop|buy|upgrade|premium)/i;
+    function overlay(n){
+      var s = getComputedStyle(n);
+      return s.position === 'fixed' || s.position === 'sticky' || n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG';
+    }
+    function inBanner(el){
+      var n = el;
+      while (n) {
+        if (n.nodeType === 1 && overlay(n)) {
+          var t = (n.innerText || '').toLowerCase();
+          if (t.indexOf('cookie') >= 0 || t.indexOf('consent') >= 0 || t.indexOf('privacy') >= 0) return true;
+        }
+        n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+      }
+      return false;
+    }
+    var cands = [];
+    var btns = document.querySelectorAll('button,[role=button],input[type=button],input[type=submit]');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      var r = b.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      var t = String(b.innerText || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 80 || MARKET.test(t)) continue;
+      if (b.closest('a[href]') || !inBanner(b)) continue;
+      cands.push({el: b, label: t});
+    }
+    function first(re){ for (var k = 0; k < cands.length; k++) if (re.test(cands[k].label)) return cands[k]; return null; }
+    var pick = first(ACCEPT) || first(LEAST) || first(CLOSE);
+    if (!pick) return '';
+    pick.el.click();
+    return pick.label;
   };
   window.__gbotClick = function(id){
     var el = document.querySelector('[data-gbot="'+id+'"]');
