@@ -11,10 +11,13 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.net.InetAddress
 import java.net.URI
+import java.net.UnknownHostException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -28,7 +31,9 @@ import java.util.concurrent.TimeUnit
 class LocalResults(
     private val dir: File,
     private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build(),
+        .connectTimeout(15, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
+        .dns(PublicDns)
+        .build(),
 ) {
     /** A set of cards, or null when the answer is not a list of records. */
     data class ResultSet(val title: String, val items: JsonArray)
@@ -122,7 +127,7 @@ class LocalResults(
 
     private fun objects(a: JsonArray): List<JsonObject> = a.mapNotNull { it as? JsonObject }
 
-    private companion object {
+    internal companion object {
         const val MAX_CARDS = 12
         const val MAX_FIELDS = 6
         const val MAX_TEXT = 160
@@ -130,6 +135,26 @@ class LocalResults(
         val SUBTITLE = arrayOf("subtitle", "location", "address", "city", "description", "summary")
         val LINK = arrayOf("url", "link", "href")
         val IMAGE = arrayOf("image", "image_url", "imageUrl", "thumbnail", "thumbnail_url", "photo", "picture")
+
+        /**
+         * Resolves a host to public addresses only, like the server's dialer:
+         * a tool's answer can't make the phone reach the LAN, the router or
+         * a link-local address. Connections go to the addresses returned
+         * here, so a host can't switch to a private one afterwards.
+         */
+        val PublicDns = Dns { host ->
+            val addrs = Dns.SYSTEM.lookup(host).filter { isPublic(it) }
+            if (addrs.isEmpty()) throw UnknownHostException("$host has no public address")
+            addrs
+        }
+
+        fun isPublic(a: InetAddress): Boolean {
+            if (a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress ||
+                a.isAnyLocalAddress || a.isMulticastAddress) return false
+            val b = a.address
+            // IPv6 unique local addresses (fc00::/7) are private too.
+            return !(b.size == 16 && (b[0].toInt() and 0xfe) == 0xfc)
+        }
 
         fun isHttps(s: String): Boolean = runCatching {
             val u = URI(s)
@@ -140,7 +165,10 @@ class LocalResults(
             val p = v as? JsonPrimitive ?: return null
             if (p.isString) return p.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
             p.booleanOrNull?.let { return if (it) "yes" else "no" }
-            return p.doubleOrNull?.let { d -> if (d % 1.0 == 0.0) d.toLong().toString() else d.toString() }
+            // Plain digits at any size, the way the server prints a number.
+            return p.doubleOrNull?.takeIf { it.isFinite() }?.let { d ->
+                java.math.BigDecimal(d.toString()).stripTrailingZeros().toPlainString()
+            }
         }
 
         fun text(o: JsonObject, key: String): String? = scalar(o[key])

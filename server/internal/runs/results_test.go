@@ -113,6 +113,9 @@ func TestHumanize(t *testing.T) {
 	if got := humanize("price_per_night"); got != "Price per night" {
 		t.Fatalf("humanize: %q", got)
 	}
+	if got := humanize("über_rating"); got != "Über rating" {
+		t.Fatalf("humanize non-ASCII: %q", got)
+	}
 }
 
 // The card JSON is what the chat reads, so its field names are part of the

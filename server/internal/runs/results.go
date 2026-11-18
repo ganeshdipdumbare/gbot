@@ -17,7 +17,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 
 	"gbot/internal/netguard"
 	"gbot/internal/store"
@@ -86,15 +88,23 @@ func (r *Runtime) keepResults(ctx context.Context, server string, raw []byte) st
 	}
 	set := resultSet{From: server, Title: title}
 	for _, row := range rows {
-		card, ok := cardFromRow(row)
-		if !ok {
-			continue
+		if card, ok := cardFromRow(row); ok {
+			set.Items = append(set.Items, card)
 		}
-		if card.imageSrc != "" {
-			card.Image, card.Mime = r.keepImage(ctx, rc, card.imageSrc)
-		}
-		set.Items = append(set.Items, card)
 	}
+	// Thumbnails are fetched side by side, so one slow host can't hold the
+	// tool answer for the sum of all of them.
+	var wg sync.WaitGroup
+	for i := range set.Items {
+		if src := set.Items[i].imageSrc; src != "" {
+			wg.Add(1)
+			go func(c *resultCard) {
+				defer wg.Done()
+				c.Image, c.Mime = r.keepImage(ctx, rc, src)
+			}(&set.Items[i])
+		}
+	}
+	wg.Wait()
 	if len(set.Items) < 2 {
 		return ""
 	}
@@ -114,6 +124,8 @@ func (r *Runtime) keepImage(ctx context.Context, rc *runCtx, src string) (string
 	if err != nil {
 		return "", ""
 	}
+	// One picture per connection: nothing reuses it, so don't leave it idle.
+	req.Close = true
 	resp, err := netguard.Client(15 * time.Second).Do(req)
 	if err != nil {
 		return "", ""
@@ -264,12 +276,13 @@ func scalarText(v any) string {
 
 // humanize turns a key like price_per_night into "Price per night".
 func humanize(k string) string {
-	s := strings.ReplaceAll(strings.ReplaceAll(k, "_", " "), "-", " ")
-	s = strings.TrimSpace(s)
-	if s == "" {
+	s := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(k, "_", " "), "-", " "))
+	r := []rune(s)
+	if len(r) == 0 {
 		return k
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
 }
 
 // clip shortens a line to a fixed length, on a rune boundary.

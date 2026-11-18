@@ -10,6 +10,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.net.InetAddress
 
 class LocalResultsTest {
     // No picture URLs in these tests, so nothing is fetched over the network.
@@ -40,6 +41,22 @@ class LocalResultsTest {
         val set = results.build("""{"title":"Hotels","results":[{"name":"A"},{"name":"B"}]}""")
         assertEquals("Hotels", set!!.title)
         assertEquals(2, set.items.size)
+    }
+
+    @Test
+    fun largeNumbersKeepTheirDigits() {
+        val set = results.build("""[{"name":"A","n":1e20},{"name":"B"}]""")!!
+        val field = set.items[0].jsonObject["fields"]!!.jsonArray[0].jsonObject
+        assertEquals("100000000000000000000", field["value"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun onlyPublicAddressesAreFetched() {
+        assertFalse(LocalResults.isPublic(InetAddress.getByName("127.0.0.1")))
+        assertFalse(LocalResults.isPublic(InetAddress.getByName("10.0.0.5")))
+        assertFalse(LocalResults.isPublic(InetAddress.getByName("169.254.1.1")))
+        assertFalse(LocalResults.isPublic(InetAddress.getByName("fd00::1")))
+        assertTrue(LocalResults.isPublic(InetAddress.getByName("8.8.8.8")))
     }
 
     @Test

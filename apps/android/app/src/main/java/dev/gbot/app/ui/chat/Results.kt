@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -75,7 +76,11 @@ private fun ResultCard(key: String, o: JsonObject) {
     val fields = (o["fields"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
 
     var img by remember(key) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(key) { img = if (hasPic) Pictures.load(key, file, blob) else null }
+    var missing by remember(key) { mutableStateOf(false) }
+    LaunchedEffect(key) {
+        img = if (hasPic) Pictures.load(key, file, blob) else null
+        missing = hasPic && img == null
+    }
 
     val shape = RoundedCornerShape(16.dp)
     Box(
@@ -85,9 +90,13 @@ private fun ResultCard(key: String, o: JsonObject) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (hasPic) {
                 val pic = img
+                // Loading shows a shimmer; a picture that can't be loaded
+                // leaves the plain tile, so the card keeps its shape.
                 Box(Modifier.size(84.dp).background(g.surface2)) {
-                    if (pic != null) Image(pic, title, Modifier.fillMaxWidth(), contentScale = ContentScale.Crop)
-                    else Box(Modifier.fillMaxWidth().padding(0.dp).shimmer())
+                    when {
+                        pic != null -> Image(pic, title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        !missing -> Box(Modifier.fillMaxSize().shimmer())
+                    }
                 }
             }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 10.dp)) {
