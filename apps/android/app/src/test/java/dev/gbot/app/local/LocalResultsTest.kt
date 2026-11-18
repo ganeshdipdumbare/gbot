@@ -60,6 +60,13 @@ class LocalResultsTest {
     }
 
     @Test
+    fun privateImageLiteralIsNotFetched() {
+        // Rejected before any connection is made, so no network is used.
+        val set = results.build("""[{"name":"A","image":"https://192.168.1.1/x.png"},{"name":"B"}]""")!!
+        assertFalse(set.items[0].jsonObject.containsKey("file"))
+    }
+
+    @Test
     fun singleRecordIsNotCards() {
         assertNull(results.build("""[{"name":"A"}]"""))
     }

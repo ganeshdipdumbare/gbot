@@ -11,11 +11,16 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.net.InetAddress
+import java.net.Proxy
 import java.net.URI
 import java.net.UnknownHostException
 import java.util.UUID
@@ -33,6 +38,9 @@ class LocalResults(
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
         .dns(PublicDns)
+        // A system proxy would connect for us, so the public-address rule
+        // above would not hold. Go direct.
+        .proxy(Proxy.NO_PROXY)
         .build(),
 ) {
     /** A set of cards, or null when the answer is not a list of records. */
@@ -41,7 +49,10 @@ class LocalResults(
     fun build(raw: String): ResultSet? {
         val (title, found) = rows(raw)
         if (found.size < 2) return null
-        val cards = found.take(MAX_CARDS).mapNotNull { card(it) }
+        // Cards are built side by side, so the thumbnails download together.
+        val cards = runBlocking {
+            found.take(MAX_CARDS).map { async(Dispatchers.IO) { card(it) } }.awaitAll().filterNotNull()
+        }
         if (cards.size < 2) return null
         return ResultSet(title, buildJsonArray { cards.forEach { add(it) } })
     }
@@ -99,6 +110,13 @@ class LocalResults(
     /** Fetches a thumbnail over https and keeps it under the app's files. */
     private fun keepImage(src: String): Pair<String, String>? {
         if (!isHttps(src)) return null
+        // OkHttp doesn't ask the resolver for an IP-literal host, so check
+        // a literal address here.
+        val host = URI(src).host.trim('[', ']')
+        if (host.contains(':') || host.all { it.isDigit() || it == '.' }) {
+            val literal = runCatching { InetAddress.getByName(host) }.getOrNull() ?: return null
+            if (!isPublic(literal)) return null
+        }
         return runCatching {
             http.newCall(Request.Builder().url(src).build()).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
