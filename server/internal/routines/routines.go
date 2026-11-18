@@ -51,6 +51,13 @@ func (s *Service) Create(ctx context.Context, botID, userID, name, prompt, kind,
 	if prompt == "" || len(prompt) > 8000 {
 		return nil, "", errors.Join(ErrInvalid, errors.New("say what the routine should do"))
 	}
+	n, err := s.Store.CountRoutines(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if n >= store.MaxRoutinesPerPerson {
+		return nil, "", errors.Join(ErrInvalid, errors.New("you have too many routines; delete one before adding another"))
+	}
 	r := &store.Routine{BotID: botID, UserID: userID, Name: name, Prompt: prompt, Kind: kind}
 	var secret string
 	var hash []byte

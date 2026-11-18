@@ -143,18 +143,32 @@ object McpOAuth {
             val doc = getJson(c) ?: continue
             val auth = doc.str("authorization_endpoint")
             val token = doc.str("token_endpoint")
-            if (auth.isEmpty() || token.isEmpty()) continue
+            // Codes and tokens travel to these addresses, so a metadata document
+            // naming a plain-http endpoint is refused, as the server refuses it.
+            if (auth.isEmpty() || token.isEmpty() || !safeSignInEndpoint(auth) || !safeSignInEndpoint(token)) continue
+            val reg = doc.str("registration_endpoint").takeIf { safeSignInEndpoint(it) }.orEmpty()
             return Config(
                 authorizationEndpoint = auth, tokenEndpoint = token,
-                registrationEndpoint = doc.str("registration_endpoint"), scopes = doc.strings("scopes_supported"),
+                registrationEndpoint = reg, scopes = doc.strings("scopes_supported"),
             )
         }
         return null
     }
 
+    /**
+     * The server accepts sign-in endpoints only over https, or plain http to
+     * this machine. The phone applies the same rule, since it sends codes and
+     * tokens to these addresses.
+     */
+    fun safeSignInEndpoint(raw: String): Boolean {
+        val u = raw.toHttpUrlOrNull() ?: return false
+        val local = u.host == "localhost" || u.host == "127.0.0.1" || u.host == "::1"
+        return u.scheme == "https" || (u.scheme == "http" && local)
+    }
+
     /** Register this phone as a client for [redirect]. Apps without dynamic registration can't use this. */
     fun register(cfg: Config, redirect: String): Client {
-        if (cfg.registrationEndpoint.isEmpty()) {
+        if (cfg.registrationEndpoint.isEmpty() || !safeSignInEndpoint(cfg.registrationEndpoint)) {
             throw OAuthException("This app needs a pre-registered client. Add it with a token instead.")
         }
         val body = buildJsonObject {
@@ -181,6 +195,7 @@ object McpOAuth {
 
     /** Where the person signs in. The resource binds the token to this one server (RFC 8707). */
     fun authUrl(cfg: Config, clientId: String, redirect: String, state: String, verifier: String): String {
+        if (!safeSignInEndpoint(cfg.authorizationEndpoint)) throw OAuthException("The app's sign-in address must use https.")
         val b = cfg.authorizationEndpoint.toHttpUrlOrNull()?.newBuilder() ?: throw OAuthException("The app's sign-in address is broken.")
         b.addQueryParameter("response_type", "code")
         b.addQueryParameter("client_id", clientId)
@@ -194,6 +209,7 @@ object McpOAuth {
     }
 
     private fun tokenRequest(endpoint: String, form: Map<String, String>): Tokens {
+        if (!safeSignInEndpoint(endpoint)) throw OAuthException("The app's token address must use https.")
         val body = FormBody.Builder().apply { form.forEach { (k, v) -> add(k, v) } }.build()
         client.newCall(Request.Builder().url(endpoint).header("Accept", "application/json").post(body).build()).execute().use { res ->
             val text = res.body.string()

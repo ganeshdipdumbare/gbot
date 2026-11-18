@@ -386,6 +386,16 @@ func (r *Runtime) afterTool(ctx context.Context, e *kritrim.ToolEvent) {
 	if untrustedTool(e.Call.Name) {
 		rc.taint()
 	}
+	// A shell fetch returns web text, and history or memory can hold text
+	// that came from outside, so these taint by what they return.
+	if e.Call.Name == "computer_shell" {
+		if c, _ := e.Args["command"].(string); fetchesWeb(c) {
+			rc.taint()
+		}
+	}
+	if readsStoredOutside[e.Call.Name] {
+		rc.taint()
+	}
 	if e.Result == nil {
 		return
 	}
@@ -406,4 +416,13 @@ func (r *Runtime) afterTool(ctx context.Context, e *kritrim.ToolEvent) {
 			rc.addSource(rest[:i], rest[i+len(" — "):])
 		}
 	}
+}
+
+// readsStoredOutside names read-only tools whose output can carry text that
+// entered the bot from outside: earlier chat messages (including Slack and
+// webhook prompts), memory notes, and files the person or a tool wrote.
+var readsStoredOutside = map[string]bool{
+	"history_search":     true,
+	"recall":             true,
+	"computer_read_file": true,
 }

@@ -18,6 +18,7 @@ import (
 
 	"gbot/internal/crypto"
 	mcpoauth "gbot/internal/mcp"
+	"gbot/internal/netguard"
 	"gbot/internal/store"
 )
 
@@ -276,7 +277,7 @@ func (r *Runtime) callTool(ctx context.Context, s mcpServer, name string, args m
 			headers[k] = str
 		}
 	}
-	p := &mcpProbe{url: s.url, headers: headers, client: &http.Client{Timeout: 2 * time.Minute}}
+	p := &mcpProbe{url: s.url, headers: headers, client: netguard.Client(2 * time.Minute)}
 	if err := p.call(ctx, "initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
 		"capabilities":    map[string]any{},
@@ -542,7 +543,7 @@ func (r *Runtime) probe(s mcpServer) ([]mcpToolDef, error) {
 			headers[k] = str
 		}
 	}
-	p := &mcpProbe{url: s.url, headers: headers, client: &http.Client{Timeout: 15 * time.Second}}
+	p := &mcpProbe{url: s.url, headers: headers, client: netguard.Client(15 * time.Second)}
 	if err := p.call(ctx, "initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
 		"capabilities":    map[string]any{},

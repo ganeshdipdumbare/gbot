@@ -819,7 +819,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		status, outcome = "needs_you", b.Name+" needs the person before it can reply; it asked in its own chat."
 		for _, in := range res.Interrupts {
 			if kind := cardKind(rc, in); kind != "" {
-				r.addCard(bg, c, b, runID, thread, in, kind)
+				r.addCard(bg, c, b, runID, thread, in, kind, rc.isTainted())
 			}
 		}
 		r.setPresence(c, b, Presence{State: "waiting", Detail: "Needs you"})

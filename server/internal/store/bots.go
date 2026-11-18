@@ -97,10 +97,11 @@ func (b *Bot) withRole(viewer string, member *string) *Bot {
 	return b
 }
 
-// visibleTo is the access rule. The owner always has it. A private bot has
+// visibleTo is the access rule. The owner has it while still on the team. A private bot has
 // no one else. An invited bot is open to the people added to it. A team bot
 // is open to every member of its space.
-const visibleTo = `(b.owner_id = $2 OR (bm.user_id IS NOT NULL AND b.visibility <> 'private') OR
+const visibleTo = `((b.owner_id = $2 AND EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = b.space_id AND sm.user_id = $2))
+	OR (bm.user_id IS NOT NULL AND b.visibility <> 'private') OR
 	(b.visibility = 'team' AND EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = b.space_id AND sm.user_id = $2)))`
 
 // ListBots returns the bots the viewer can use in the space, pinned first,

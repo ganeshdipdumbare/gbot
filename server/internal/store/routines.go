@@ -131,3 +131,15 @@ func (s *Store) ClaimDue(ctx context.Context, now time.Time, next func(*Routine)
 func (s *Store) TouchRoutine(ctx context.Context, id string) {
 	_, _ = s.DB.Exec(ctx, `UPDATE routines SET last_run_at=now() WHERE id=$1`, id)
 }
+
+// MaxRoutinesPerPerson bounds the schedules and webhooks one person owns
+// across all bots. Each due schedule queues a run on the owner's own keys,
+// so an unbounded count lets one account fill the queue.
+const MaxRoutinesPerPerson = 50
+
+// CountRoutines returns how many routines a person owns on every bot.
+func (s *Store) CountRoutines(ctx context.Context, userID string) (int, error) {
+	var n int
+	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM routines WHERE user_id=$1`, userID).Scan(&n)
+	return n, err
+}

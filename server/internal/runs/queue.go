@@ -122,6 +122,13 @@ func (r *Runtime) claim(j *Job) bool {
 	if q.Status != "queued" {
 		return false
 	}
+	// Work queued while a person could use the bot runs only while they still
+	// can. A removed team member's queued messages are dropped, not run with
+	// their own credentials. A failed lookup also drops the job.
+	if _, err := r.store.GetBotFor(ctx, j.Bot.SpaceID, j.user(), j.Bot.ID); err != nil {
+		_ = r.store.SetQueueStatus(ctx, j.QueueID, "cancelled", "you no longer have access to this bot")
+		return false
+	}
 	if err := r.store.SetQueueStatus(ctx, j.QueueID, "running", ""); err != nil {
 		r.log.Error("queue claim", "err", err)
 	}

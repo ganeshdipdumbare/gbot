@@ -52,6 +52,7 @@ type Server struct {
 
 	authLimit  *auth.Limiter
 	msgLimit   *auth.Limiter
+	voiceLimit *auth.Limiter
 	hookLimit  *auth.Limiter
 	probeLimit *auth.Limiter
 
@@ -79,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 	s.startMCPSync()
 	s.authLimit = auth.NewLimiter(10, time.Minute)
 	s.msgLimit = auth.NewLimiter(60, time.Minute)
+	// Speech calls cost the operator money when a hosted service is set.
+	s.voiceLimit = auth.NewLimiter(30, time.Minute)
 	s.hookLimit = auth.NewLimiter(120, time.Minute)
 	// Provider discovery makes outbound requests on the server's behalf.
 	s.probeLimit = auth.NewLimiter(20, time.Minute)
