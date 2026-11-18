@@ -747,7 +747,9 @@ class LocalBrain(
         }
         val out = runCatching {
             if (api.isMcpTool(name)) {
-                api.callMcp(name, args) { bytes, mime, from -> keepPicture(bot, group, bytes, mime, from) }.take(4000)
+                api.callMcp(name, args, keepResults = { raw, from -> keepResults(bot, group, from, raw) }) { bytes, mime, from ->
+                    keepPicture(bot, group, bytes, mime, from)
+                }.take(4000)
             } else {
                 tools.run(name, args).take(4000)
             }
@@ -1083,6 +1085,26 @@ class LocalBrain(
             log("could not keep the picture", e)
             "[$from sent a picture gbot couldn't keep.]"
         }
+    }
+
+    /**
+     * A list a tool handed back (hotels, products, places) as cards in the
+     * chat, the phone's copy of the server's results rows. Returns the line
+     * the model reads in its place, or "" when the answer is not a list.
+     */
+    private fun keepResults(bot: Bot, group: Group?, from: String, raw: String): String {
+        val set = LocalResults(java.io.File(ctx.filesDir, "pictures")).build(raw) ?: return ""
+        event(
+            bot, group, set.title.ifEmpty { "Results from $from" },
+            buildJsonObject {
+                put("kind", "results")
+                put("from", from)
+                put("title", set.title.ifEmpty { "Results from $from" })
+                put("items", set.items)
+            },
+        )
+        val n = set.items.size
+        return "[$n results from $from are in the chat as cards, where you are answering. The person can see them. Summarize what matters; don't list every row again.]"
     }
 
     private fun event(bot: Bot, group: Group?, content: String, data: JsonObject? = null): GMessage {

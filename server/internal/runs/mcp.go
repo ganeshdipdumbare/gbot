@@ -305,6 +305,15 @@ func (r *Runtime) callTool(ctx context.Context, s mcpServer, name string, args m
 	if res.IsError {
 		return "", errors.New(r.redact(out))
 	}
+	// A list of records is also shown as cards. The structured answer is
+	// used when the server sent one; otherwise a JSON text answer is read.
+	src := []byte(res.Structured)
+	if trimmed := strings.TrimSpace(out); len(src) == 0 && (strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{")) {
+		src = []byte(trimmed)
+	}
+	if note := r.keepResults(ctx, s.name, src); note != "" {
+		out += "\n" + note
+	}
 	return out, nil
 }
 

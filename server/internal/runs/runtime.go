@@ -722,6 +722,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 			// the chat here, where the person is watching, before the
 			// reply that talks about it.
 			r.showPictures(bg, c, b, rc)
+			r.showResults(bg, c, b, rc)
 		}
 	}
 

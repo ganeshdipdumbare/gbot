@@ -30,6 +30,9 @@ type runCtx struct {
 	// pictures are what a tool handed back for the person to look at,
 	// waiting to be shown in the chat.
 	pictures []picture
+	// results are tool answers that were lists of records, kept as cards
+	// for the chat (see results.go).
+	results []resultSet
 	// contract is what the person agreed the task means; evidence is what
 	// the run actually did; receipt is the independent check's verdict.
 	contract *contract

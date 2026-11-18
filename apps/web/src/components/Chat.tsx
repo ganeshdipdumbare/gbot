@@ -439,6 +439,7 @@ const Row = memo(function Row({ m, author, first, last, inGroup, chatKey, animat
   if (m.role === "event" && m.data?.kind === "activity") return <Activity m={m} enter={enter} />;
   if (m.role === "event" && m.data?.kind === "botmsg") return <Exchange m={m} enter={enter} />;
   if (m.role === "event" && m.data?.kind === "picture") return <Picture m={m} author={author} enter={enter} />;
+  if (m.role === "event" && m.data?.kind === "results" && Array.isArray(m.data?.items)) return <Results m={m} author={author} enter={enter} />;
   if (m.role === "event") {
     const err = m.data?.kind === "error";
     return (
@@ -537,6 +538,73 @@ function Picture({ m, author, enter }: { m: Message; author?: Bot; enter: string
         )}
       </div>
     </div>
+  );
+}
+
+// A list a tool handed back (hotels, products, places), drawn as cards
+// instead of a block of text. Every field comes from the tool's own data
+// as the server kept it: the link must be https, and the picture is one
+// gbot fetched and keeps (/api/blobs), so a card can't put anything on the
+// page that the tool didn't send.
+type ResultItem = {
+  title: string; subtitle?: string; image?: string; mime?: string;
+  link?: string; fields?: { label: string; value: string }[];
+};
+
+function Results({ m, author, enter }: { m: Message; author?: Bot; enter: string }) {
+  const items = (m.data?.items as ResultItem[] | undefined) ?? [];
+  const title = String(m.data?.title ?? m.content ?? "");
+  return (
+    <div className={`${enter} group flex items-end gap-1.5 mt-3`}>
+      <div className="w-[34px] shrink-0">{author && <Gbot look={author.look} seed={author.id} size={34} mood="idle" />}</div>
+      <div className="flex flex-col items-start w-full max-w-[min(92%,600px)] min-w-0">
+        {title && <span className="text-[12px] text-ink-3 mb-1 ml-1">{title}</span>}
+        <ul className="w-full flex flex-col gap-2">
+          {items.map((it, i) => <ResultCard key={i} it={it} />)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function ResultCard({ it }: { it: ResultItem }) {
+  const [broken, setBroken] = useState(false);
+  const body = (
+    <>
+      {it.image && !broken && (
+        <img src={`/api/blobs/${it.image}`} alt="" loading="lazy" onError={() => setBroken(true)}
+          className="size-[84px] sm:size-[96px] shrink-0 object-cover bg-surface-2" />
+      )}
+      <div className="flex-1 min-w-0 py-2.5 pr-2">
+        <div className="text-[15px] font-medium text-ink truncate">{it.title}</div>
+        {it.subtitle && <div className="text-[13px] text-ink-2 truncate">{it.subtitle}</div>}
+        {!!it.fields?.length && (
+          <dl className="mt-1 grid gap-x-3 gap-y-0.5 text-[13px] leading-[20px] [grid-template-columns:auto_1fr]">
+            {it.fields.map((f, i) => (
+              <div key={i} className="contents">
+                <dt className="text-ink-3 whitespace-nowrap">{f.label}</dt>
+                <dd className="text-ink-2 min-w-0 truncate">{f.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </div>
+      {it.link && (
+        <span className="self-center pr-3 text-ink-3 shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+        </span>
+      )}
+    </>
+  );
+  const cls = "flex items-stretch rounded-2xl bg-surface hairline overflow-hidden min-w-0 transition-opacity duration-[120ms]";
+  return (
+    <li>
+      {it.link ? (
+        <a href={it.link} target="_blank" rel="noopener noreferrer" className={`${cls} hover:opacity-95`}>{body}</a>
+      ) : (
+        <div className={cls}>{body}</div>
+      )}
+    </li>
   );
 }
 
