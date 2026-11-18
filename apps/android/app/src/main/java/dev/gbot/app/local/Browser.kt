@@ -275,6 +275,24 @@ class BrowserController(private val ctx: Context) {
     // "cookie". Substring matches would press "Disagree" or "OK" on a terms
     // or confirm dialog, which agrees for the person.
     var ACCEPT = ['accept', 'accept all', 'accept cookies', 'accept all cookies', 'allow', 'allow all', 'allow cookies', 'allow all cookies', 'got it'];
+    // Once a control in a banner is clicked, the banner's container is marked
+    // data-gbot-done. Later passes leave every control in a marked banner alone.
+    function doneBanner(el){
+      var n = el;
+      while (n) {
+        if (n.nodeType === 1 && n.hasAttribute('data-gbot-done')) return true;
+        n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+      }
+      return false;
+    }
+    function markBanner(el){
+      var n = el;
+      while (n) {
+        if (n.nodeType === 1 && overlay(n)) { n.setAttribute('data-gbot-done', '1'); return; }
+        n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+      }
+      el.setAttribute('data-gbot-done', '1');
+    }
     var LEAST = /(reject|decline|deny|refuse|only necessary|necessary only|essential only|use necessary|continue without)/i;
     var CLOSE = /(close|dismiss|×|✕)/i;
     var MARKET = /(subscribe|subscription|donate|donation|support us|membership|newsletter|offer|deal|trial|shop|buy|upgrade|premium)/i;
@@ -301,8 +319,9 @@ class BrowserController(private val ctx: Context) {
       var b = btns[i];
       var r = b.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) continue;
-      // Already clicked and still here: do not click it again.
-      if (b.hasAttribute('data-gbot-clicked')) continue;
+      // A banner already acted on is left alone, so a reject or close in the
+      // same banner is not clicked after its accept.
+      if (doneBanner(b)) continue;
       // A submit or reset control, or one inside a form, can send the form.
       // type="button" never submits, so it is always safe to click.
       var type = (b.getAttribute('type') || '').toLowerCase();
@@ -311,8 +330,10 @@ class BrowserController(private val ctx: Context) {
       var t = String(b.innerText || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
       if (!t || t.length > 80 || MARKET.test(t)) continue;
       if (b.closest('a[href]')) continue;
+      // Automatic clicks only touch cookie banners. A privacy or consent prompt
+      // without the word "cookie" is left for the person.
       var kw = keywordOf(b);
-      if (!kw) continue;
+      if (kw !== 'cookie') continue;
       cands.push({el: b, label: t, kw: kw});
     }
     function firstAccept(){
@@ -330,7 +351,7 @@ class BrowserController(private val ctx: Context) {
     var pick = firstAccept() || first(LEAST) || first(CLOSE);
     if (!pick) return '';
     pick.el.click();
-    pick.el.setAttribute('data-gbot-clicked', '1');
+    markBanner(pick.el);
     return pick.label;
   };
   window.__gbotClick = function(id){

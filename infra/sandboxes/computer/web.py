@@ -406,6 +406,33 @@ def describe_item(i):
     return " ".join(parts)
 
 
+# A banner is "done" once one of its controls was clicked. The mark goes on
+# the banner's container, not the button, so the other controls in the same
+# banner (a reject after an accept, say) are left alone while it stays put.
+BANNER_DONE_JS = """el => {
+  let n = el;
+  while (n) {
+    if (n.nodeType === 1 && n.hasAttribute('data-gbot-done')) return true;
+    n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+  }
+  return false;
+}"""
+
+BANNER_MARK_JS = """el => {
+  const overlay = (n) => {
+    const s = getComputedStyle(n);
+    return s.position === 'fixed' || s.position === 'sticky' ||
+      n.getAttribute('role') === 'dialog' || n.tagName === 'DIALOG';
+  };
+  let n = el;
+  while (n) {
+    if (n.nodeType === 1 && overlay(n)) { n.setAttribute('data-gbot-done', '1'); return; }
+    n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+  }
+  el.setAttribute('data-gbot-done', '1');
+}"""
+
+
 def cookie_overlay(loc):
     """The keyword ("cookie", "consent" or "privacy") of the banner, dialog
     or sticky overlay the element sits in, or "" if there is none. Article
@@ -461,21 +488,29 @@ def consent_candidates(page):
                 # not el.type: a button with no type attribute reports "submit"
                 # there, which would exclude nearly every banner button.
                 try:
-                    # data-gbot-clicked marks a control already clicked, so a
-                    # banner that stays put is not clicked again.
-                    plain = loc.evaluate("el => { const t = (el.getAttribute('type') || '').toLowerCase(); return el.tagName === 'BUTTON' && !el.hasAttribute('data-gbot-clicked') && t !== 'submit' && !el.hasAttribute('href') && (t === 'button' || !el.closest('form')); }")
+                    plain = loc.evaluate("el => { const t = (el.getAttribute('type') || '').toLowerCase(); return el.tagName === 'BUTTON' && t !== 'submit' && !el.hasAttribute('href') && (t === 'button' || !el.closest('form')); }")
                 except Exception:
                     plain = False
                 if not plain:
                     continue
-                # Only controls inside a cookie/consent overlay count, so a
-                # marketing link like "Reject all and subscribe" or a
-                # footer "Cookie policy" is never mistaken for a banner.
+                # A banner that was already acted on is left alone: once one
+                # control in it is clicked, its other controls (a reject after
+                # an accept, say) are not clicked in the same step.
+                try:
+                    if loc.evaluate(BANNER_DONE_JS):
+                        continue
+                except Exception:
+                    continue
+                # Automatic clicks only touch cookie banners. A privacy or
+                # consent prompt without the word "cookie" is left for the
+                # person, as the snapshot hint says. A marketing link like
+                # "Reject all and subscribe" or a footer "Cookie policy" is
+                # never mistaken for a banner.
+                keyword = cookie_overlay(loc)
+                if keyword != "cookie":
+                    continue
                 # Not de-duplicated by label: stacked layers can each offer
                 # "Accept all", and each must be reachable.
-                keyword = cookie_overlay(loc)
-                if not keyword:
-                    continue
                 found.append((loc, label, keyword))
     return found
 
@@ -507,11 +542,11 @@ def dismiss_consent(page, retry=False):
             handle.click(timeout=1500)
         except Exception:
             continue
-        # Mark the node so a later pass does not click it again if the banner
-        # is still there. The mark is on the element, so two stacked layers
-        # with identical buttons are still two different controls.
+        # Mark the banner so no other control in it is clicked, even if it
+        # stays on screen. Stacked layers are separate banners, so each is
+        # marked on its own.
         try:
-            handle.evaluate("e => e.setAttribute('data-gbot-clicked', '1')")
+            handle.evaluate(BANNER_MARK_JS)
         except Exception:
             pass
         settle(page)
