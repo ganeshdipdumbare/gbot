@@ -62,6 +62,10 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 501, "no speech-to-text server is configured")
 		return
 	}
+	if !s.voiceLimit.Allow(userFrom(r).ID) {
+		writeErr(w, http.StatusTooManyRequests, "slow down a little")
+		return
+	}
 	audio, err := io.ReadAll(r.Body)
 	if err != nil || len(audio) == 0 {
 		writeErr(w, 400, "no audio")
@@ -107,6 +111,10 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) speak(w http.ResponseWriter, r *http.Request) {
 	if s.Voice.TTSURL == "" {
 		writeErr(w, 501, "no text-to-speech server is configured")
+		return
+	}
+	if !s.voiceLimit.Allow(userFrom(r).ID) {
+		writeErr(w, http.StatusTooManyRequests, "slow down a little")
 		return
 	}
 	var body struct {

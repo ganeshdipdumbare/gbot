@@ -20,8 +20,13 @@ import (
 // Only the person a card belongs to can answer it: the owner of their
 // private chat with the bot, or the creator of a group.
 
-func (r *Runtime) addCard(ctx context.Context, c convo, b *store.Bot, runID, thread string, in kritrim.Interrupt, kind string) {
+func (r *Runtime) addCard(ctx context.Context, c convo, b *store.Bot, runID, thread string, in kritrim.Interrupt, kind string, tainted bool) {
 	data := map[string]any{"kind": kind, "interruptId": in.ID, "status": "pending", "botId": b.ID, "tool": in.Tool}
+	// A run that read outside text stays tainted across the pause: the card
+	// records it, and the resume job carries it (see Answer).
+	if tainted {
+		data["tainted"] = true
+	}
 	if c.GroupID != "" {
 		// A group's paused session lives under its own thread; a second
 		// pause on the same chain must find it again.
@@ -187,7 +192,8 @@ func (r *Runtime) Answer(ctx context.Context, caller *store.User, card *store.Me
 	}
 	decisions := r.runDecisions(ctx, card, c)
 	thread, _ := card.Data["thread"].(string)
-	r.Enqueue(Job{Bot: bot, Group: group, For: c.User, Trigger: "resume", Decisions: decisions, Thread: thread})
+	tainted, _ := card.Data["tainted"].(bool)
+	r.Enqueue(Job{Bot: bot, Group: group, For: c.User, Trigger: "resume", Decisions: decisions, Thread: thread, Untrusted: tainted})
 	return upd, nil
 }
 
