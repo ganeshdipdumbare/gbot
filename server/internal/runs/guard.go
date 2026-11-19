@@ -25,6 +25,8 @@ type runCtx struct {
 	// tainted is set once outside text (a webhook, a web page, an MCP
 	// result) entered the run: from then on, changes need approval.
 	tainted bool
+	// fetchable are the pages web_fetch may read in this run.
+	fetchable map[string]bool
 	// sources are the pages this run opened, for the Sources section.
 	sources []source
 	// pictures are what a tool handed back for the person to look at,
@@ -121,6 +123,29 @@ func (rc *runCtx) sourcesMarkdown(answer string) string {
 		return ""
 	}
 	return "\n\n**Sources**\n" + strings.Join(lines, "\n")
+}
+
+// allowFetch records a page web_fetch may read: a search result, or a link
+// the person wrote. Both are nil-safe so tools can run without a run.
+func (rc *runCtx) allowFetch(u string) {
+	if rc == nil {
+		return
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if rc.fetchable == nil {
+		rc.fetchable = map[string]bool{}
+	}
+	rc.fetchable[strings.TrimRight(u, "/")] = true
+}
+
+func (rc *runCtx) mayFetch(u string) bool {
+	if rc == nil {
+		return false
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	return rc.fetchable[strings.TrimRight(u, "/")]
 }
 
 func (rc *runCtx) isTainted() bool { rc.mu.Lock(); defer rc.mu.Unlock(); return rc.tainted }

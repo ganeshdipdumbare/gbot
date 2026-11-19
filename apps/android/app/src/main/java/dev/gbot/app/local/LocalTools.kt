@@ -85,7 +85,12 @@ fun choiceLines(raw: String, max: Int): List<String> {
     private val archiveBot: suspend (String) -> Unit = { error("Archiving isn't available.") },
     /** What only the running brain can do: ask the person, routines, and checking the work. */
     private val host: ToolHost? = null,
+    /** Links the person wrote in their message: web_fetch may read these. */
+    knownUrls: Set<String> = emptySet(),
 ) {
+    /** Pages web_fetch may read: search results and the person's own links. Nothing else, since it asks no approval. */
+    private val fetchable = java.util.concurrent.ConcurrentHashMap.newKeySet<String>().apply { addAll(knownUrls.map { it.trimEnd('/') }) }
+
     /** The run behind these tools. */
     interface ToolHost {
         suspend fun ask(question: String, options: List<String>): String
@@ -579,11 +584,16 @@ fun choiceLines(raw: String, max: Int): List<String> {
 
     private fun search(query: String): String {
         if (query.isBlank()) return "Give a query."
-        return WebLookup.format(WebLookup.parseSearch(get(WebLookup.searchUrl(query))))
+        val hits = WebLookup.parseSearch(get(WebLookup.searchUrl(query)))
+        hits.forEach { fetchable += it.url.trimEnd('/') }
+        return WebLookup.format(hits)
     }
 
     private fun fetch(raw: String): String {
         val url = WebLookup.https(BrowserController.normalize(raw)) ?: return "Give an absolute https address."
+        if (url.trimEnd('/') !in fetchable) {
+            return "That page didn't come from a search result or the person's message. Search for it first, or use browser_open, which asks the person."
+        }
         return WebLookup.pageText(url, get(url))
     }
 

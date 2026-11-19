@@ -407,6 +407,7 @@ class LocalBrain(
                 createBot = { name, title -> api.createBot(name, title, dev.gbot.app.net.Look()) },
                 changeBot = { id, patch -> api.updateBot(id, patch) },
                 archiveBot = { id -> api.archiveBot(id) },
+                knownUrls = WebLookup.linksIn(prompt),
                 host = object : LocalTools.ToolHost {
                     override suspend fun ask(question: String, options: List<String>) = askPerson(bot, group, question, options)
                     override suspend fun routines() = db.routines(bot.id)
@@ -927,7 +928,7 @@ class LocalBrain(
             appendLine()
             appendLine("Tools (the schemas say the rest):")
             appendLine("- browser_*: your own browser window, which the person can watch. Use it when the job needs a sign-in, a form or a click — applying, booking, buying, checking their account. browser_read before you act, then use the numbered ids it gives you; one read per action, not two.")
-            appendLine("- web_search first for anything current or on the web (one fast step; run several together), then web_fetch on one or two results when a snippet isn't enough: a page's title, main picture and text, nothing on screen. No sign-ins, no clicking. The browser is slower; use it only for sign-ins, forms and pages that need clicks.")
+            appendLine("- web_search first for anything current or on the web (one fast step; run several together), then web_fetch on one or two results (or a link the person gave) when a snippet isn't enough: a page's title, main picture and text, nothing on screen. No sign-ins, no clicking. The browser is slower; use it only for sign-ins, forms and pages that need clicks.")
             appendLine("- open_in_chrome when a site needs their own browser; vault_type for a saved secret, never a password you typed.")
             appendLine("- calendar_* and contact_search: if the phone has several accounts the answer lists them; ask the person which with ask_user (give the accounts as options), then call again with account. They are remembered after that.")
             appendLine("- ask_user for any question or choice — a card, not plain text. notify, remember, forget, recall, profile, use_skill, file_*, routine_*.")

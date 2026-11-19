@@ -34,6 +34,8 @@ const (
 	searchEndpoint = "https://www.bing.com/search"
 )
 
+var linkRE = regexp.MustCompile(`https://[^\s<>"']+`)
+
 type searchIn struct {
 	Query string `json:"query" desc:"what to search for, in plain words"`
 }
@@ -129,7 +131,21 @@ func get(ctx context.Context, rawURL string, post url.Values) ([]byte, string, e
 	if post != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	resp, err := netguard.Client(webTimeout).Do(req)
+	// One lookup per connection: nothing reuses it, so don't leave it idle.
+	req.Close = true
+	client := netguard.Client(webTimeout)
+	// Follow a few redirects (http to https, www, locale), each still https
+	// and each dialled through the guard.
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 4 {
+			return errors.New("too many redirects")
+		}
+		if next.URL.Scheme != "https" {
+			return errors.New("redirected away from https")
+		}
+		return netguard.Endpoint(next.URL.String())
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err
 	}
@@ -141,7 +157,8 @@ func get(ctx context.Context, rawURL string, post url.Values) ([]byte, string, e
 	return raw, resp.Header.Get("Content-Type"), err
 }
 
-// webSearch runs one search and formats the hits for the model.
+// webSearch runs one search and formats the hits for the model. The links
+// it returns are the ones web_fetch may read later in the same run.
 func (r *Runtime) webSearch(ctx context.Context, in searchIn) (string, error) {
 	q := strings.TrimSpace(in.Query)
 	if q == "" {
@@ -156,7 +173,9 @@ func (r *Runtime) webSearch(ctx context.Context, in searchIn) (string, error) {
 		return "No results. Try different words.", nil
 	}
 	var sb strings.Builder
+	rc := runFrom(ctx)
 	for i, h := range hits {
+		rc.allowFetch(h.URL)
 		fmt.Fprintf(&sb, "%d. %s\n   %s\n", i+1, h.Title, h.URL)
 		if h.Snippet != "" {
 			fmt.Fprintf(&sb, "   %s\n", h.Snippet)
@@ -170,6 +189,12 @@ func (r *Runtime) webFetch(ctx context.Context, in fetchIn) (string, error) {
 	u := safeLink(in.URL)
 	if u == "" {
 		return "", errors.New("give an absolute https URL")
+	}
+	// Only a page the search returned, or one the person wrote in their
+	// message. A page the bot makes up could carry what it knows to a site
+	// an injected instruction chose, and this tool asks no approval.
+	if !runFrom(ctx).mayFetch(u) {
+		return "", errors.New("that page didn't come from a search result or the person's message. Search for it first, or use browser_navigate, which asks the person")
 	}
 	body, ctype, err := get(ctx, u, nil)
 	if err != nil {

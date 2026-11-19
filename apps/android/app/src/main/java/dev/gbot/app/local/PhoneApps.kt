@@ -115,7 +115,8 @@ object PhoneApps {
             val hit = accounts.firstOrNull { it.equals(want, true) } ?: accounts.firstOrNull { it.contains(want, true) }
             return if (hit != null) Pick.Use(hit) else Pick.Unknown(want, accounts)
         }
-        if (accounts.size <= 1) return Pick.Use(accounts.firstOrNull())
+        // One account (or none) is nothing to choose between: search everything, local contacts and calendars included.
+        if (accounts.size <= 1) return Pick.Use(null)
         saved?.let { s -> accounts.firstOrNull { it.equals(s, true) } }?.let { return Pick.Use(it) }
         return Pick.Ask(accounts)
     }
@@ -133,6 +134,9 @@ object PhoneApps {
         if (account != null) prefs(ctx).edit().putString("phoneapp_account_$appId", account).apply()
     }
 
+    /** Only real mail-style accounts count; messaging apps and the phone itself register others. */
+    private fun isMailAccount(name: String) = name.contains('@')
+
     /** Accounts that hold calendars the person can see (or write to). */
     private fun calendarAccounts(ctx: Context, writable: Boolean): List<String> {
         val out = linkedSetOf<String>()
@@ -140,7 +144,7 @@ object PhoneApps {
             CalendarContract.Calendars.CONTENT_URI, arrayOf(CalendarContract.Calendars.ACCOUNT_NAME),
             "${CalendarContract.Calendars.VISIBLE} = 1" + if (writable) " AND ${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR}" else "",
             null, null,
-        )?.use { c -> while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { out += it } }
+        )?.use { c -> while (c.moveToNext()) c.getString(0)?.takeIf { isMailAccount(it) }?.let { out += it } }
         return out.toList()
     }
 
@@ -149,7 +153,7 @@ object PhoneApps {
         ctx.contentResolver.query(
             ContactsContract.RawContacts.CONTENT_URI, arrayOf(ContactsContract.RawContacts.ACCOUNT_NAME),
             "${ContactsContract.RawContacts.DELETED} = 0", null, null,
-        )?.use { c -> while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { out += it } }
+        )?.use { c -> while (c.moveToNext()) c.getString(0)?.takeIf { isMailAccount(it) }?.let { out += it } }
         return out.toList()
     }
 

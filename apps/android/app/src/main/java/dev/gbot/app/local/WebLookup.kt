@@ -28,6 +28,11 @@ object WebLookup {
     private val dropped = Regex("(?is)<(script|style|noscript|svg|template|head)\\b[^>]*>.*?</(script|style|noscript|svg|template|head)\\s*>|<!--.*?-->")
     private val breaks = Regex("(?i)</?(br|p|div|li|h[1-6]|tr|table|section|article)\\b[^>]*>")
 
+    private val link = Regex("https://[^\\s<>\"']+")
+
+    /** https links the person wrote, without the punctuation that follows them. */
+    fun linksIn(text: String): Set<String> = link.findAll(text).map { it.value.trimEnd('.', ',', ';', ':', '!', '?', ')', '"', '\'') }.take(20).toSet()
+
     fun searchUrl(query: String): String = SEARCH + "?setlang=en&q=" + URLEncoder.encode(query.trim(), "UTF-8")
 
     fun parseSearch(page: String): List<Hit> {
