@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -177,6 +178,7 @@ private val catalog = listOf(
     CatalogApp("Whop", "Communities and payments", "https://mcp.whop.com/mcp", 0xFFFF6243, "Finance"),
     CatalogApp("Daloopa", "Financial model data", "https://mcp.daloopa.com/mcp", 0xFF1F3A93, "Finance"),
 )
+private const val PHONE = "On this phone"
 private fun sameUrl(a: String, b: String) = a.trimEnd('/') == b.trimEnd('/')
 private fun iconRes(name: String) = "ic_" + name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
 
@@ -208,6 +210,28 @@ fun Integrations(back: () -> Unit) {
     var error by remember { mutableStateOf("") }
     suspend fun load() { list = runCatching { app.api.mcp().servers }.getOrDefault(list ?: emptyList()) }
     LaunchedEffect(Unit) { load() }
+    // "On this phone": the apps already here, switched on one by one.
+    var phoneTick by remember { mutableStateOf(0) }
+    var pendingPhone by remember { mutableStateOf<dev.gbot.app.local.PhoneApps.App?>(null) }
+    val askPermissions = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) {
+        pendingPhone?.let { a ->
+            if (dev.gbot.app.local.PhoneApps.granted(ctx, a)) { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, true); app.toast("${a.name} is on") }
+            else app.toast("${a.name} stays off without the permission")
+        }
+        pendingPhone = null; phoneTick++
+    }
+    // Coming back from system settings, where a permission may have been revoked.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) phoneTick++ }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
+    fun turnOn(a: dev.gbot.app.local.PhoneApps.App) {
+        if (a.permissions.isEmpty() || dev.gbot.app.local.PhoneApps.granted(ctx, a)) { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, true); phoneTick++ }
+        else pendingPhone = a
+    }
+    LaunchedEffect(pendingPhone) { pendingPhone?.let { askPermissions.launch(it.permissions.toTypedArray()) } }
     // Servers connect in the background: poll while any is connecting.
     LaunchedEffect(list, connecting) {
         val waiting = connecting != null || list?.any { it.status == "connecting" || (it.status == "off" && it.enabled) } == true
@@ -241,8 +265,39 @@ fun Integrations(back: () -> Unit) {
     Screen("Integrations", back, actions = { GButton("Custom", { adding = Triple("", "", false); token = ""; error = "" }, variant = Variant.Soft, small = true, icon = "plus"); Spacer(Modifier.width(8.dp)) }) {
         Text("Let your bots work in the apps you already use. Each account stays yours, and you can remove an app any time.", style = T.small, color = g.ink2)
         Field(search, { search = it }, placeholder = "Search apps")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { (listOf("All") + categories).forEach { c -> Chip(c, cat == c, { cat = c }) } }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { ((listOf("All") + (if (app.mode == Mode.Local) listOf(PHONE) else emptyList())) + categories).forEach { c -> Chip(c, cat == c, { cat = c }) } }
         if (adding == null && connecting == null) ErrorText(error)
+        val mine = if (app.mode == Mode.Local && (cat == "All" || cat == PHONE)) dev.gbot.app.local.PhoneApps.apps.filter { "${it.name} ${it.blurb}".lowercase().contains(q) } else emptyList()
+        if (mine.isNotEmpty()) {
+            run {
+                if (cat == "All") SectionTitle(PHONE)
+                Text("Apps already on this phone. Nothing is shared with anyone: a bot can use one only while it's on here and Android allows it.", style = T.tiny, color = g.ink3)
+                phoneTick.let { }
+                mine.forEach { a ->
+                    val on = dev.gbot.app.local.PhoneApps.on(ctx, a.id)
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(1.dp, g.line, RoundedCornerShape(16.dp)).background(if (on) g.surface2 else Color.Transparent)
+                            .pressable(true) { if (on) { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, false); phoneTick++ } else turnOn(a) }
+                            .padding(horizontal = 10.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AppIcon(a.name, 0xFF3B5BDB, 34.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(a.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1)
+                            Text(a.why, style = T.tiny, color = g.ink2)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        if (on) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon("check", size = 14.dp, color = g.live); Spacer(Modifier.width(4.dp)); Text("On · turn off", style = T.tiny, color = g.ink3)
+                        } else Text(
+                            "Turn on", style = T.tiny.copy(fontWeight = FontWeight.Medium), color = g.ink,
+                            modifier = Modifier.clip(RoundedCornerShape(50)).background(g.surface).border(1.dp, g.line, RoundedCornerShape(50)).padding(horizontal = 10.dp, vertical = 5.dp),
+                        )
+                    }
+                }
+            }
+        }
         categories.forEach { c ->
             val inCat = apps.filter { it.category == c }
             if (inCat.isEmpty()) return@forEach
@@ -280,7 +335,7 @@ fun Integrations(back: () -> Unit) {
                 }
             }
         }
-        if (apps.isEmpty()) Text("No apps match “$search”. You can add it as a custom server above.", style = T.small, color = g.ink2)
+        if (apps.isEmpty() && mine.isEmpty()) Text("No apps match “$search”. You can add it as a custom server above.", style = T.small, color = g.ink2)
         SectionTitle("Connected")
         if (list?.isEmpty() == true) Text("Nothing connected yet.", style = T.small, color = g.ink3)
         list?.forEach { m -> ConnectedServer(m) { scope.launch { load() } } }
