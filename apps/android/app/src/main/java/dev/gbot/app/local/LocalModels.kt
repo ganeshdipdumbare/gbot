@@ -99,7 +99,10 @@ object LocalModels {
                     val serverTotal = res.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
                     // 416: the server has no bytes past the part. That is fine only if the part is the whole model.
                     if (res.code == 416 && have > 0) {
-                        val expected = serverTotal ?: e.bytes
+                        // No Content-Range: ask for the whole file's size. The catalog size can be wrong.
+                        val expected = serverTotal ?: client.newCall(Request.Builder().url(e.url).get().build())
+                            .execute().use { it.body.contentLength().takeIf { n -> n > 0 } ?: e.bytes }
+                        // A part that is the whole file is finished, even if the process died before the rename.
                         if (part.length() == expected) return@async finish(part, target)
                         // Nothing past this part can be fetched, so resuming it would fail the same way every time.
                         part.delete()

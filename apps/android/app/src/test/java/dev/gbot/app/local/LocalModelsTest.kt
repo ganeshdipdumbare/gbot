@@ -135,6 +135,22 @@ class LocalModelsTest {
     }
 
     @Test
+    fun `a complete saved part is installed even when the catalog size is wrong`() = runBlocking {
+        // The part is the whole file, but the server sends no Content-Range on its 416.
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                if (request.headers["Range"] != null) MockResponse.Builder().code(416).build()
+                else MockResponse.Builder().code(200).body(Buffer().write(model)).build()
+        }
+        File(dir, "test-model.litertlm.part").writeBytes(model)
+
+        val file = LocalModels.downloadTo(dir, entry(bytes = model.size + 1_000L)) { _, _ -> }
+
+        assertArrayEquals(model, file.readBytes())
+        assertFalse(File(dir, "test-model.litertlm.part").exists())
+    }
+
+    @Test
     fun `a saved part that is longer than the model is removed, not installed`() = runBlocking {
         // The server has nothing past a part this long, so it answers 416.
         server.dispatcher = object : Dispatcher() {
