@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -219,6 +220,13 @@ fun Integrations(back: () -> Unit) {
         }
         pendingPhone = null; phoneTick++
     }
+    // Coming back from system settings, where a permission may have been revoked.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) phoneTick++ }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
     fun turnOn(a: dev.gbot.app.local.PhoneApps.App) {
         if (a.permissions.isEmpty() || dev.gbot.app.local.PhoneApps.granted(ctx, a)) { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, true); phoneTick++ }
         else pendingPhone = a
@@ -259,9 +267,9 @@ fun Integrations(back: () -> Unit) {
         Field(search, { search = it }, placeholder = "Search apps")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { ((listOf("All") + (if (app.mode == Mode.Local) listOf(PHONE) else emptyList())) + categories).forEach { c -> Chip(c, cat == c, { cat = c }) } }
         if (adding == null && connecting == null) ErrorText(error)
-        if (app.mode == Mode.Local && (cat == "All" || cat == PHONE)) {
-            val mine = dev.gbot.app.local.PhoneApps.apps.filter { "${it.name} ${it.blurb}".lowercase().contains(q) }
-            if (mine.isNotEmpty()) {
+        val mine = if (app.mode == Mode.Local && (cat == "All" || cat == PHONE)) dev.gbot.app.local.PhoneApps.apps.filter { "${it.name} ${it.blurb}".lowercase().contains(q) } else emptyList()
+        if (mine.isNotEmpty()) {
+            run {
                 if (cat == "All") SectionTitle(PHONE)
                 Text("Apps already on this phone. Nothing is shared with anyone: a bot can use one only while it's on here and Android allows it.", style = T.tiny, color = g.ink3)
                 phoneTick.let { }
@@ -327,7 +335,7 @@ fun Integrations(back: () -> Unit) {
                 }
             }
         }
-        if (apps.isEmpty() && cat != PHONE) Text("No apps match “$search”. You can add it as a custom server above.", style = T.small, color = g.ink2)
+        if (apps.isEmpty() && mine.isEmpty()) Text("No apps match “$search”. You can add it as a custom server above.", style = T.small, color = g.ink2)
         SectionTitle("Connected")
         if (list?.isEmpty() == true) Text("Nothing connected yet.", style = T.small, color = g.ink3)
         list?.forEach { m -> ConnectedServer(m) { scope.launch { load() } } }

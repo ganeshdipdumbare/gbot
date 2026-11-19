@@ -10,15 +10,22 @@ import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.CalendarContract
 import android.provider.ContactsContract
+import android.app.PendingIntent
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
+import dev.gbot.app.live.Alerts
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.TimeZone
 
@@ -72,8 +79,18 @@ object PhoneApps {
     /** On means the person chose it and Android still allows it. */
     fun on(ctx: Context, id: String): Boolean {
         val app = apps.find { it.id == id } ?: return false
-        return enabled(ctx, id) && granted(ctx, app)
+        if (!enabled(ctx, id)) return false
+        if (granted(ctx, app)) return true
+        // Android took the permission back: switch the app off, so it stays off if the permission returns.
+        setEnabled(ctx, id, false)
+        return false
     }
+
+    /** Which app each tool belongs to. */
+    private val appOf = mapOf(
+        "calendar_list" to "calendar", "calendar_add" to "calendar", "contact_search" to "contacts",
+        "email_draft" to "email", "alarm_set" to "clock", "timer_set" to "clock",
+    )
 
     // ---- Tools ------------------------------------------------------------
 
@@ -158,6 +175,9 @@ object PhoneApps {
     }
 
     fun run(ctx: Context, name: String, a: JsonObject): String = try {
+        // A model can name a tool it wasn't offered (an old chat, a guess, injected text), so check again here.
+        val appId = appOf[name]
+        if (appId == null || !on(ctx, appId)) return "That isn't turned on. The person can turn it on in Settings → Integrations → On this phone."
         when (name) {
             "calendar_list" -> calendarList(ctx, a)
             "calendar_add" -> calendarAdd(ctx, a)
@@ -178,24 +198,25 @@ object PhoneApps {
     private fun JsonObject.n(k: String) = plainText(this[k]?.jsonPrimitive?.contentOrNull.orEmpty()).toDoubleOrNull()?.toInt() ?: 0
 
     /** A time as the model wrote it: a date, or a date with a time, in this phone's zone. */
-    private fun parse(raw: String): Pair<Long, Boolean>? {
+    internal fun parse(raw: String, zone: ZoneId = ZoneId.systemDefault(), allDayZone: ZoneId = ZoneId.of("UTC")): Pair<Long, Boolean>? {
         val s = raw.trim().replace(' ', 'T')
         if (s.isEmpty()) return null
-        val zone = ZoneId.systemDefault()
         runCatching { return LocalDateTime.parse(s.removeSuffix("Z")).atZone(zone).toInstant().toEpochMilli() to false }
-        runCatching { return LocalDate.parse(s).atStartOfDay(zone).toInstant().toEpochMilli() to true }
+        runCatching { return LocalDate.parse(s).atStartOfDay(allDayZone).toInstant().toEpochMilli() to true }
         runCatching { return java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli() to false }
         return null
     }
 
-    private val shown = SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault())
-    private val shownDay = SimpleDateFormat("EEE d MMM", Locale.getDefault())
+    // DateTimeFormatter is thread-safe, and bots run on several threads.
+    private fun shown(ms: Long) = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.getDefault()).withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(ms))
+    private fun clock(ms: Long) = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()).withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(ms))
     /** All-day events are stored at midnight UTC, so read them back in UTC. */
-    private val allDayFmt = SimpleDateFormat("EEE d MMM", Locale.getDefault()).apply { timeZone = TimeZone.getTimeZone("UTC") }
+    private fun day(ms: Long) = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault()).withZone(ZoneOffset.UTC).format(Instant.ofEpochMilli(ms))
 
     private fun calendarList(ctx: Context, a: JsonObject): String {
-        val from = parse(a.s("from"))?.first ?: System.currentTimeMillis()
-        val to = parse(a.s("to"))?.first ?: (from + 7 * 24 * 3600 * 1000L)
+        val local = ZoneId.systemDefault()
+        val from = parse(a.s("from"), local, local)?.first ?: System.currentTimeMillis()
+        val to = parse(a.s("to"), local, local)?.first ?: (from + 7 * 24 * 3600 * 1000L)
         val query = a.s("query").lowercase()
         val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
             ContentUris.appendId(it, from); ContentUris.appendId(it, to)
@@ -212,8 +233,8 @@ object PhoneApps {
                 val allDay = c.getInt(3) == 1
                 val begin = c.getLong(1)
                 val end = c.getLong(2)
-                val whenText = if (allDay) allDayFmt.format(Date(begin)) + " (all day)"
-                else shown.format(Date(begin)) + "–" + SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(end))
+                val whenText = if (allDay) day(begin) + " (all day)"
+                else shown(begin) + "–" + clock(end)
                 val place = c.getString(4).orEmpty()
                 out += "• $whenText · $title" + (if (place.isNotEmpty()) " · $place" else "") + " [${c.getString(5).orEmpty()}]"
             }
@@ -248,7 +269,7 @@ object PhoneApps {
             a.s("notes").takeIf { it.isNotEmpty() }?.let { put(CalendarContract.Events.DESCRIPTION, it) }
         }
         ctx.contentResolver.insert(CalendarContract.Events.CONTENT_URI, v) ?: return "The calendar refused the event."
-        return "Added “$title” on ${if (allDay) shownDay.format(Date(start)) else shown.format(Date(start))}."
+        return "Added “$title” on ${if (allDay) day(start) else shown(start)}."
     }
 
     private fun contactSearch(ctx: Context, q: String): String {
@@ -256,11 +277,14 @@ object PhoneApps {
         val people = linkedMapOf<Long, Triple<String, MutableSet<String>, MutableSet<String>>>()
         fun person(id: Long, name: String) = people.getOrPut(id) { Triple(name, linkedSetOf(), linkedSetOf()) }
         val like = "%$q%"
+        // Numbers are stored formatted, like +1 (555) 123-4567, so match the digits too.
+        val digits = q.filter { it.isDigit() || it == '+' }
+        val numberLike = if (digits.count { it.isDigit() } >= 3) "%$digits%" else like
         ctx.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(ContactsContract.CommonDataKinds.Phone.CONTACT_ID, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ? OR ${ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ?",
-            arrayOf(like, like), null,
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ? OR ${ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ? OR ${ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER} LIKE ?",
+            arrayOf(like, like, numberLike), null,
         )?.use { c -> while (c.moveToNext() && people.size < 15) person(c.getLong(0), c.getString(1).orEmpty()).second += c.getString(2).orEmpty() }
         ctx.contentResolver.query(
             ContactsContract.CommonDataKinds.Email.CONTENT_URI,
@@ -285,9 +309,25 @@ object PhoneApps {
         }
     }
 
-    private fun launch(ctx: Context, i: Intent): Boolean = try {
-        ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
-    } catch (_: Exception) { false }
+    private fun inForeground() = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+
+    /**
+     * Android silently blocks an activity started from the background, with no
+     * error, so never report success from there. Leave a notification the
+     * person can tap instead, and say so. Returns null when it opened for real.
+     */
+    private fun launch(ctx: Context, i: Intent, what: String): String? {
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (inForeground()) return try { ctx.startActivity(i); null } catch (_: Exception) { "Nothing on this phone could open that." }
+        val tap = PendingIntent.getActivity(ctx, System.currentTimeMillis().toInt(), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = NotificationCompat.Builder(ctx, Alerts.CH_ALERTS)
+            .setSmallIcon(dev.gbot.app.R.drawable.ic_notify)
+            .setContentTitle("gbot needs a tap").setContentText(what)
+            .setContentIntent(tap).setAutoCancel(true).build()
+        val posted = runCatching { NotificationManagerCompat.from(ctx).notify(System.currentTimeMillis().toInt(), n) }.isSuccess
+        return if (posted) "gbot is in the background, so Android won't let it open this. A notification is waiting; the person taps it to finish. It is NOT done yet — don't say it is."
+        else "gbot is in the background and Android blocked it. Nothing was done; ask the person to open gbot and try again."
+    }
 
     private fun emailDraft(ctx: Context, a: JsonObject): String {
         val i = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")).apply {
@@ -295,8 +335,8 @@ object PhoneApps {
             putExtra(Intent.EXTRA_SUBJECT, a.s("subject"))
             putExtra(Intent.EXTRA_TEXT, a.s("body"))
         }
-        return if (launch(ctx, i)) "The draft is open in the person's mail app. They will review it and press Send; nothing has been sent."
-        else "No mail app opened. Ask the person to set up a mail app."
+        return launch(ctx, i, "Open the email draft to ${a.s("to")}")
+            ?: "The draft is open in the person's mail app. They will review it and press Send; nothing has been sent."
     }
 
     private fun alarm(ctx: Context, a: JsonObject): String {
@@ -304,7 +344,7 @@ object PhoneApps {
         if (h !in 0..23 || m !in 0..59) return "Give an hour from 0 to 23 and a minute from 0 to 59."
         val i = Intent(AlarmClock.ACTION_SET_ALARM).putExtra(AlarmClock.EXTRA_HOUR, h).putExtra(AlarmClock.EXTRA_MINUTES, m)
             .putExtra(AlarmClock.EXTRA_MESSAGE, a.s("label")).putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-        return if (launch(ctx, i)) "Alarm set for %02d:%02d.".format(h, m) else "No clock app answered."
+        return launch(ctx, i, "Set the %02d:%02d alarm".format(h, m)) ?: "Alarm set for %02d:%02d.".format(h, m)
     }
 
     private fun timer(ctx: Context, a: JsonObject): String {
@@ -312,6 +352,6 @@ object PhoneApps {
         if (s !in 1..86400) return "Give a length from 1 second to 24 hours."
         val i = Intent(AlarmClock.ACTION_SET_TIMER).putExtra(AlarmClock.EXTRA_LENGTH, s)
             .putExtra(AlarmClock.EXTRA_MESSAGE, a.s("label")).putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-        return if (launch(ctx, i)) "Timer started for $s seconds." else "No clock app answered."
+        return launch(ctx, i, "Start the $s-second timer") ?: "Timer started for $s seconds."
     }
 }
