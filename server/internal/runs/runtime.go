@@ -783,7 +783,10 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 				kritrim.Decisions(autoDecisions(rc, sess, j.Decisions)), kritrim.OnEvent(onEvent))
 		} else {
 			r.expireCards(bg, c)
-			history, prompt := r.groupHistory(bg, j, req)
+			history, prompt, links := r.groupHistory(bg, j, req)
+			for _, u := range links {
+				rc.allowFetch(u)
+			}
 			_ = r.sessions.Save(bg, &kritrim.Session{ID: th, Messages: history})
 			res, err = runAgent.Run(ctx, notes+prompt, kritrim.Thread(th), kritrim.User(userID), kritrim.OnEvent(onEvent))
 			delivered = true
@@ -1096,13 +1099,19 @@ func (r *Runtime) handoff(j *Job, reply string) {
 
 // groupHistory turns the group transcript into the acting bot's view:
 // its own messages are the assistant's; everyone else is named.
-func (r *Runtime) groupHistory(ctx context.Context, j *Job, who *store.User) ([]kritrim.Message, string) {
+func (r *Runtime) groupHistory(ctx context.Context, j *Job, who *store.User) ([]kritrim.Message, string, []string) {
 	msgs, _ := r.store.ListGroupMessages(ctx, j.Group.ID, nil, 40)
 	names := map[string]string{}
 	var hist []kritrim.Message
+	// Links the person wrote in this chat: web_fetch may read them. A bot's
+	// message in the group can't vouch for a link.
+	var theirs []string
 	for _, m := range msgs {
 		if m.Role != "user" && m.Role != "bot" {
 			continue
+		}
+		if m.Role == "user" && !j.Untrusted && j.Trigger == "chat" {
+			theirs = append(theirs, linksIn(m.Content)...)
 		}
 		if m.Role == "bot" && m.BotID == j.Bot.ID {
 			hist = append(hist, kritrim.Message{Role: kritrim.RoleAssistant, Content: m.Content})
@@ -1121,13 +1130,13 @@ func (r *Runtime) groupHistory(ctx context.Context, j *Job, who *store.User) ([]
 	}
 	if j.Prompt != "" {
 		// Not from the transcript, e.g. another bot's reply.
-		return hist, j.Prompt
+		return hist, j.Prompt, theirs
 	}
 	if len(hist) == 0 || hist[len(hist)-1].Role != kritrim.RoleUser {
-		return hist, "(Your turn. Reply if you have something useful to add; otherwise reply with a short acknowledgement.)"
+		return hist, "(Your turn. Reply if you have something useful to add; otherwise reply with a short acknowledgement.)", theirs
 	}
 	last := hist[len(hist)-1].Content
-	return hist[:len(hist)-1], last
+	return hist[:len(hist)-1], last, theirs
 }
 
 func (r *Runtime) event(c convo, b *store.Bot, text string, data map[string]any) {
