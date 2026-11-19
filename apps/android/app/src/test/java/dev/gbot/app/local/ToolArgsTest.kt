@@ -88,6 +88,10 @@ class ToolArgsTest {
         for (u in listOf("https:mail.google.com", "https//mail.google.com", "\"gmail.com\"", "<https://gmail.com>", "gmail.com/?next=https://example.com")) {
             assertTrue(u, LocalTools.isWebmail(u))
         }
+        // Spellings Chromium reads as Gmail.
+        for (u in listOf("https:\\\\mail.google.com", "https:///\\mail.google.com", "https://%6Dail.google.com", "https://ｍａｉｌ.google.com")) {
+            assertTrue(u, LocalTools.isWebmail(u))
+        }
         assertFalse(LocalTools.isWebmail("example.com/?next=https://mail.google.com"))
         assertFalse(LocalTools.isWebmail("gmail login help"))
     }

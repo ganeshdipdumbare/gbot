@@ -649,9 +649,15 @@ fun choiceLines(raw: String, max: Int): List<String> {
             // wrote: browser_open strips quotes and fixes https:host first.
             val loaded = BrowserController.normalize(url)
             val scheme = SCHEME.find(loaded) ?: return false
-            val rest = loaded.substring(scheme.range.last + 1)
+            // Read the host the way Chromium does: past any extra / or \,
+            // with %-escapes decoded and fullwidth or other Unicode letters
+            // mapped to ASCII.
+            val rest = loaded.substring(scheme.range.last + 1).trimStart('/', '\\')
             val authority = rest.takeWhile { it !in "/?#\\" }
-            val host = authority.substringAfterLast('@').substringBefore(':').lowercase().trimEnd('.')
+            val raw = authority.substringAfterLast('@').substringBefore(':')
+            val decoded = runCatching { java.net.URLDecoder.decode(raw.replace("+", "%2B"), "UTF-8") }.getOrDefault(raw)
+            val host = runCatching { java.net.IDN.toASCII(decoded, java.net.IDN.ALLOW_UNASSIGNED) }.getOrDefault(decoded)
+                .lowercase().trimEnd('.')
             if (host.isEmpty()) return false
             fun under(d: String) = host == d || host.endsWith(".$d")
             if (WEBMAIL.any(::under)) return true
