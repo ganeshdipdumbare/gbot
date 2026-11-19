@@ -944,7 +944,8 @@ class LocalBrain(
             appendLine("- Never say something was sent, submitted, applied for, booked or bought unless the page confirmed it.")
             appendLine("- remember durable facts and preferences; forget when they correct you.")
             appendLine("- A message may carry an internal plan. Follow it, and never mention it. No plan and the task has several steps? call plan, one step per line.")
-            appendLine("- You cannot run shell commands, open other apps, text, email or post through chat apps.")
+            appendLine("- You cannot run shell commands, open other apps, text or post through chat apps.")
+            appendLine("- " + LocalTools.mailRule(PhoneApps.on(ctx, "email")))
             appendLine()
             appendLine("The person's details:")
             appendLine(profile)
@@ -1205,15 +1206,7 @@ class LocalBrain(
         })
     }
 
-    private fun Map<String, Any?>.toJson(): JsonObject = JsonObject(mapValues { (_, v) ->
-        when (v) {
-            null -> JsonNull
-            is Number -> JsonPrimitive(v)
-            is Boolean -> JsonPrimitive(v)
-            is String -> JsonPrimitive(v)
-            else -> JsonPrimitive(v.toString())
-        }
-    })
+    private fun Map<String, Any?>.toJson(): JsonObject = JsonObject(mapValues { (_, v) -> jsonOf(v) })
 
     private fun textOf(m: Message): String =
         m.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
@@ -1224,8 +1217,27 @@ class LocalBrain(
         if (e == null) Log.i(TAG, msg) else Log.w(TAG, msg, e)
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "gbot-local"
+
+        /**
+         * A tool argument as JSON, keeping its shape. A provider's arguments
+         * are already JSON and pass through as they are; the on-device
+         * engine's are plain lists and maps. Turning either into its text
+         * would hand a tool "[{…}]" where it needs a list, so show_results
+         * would never see its items and every string would gain quotes.
+         */
+        fun jsonOf(v: Any?): JsonElement = when (v) {
+            null -> JsonNull
+            is JsonElement -> v
+            is Number -> JsonPrimitive(v)
+            is Boolean -> JsonPrimitive(v)
+            is String -> JsonPrimitive(v)
+            is Map<*, *> -> JsonObject(v.entries.associate { (k, x) -> k.toString() to jsonOf(x) })
+            is Iterable<*> -> JsonArray(v.map { jsonOf(it) })
+            is Array<*> -> JsonArray(v.map { jsonOf(it) })
+            else -> JsonPrimitive(v.toString())
+        }
 
         /**
          * Model/tool rounds for a model running on the phone itself. A task

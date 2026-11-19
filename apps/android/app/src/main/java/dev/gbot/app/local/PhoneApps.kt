@@ -204,7 +204,8 @@ object PhoneApps {
         if (on(ctx, "email")) {
             add(
                 ToolSchema(
-                    "email_draft", "Open a draft in the person's mail app. They review it and press Send themselves.",
+                    "email_draft", "Write an email: it opens as a draft in the person's mail app (Gmail included), already signed in, and they review it and press Send. " +
+                        "This is the way to email; never open Gmail or another mail site in the browser.",
                     p(
                         "to", "string", "Recipient address",
                         "subject", "string", "Subject",
@@ -264,9 +265,9 @@ object PhoneApps {
         "That didn't work: ${e.message ?: e.javaClass.simpleName}"
     }
 
-    // Arguments from a hosted provider reach us still wrapped in quotes; plainText unwraps them.
-    private fun JsonObject.s(k: String) = plainText(this[k]?.jsonPrimitive?.contentOrNull.orEmpty())
-    private fun JsonObject.n(k: String) = plainText(this[k]?.jsonPrimitive?.contentOrNull.orEmpty()).toDoubleOrNull()?.toInt() ?: 0
+    // Arguments arrive as the model sent them; plainText unwraps a value the model quoted itself.
+    private fun JsonObject.s(k: String) = plainText(argText(this[k]))
+    private fun JsonObject.n(k: String) = plainText(argText(this[k])).toDoubleOrNull()?.toInt() ?: 0
 
     /** A time as the model wrote it: a date, or a date with a time, in this phone's zone. */
     internal fun parse(raw: String, zone: ZoneId = ZoneId.systemDefault(), allDayZone: ZoneId = ZoneId.of("UTC")): Pair<Long, Boolean>? {
