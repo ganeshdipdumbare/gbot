@@ -172,7 +172,11 @@ fun choiceLines(raw: String, max: Int): List<String> {
             params("query", "string", "Words to look for", required = listOf("query")),
         ),
         ToolSchema(
-            "web_fetch", "Read a page's text without opening the browser. For information where the person only wants the answer: it has no sign-ins, cannot click, and the person sees nothing while it runs.",
+            "web_search", "Search the web and get titles, links and snippets back in about a second. Use it first for anything current (hotels, prices, news, products, places); much faster than the browser.",
+            params("query", "string", "What to search for, in plain words", required = listOf("query")),
+        ),
+        ToolSchema(
+            "web_fetch", "Read one https page as text, with its title and main picture, without opening the browser. For information where the person only wants the answer: it has no sign-ins, cannot click, and the person sees nothing while it runs.",
             params("url", "string", "Full web address", required = listOf("url")),
         ),
         ToolSchema("profile", "The person's own details, for filling in forms (name, email, phone, links, about).", params()),
@@ -295,7 +299,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
     /** Tools that change something out in the world, so they ask first. */
     fun needsApproval(name: String) = name in setOf(
         "browser_open", "browser_click", "browser_fill", "browser_enter", "open_in_chrome", "vault_type",
-        "routine_create", "web_fetch", "bot_create", "bot_update", "bot_archive",
+        "routine_create", "bot_create", "bot_update", "bot_archive",
         "routine_update", "routine_delete", "task_contract",
     ) || name in PhoneApps.needsApproval
 
@@ -451,6 +455,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
             val past = db.searchMessages(botId, q).map { "${if (it.role == "user") "They said" else "I said"}: ${it.content.take(300)}" }
             (notes + past).take(8).joinToString("\n").ifBlank { "Nothing found." }
         }
+        "web_search" -> search(args.str("query"))
         "web_fetch" -> fetch(args.str("url"))
         "profile" -> db.get("profile").orEmpty().ifBlank { "The person has not filled in their details." }
         "use_skill" -> skills.find { it.name.equals(args.str("name"), ignoreCase = true) }?.body
@@ -564,24 +569,22 @@ fun choiceLines(raw: String, max: Int): List<String> {
         runCatching { NotificationManagerCompat.from(ctx).notify(System.currentTimeMillis().toInt(), n) }
     }
 
-    private fun fetch(raw: String): String {
-        val url = BrowserController.normalize(raw)
-        val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Linux; Android 14) gbot").build()
+    private fun get(url: String): String {
+        val req = Request.Builder().url(url).header("User-Agent", WebLookup.AGENT).header("Accept-Language", "en").build()
         return http.newCall(req).execute().use { res ->
-            val body = res.body.string()
-            if (!res.isSuccessful) return@use "The page returned ${res.code}."
-            val text = body
-                .replace(Regex("(?is)<(script|style|noscript|svg)[^>]*>.*?</\\1>"), " ")
-                .replace(Regex("(?s)<[^>]+>"), " ")
-                .replace(Regex("&nbsp;"), " ")
-                .replace(Regex("&amp;"), "&")
-                .replace(Regex("&lt;"), "<")
-                .replace(Regex("&gt;"), ">")
-                .replace(Regex("[ \\t]+"), " ")
-                .replace(Regex("\\n{3,}"), "\n\n")
-                .trim()
-            text.take(6000).ifBlank { "That page had no readable text." }
+            if (!res.isSuccessful) throw java.io.IOException("the site answered ${res.code}")
+            res.body.string()
         }
+    }
+
+    private fun search(query: String): String {
+        if (query.isBlank()) return "Give a query."
+        return WebLookup.format(WebLookup.parseSearch(get(WebLookup.searchUrl(query))))
+    }
+
+    private fun fetch(raw: String): String {
+        val url = WebLookup.https(BrowserController.normalize(raw)) ?: return "Give an absolute https address."
+        return WebLookup.pageText(url, get(url))
     }
 
     companion object {

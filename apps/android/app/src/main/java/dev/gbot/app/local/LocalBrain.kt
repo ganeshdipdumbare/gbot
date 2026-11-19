@@ -724,7 +724,7 @@ class LocalBrain(
         val name = canonicalTool(called)
         val args = canonicalArgs(name, calledArgs)
         if (name != called) log("tool $called -> $name")
-        val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch"
+        val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch" || name == "web_search"
         val onComputer = usesComputer(name)
         if (onComputer) {
             browsing.add(bot.id)
@@ -773,6 +773,7 @@ class LocalBrain(
             "browser_click" -> "clicked [${a("id")}]"
             "browser_fill" -> "typed into [${a("id")}]" + if (a("submit") == "true") " and submitted" else ""
             "browser_enter" -> "submitted [${a("id")}]"
+            "web_search" -> "searched ${a("query")}"
             "web_fetch" -> "fetched ${a("url")}"
             "file_write", "file_read" -> "$name: ${a("path")}"
             else -> name
@@ -926,11 +927,11 @@ class LocalBrain(
             appendLine()
             appendLine("Tools (the schemas say the rest):")
             appendLine("- browser_*: your own browser window, which the person can watch. Use it when the job needs a sign-in, a form or a click — applying, booking, buying, checking their account. browser_read before you act, then use the numbered ids it gives you; one read per action, not two.")
-            appendLine("- web_fetch: a page's text, nothing on screen. For information only — no sign-ins, no clicking.")
+            appendLine("- web_search first for anything current or on the web (one fast step; run several together), then web_fetch on one or two results when a snippet isn't enough: a page's title, main picture and text, nothing on screen. No sign-ins, no clicking. The browser is slower; use it only for sign-ins, forms and pages that need clicks.")
             appendLine("- open_in_chrome when a site needs their own browser; vault_type for a saved secret, never a password you typed.")
             appendLine("- ask_user for any question or choice — a card, not plain text. notify, remember, forget, recall, profile, use_skill, file_*, routine_*.")
             appendLine("- task_contract then task_verify for a multi-step deliverable they will check; a quick answer needs neither. Never claim success against a failed check.")
-            appendLine("- show_results for a list of 2+ things to compare (hotels, products, places) after you have read them from a tool: they appear as cards. Then say what matters in prose.")
+            appendLine("- show_results for a list of 2+ things to compare (hotels, products, places) after you have read them from a tool: they appear as cards, one per item, with its picture (a page's Image line), price and rating as fields, and its link. Then say what matters in prose; don't repeat every row.")
             if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots; asks come back together.")
             if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot can't be archived.")
             if (api.localMcp().any { it.enabled && it.status == "connected" }) appendLine("- Tools starting with mc… come from connected integrations.")
