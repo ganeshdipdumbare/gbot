@@ -647,7 +647,8 @@ fun choiceLines(raw: String, max: Int): List<String> {
         internal fun isWebmail(url: String): Boolean {
             // Check the address the browser would load, not the one the model
             // wrote: browser_open strips quotes and fixes https:host first.
-            val loaded = BrowserController.normalize(url)
+            // Chromium drops every tab and line break in a URL before reading it.
+            val loaded = BrowserController.normalize(url).filterNot { it == '\t' || it == '\n' || it == '\r' }
             val scheme = SCHEME.find(loaded) ?: return false
             // Read the host the way Chromium does: past any extra / or \,
             // with %-escapes decoded and fullwidth or other Unicode letters
