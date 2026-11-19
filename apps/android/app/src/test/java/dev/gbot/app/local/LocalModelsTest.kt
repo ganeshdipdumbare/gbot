@@ -151,6 +151,24 @@ class LocalModelsTest {
     }
 
     @Test
+    fun `a failed size check keeps the saved part for a retry`() = runBlocking {
+        // A 416 with no Content-Range, then the size check itself fails with a server error.
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                if (request.method == "HEAD") MockResponse.Builder().code(503).addHeader("Content-Length", "42").build()
+                else MockResponse.Builder().code(416).build()
+        }
+        val part = File(dir, "test-model.litertlm.part")
+        part.writeBytes(model)
+
+        val failure = runCatching { LocalModels.downloadTo(dir, entry()) { _, _ -> } }.exceptionOrNull()
+
+        assertNotNull(failure)
+        assertTrue(part.exists())
+        assertEquals(model.size.toLong(), part.length())
+    }
+
+    @Test
     fun `a saved part that is longer than the model is removed, not installed`() = runBlocking {
         // The server has nothing past a part this long, so it answers 416.
         server.dispatcher = object : Dispatcher() {

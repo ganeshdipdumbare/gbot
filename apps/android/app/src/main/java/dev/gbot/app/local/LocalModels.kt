@@ -6,12 +6,14 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Models that live on the phone. One `.litertlm` file each, downloaded on
@@ -92,6 +94,7 @@ object LocalModels {
             if (have > 0) header("Range", "bytes=$have-")
         }.build()
         val call = client.newCall(req)
+        val probe = AtomicReference<Call?>(null)
         try {
             async(Dispatchers.IO) {
                 call.execute().use { res ->
@@ -100,8 +103,17 @@ object LocalModels {
                     // 416: the server has no bytes past the part. That is fine only if the part is the whole model.
                     if (res.code == 416 && have > 0) {
                         // No Content-Range: ask for the whole file's size. The catalog size can be wrong.
-                        val expected = serverTotal ?: client.newCall(Request.Builder().url(e.url).get().build())
-                            .execute().use { it.body.contentLength().takeIf { n -> n > 0 } ?: e.bytes }
+                        val expected = serverTotal ?: run {
+                            // HEAD: only the headers, no body. Tracked so Pause can cancel it too.
+                            val probeCall = client.newCall(Request.Builder().url(e.url).head().build())
+                            probe.set(probeCall)
+                            probeCall.execute().use { r ->
+                                // A failed probe says nothing about the file, so keep the part and let the user retry.
+                                if (!r.isSuccessful) throw IOException("Could not check the file size (${r.code}). Try again.")
+                                r.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0 } ?: e.bytes
+                            }
+                        }
+                        ensureActive()
                         // A part that is the whole file is finished, even if the process died before the rename.
                         if (part.length() == expected) return@async finish(part, target)
                         // Nothing past this part can be fetched, so resuming it would fail the same way every time.
@@ -131,8 +143,9 @@ object LocalModels {
                 finish(part, target)
             }.await()
         } finally {
-            // Pausing or cancelling: closing the call wakes a read that is blocked on the network.
+            // Pausing or cancelling: closing the calls wakes a read that is blocked on the network.
             call.cancel()
+            probe.get()?.cancel()
         }
     }
 
