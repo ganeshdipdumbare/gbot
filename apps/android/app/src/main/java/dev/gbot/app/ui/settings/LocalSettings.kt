@@ -92,6 +92,8 @@ fun OnDeviceModels() {
     }
 
     fun startDownload(e: LocalModels.Entry) {
+        // One download at a time: a second writer on another part would corrupt it.
+        if (busy != null) return
         busy = e.label; progress = 0f; error = ""; notice = ""
         download = scope.launch {
             runCatching {
@@ -119,8 +121,13 @@ fun OnDeviceModels() {
         val running = download
         scope.launch {
             running?.cancelAndJoin()
-            LocalModels.deletePart(ctx, e.file + ".part")
-            notice = "${e.label} download discarded"
+            // It may have finished just before the cancel landed; then the model is kept, and we say so.
+            if (LocalModels.files(ctx).any { it.name == e.file }) {
+                notice = "${e.label} finished before it was stopped, so it's kept"
+            } else {
+                LocalModels.deletePart(ctx, e.file + ".part")
+                notice = "${e.label} download discarded"
+            }
             discarding = null
             refresh()
         }
@@ -229,6 +236,7 @@ fun OnDeviceModels() {
                             GButton("Cancel", { discarding = e }, variant = Variant.Soft, small = true)
                         }
                     }
+                    busy != null -> Text("Another model is downloading. Pause or wait for it first.", style = T.tiny, color = g.ink3)
                     saved > 0 -> {
                         Text("Partly downloaded: ${saved / mb} of ${e.bytes / mb} MB. Resume to finish it.", style = T.tiny, color = g.ink2)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

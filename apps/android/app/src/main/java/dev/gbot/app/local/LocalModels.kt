@@ -2,16 +2,15 @@ package dev.gbot.app.local
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.job
-import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.coroutineContext
 
 /**
  * Models that live on the phone. One `.litertlm` file each, downloaded on
@@ -70,47 +69,54 @@ object LocalModels {
      * Cancelling the calling coroutine pauses it: the partial file is kept
      * so the next call picks up where this one stopped.
      */
-    suspend fun download(ctx: Context, e: Entry, progress: (Long, Long) -> Unit): File = withContext(Dispatchers.IO) {
-        val target = File(dir(ctx), e.file)
-        val part = File(dir(ctx), e.file + ".part")
+    suspend fun download(ctx: Context, e: Entry, progress: (Long, Long) -> Unit): File =
+        downloadTo(dir(ctx), e, progress)
+
+    /** [download] into a given folder. Kept apart from the Context so it can be tested on the JVM. */
+    suspend fun downloadTo(folder: File, e: Entry, progress: (Long, Long) -> Unit): File = coroutineScope {
+        val target = File(folder, e.file)
+        val part = File(folder, e.file + ".part")
         val have = if (part.exists()) part.length() else 0L
         val client = OkHttpClient.Builder().readTimeout(60, TimeUnit.SECONDS).build()
         val req = Request.Builder().url(e.url).get().apply {
             if (have > 0) header("Range", "bytes=$have-")
         }.build()
         val call = client.newCall(req)
-        // Pausing or cancelling must not wait for the network: closing the call wakes a blocked read.
-        val stop = coroutineContext.job.invokeOnCompletion { call.cancel() }
         try {
-            call.execute().use { res ->
-                // 416: the partial file already holds the whole model.
-                if (res.code == 416 && have > 0) return@withContext finish(part, target)
-                if (!res.isSuccessful) throw IllegalStateException("Download failed (${res.code})")
-                val resumed = res.code == 206
-                val total = if (resumed) e.bytes else (res.body.contentLength().takeIf { it > 0 } ?: e.bytes)
-                var done = if (resumed) have else 0L
-                FileOutputStream(part, resumed).use { out ->
-                    res.body.byteStream().use { input ->
-                        val buf = ByteArray(1 shl 16)
-                        while (true) {
-                            ensureActive()
-                            val n = input.read(buf)
-                            if (n <= 0) break
-                            out.write(buf, 0, n)
-                            done += n
-                            progress(done, total)
+            async(Dispatchers.IO) {
+                call.execute().use { res ->
+                    // 416: the server has no bytes past the part. That is only fine if the part is the whole model.
+                    if (res.code == 416 && have > 0) {
+                        if (part.length() == e.bytes) return@async finish(part, target)
+                        part.delete()
+                        throw IllegalStateException("The saved part didn't match the model, so it was removed. Download it again.")
+                    }
+                    if (!res.isSuccessful) throw IllegalStateException("Download failed (${res.code})")
+                    val resumed = res.code == 206
+                    val total = if (resumed) e.bytes else (res.body.contentLength().takeIf { it > 0 } ?: e.bytes)
+                    var done = if (resumed) have else 0L
+                    FileOutputStream(part, resumed).use { out ->
+                        res.body.byteStream().use { input ->
+                            val buf = ByteArray(1 shl 16)
+                            while (true) {
+                                ensureActive()
+                                val n = input.read(buf)
+                                if (n <= 0) break
+                                out.write(buf, 0, n)
+                                done += n
+                                progress(done, total)
+                            }
                         }
                     }
+                    // A connection that closes early must not become a "ready" model.
+                    if (part.length() != total) throw IOException("Download stopped early (${part.length()} of $total bytes). Resume to finish it.")
                 }
-            }
-        } catch (ex: IOException) {
-            // A pause or cancel closes the socket, which reads as an IOException. Report it as the cancel it is.
-            ensureActive()
-            throw ex
+                finish(part, target)
+            }.await()
         } finally {
-            stop.dispose()
+            // Pausing or cancelling: closing the call wakes a read that is blocked on the network.
+            call.cancel()
         }
-        finish(part, target)
     }
 
     private fun finish(part: File, target: File): File {
