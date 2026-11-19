@@ -283,7 +283,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
             "bot_archive", "Archive one of the person's bots. The main bot can't be archived.",
             params("bot", "string", "The bot's name", required = listOf("bot")),
         ),
-    ))
+    )) + PhoneApps.schemas(ctx)
 
     /** A path inside the bot's folder, or null if it would leave it. */
     private fun fileIn(path: String): java.io.File? {
@@ -297,7 +297,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
         "browser_open", "browser_click", "browser_fill", "browser_enter", "open_in_chrome", "vault_type",
         "routine_create", "web_fetch", "bot_create", "bot_update", "bot_archive",
         "routine_update", "routine_delete", "task_contract",
-    )
+    ) || name in PhoneApps.needsApproval
 
     /** A call that can't work, refused before the person is asked to approve it. */
     fun precheck(name: String, args: JsonObject): String? = when {
@@ -306,7 +306,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
         else -> null
     }
 
-    fun describe(name: String, args: JsonObject): String = when (name) {
+    fun describe(name: String, args: JsonObject): String = PhoneApps.describe(name, args) ?: when (name) {
         "browser_open" -> "Open ${args.str("url")}"
         "browser_click" -> "Click “${lastSnapshotLabel(args.int("id"))}”"
         "browser_fill" -> "Fill in “${lastSnapshotLabel(args.int("id"))}” with ${args.str("value").take(80)}" +
@@ -350,6 +350,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
     }
 
     private suspend fun runTool(name: String, args: JsonObject): String = when (name) {
+        in PhoneApps.names -> PhoneApps.run(ctx, name, args)
         "plan" -> {
             val steps = planSteps(args.str("steps"))
             if (steps.isEmpty()) "Give the plan as one step per line."
@@ -584,7 +585,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
     }
 
     companion object {
-        private fun params(vararg fields: Any, required: List<String> = emptyList()): JsonObject = buildJsonObject {
+        internal fun params(vararg fields: Any, required: List<String> = emptyList()): JsonObject = buildJsonObject {
             put("type", "object")
             put("properties", buildJsonObject {
                 var i = 0
