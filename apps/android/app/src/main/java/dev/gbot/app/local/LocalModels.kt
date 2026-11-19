@@ -101,9 +101,9 @@ object LocalModels {
                     if (res.code == 416 && have > 0) {
                         val expected = serverTotal ?: e.bytes
                         if (part.length() == expected) return@async finish(part, target)
-                        // Only a part longer than the file is clearly bad; a short one may still be worth keeping.
-                        if (part.length() > expected) part.delete()
-                        throw IllegalStateException("The saved part doesn't match the model. Download it again.")
+                        // Nothing past this part can be fetched, so resuming it would fail the same way every time.
+                        part.delete()
+                        throw IllegalStateException("The saved part didn't match the server's file, so it was removed. Start the download again.")
                     }
                     if (!res.isSuccessful) throw IllegalStateException("Download failed (${res.code})")
                     val resumed = res.code == 206
