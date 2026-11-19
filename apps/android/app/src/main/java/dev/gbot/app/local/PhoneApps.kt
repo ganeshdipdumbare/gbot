@@ -279,7 +279,7 @@ object PhoneApps {
         val like = "%$q%"
         // Numbers are stored formatted, like +1 (555) 123-4567, so match the digits too.
         val digits = q.filter { it.isDigit() || it == '+' }
-        val numberLike = if (digits.count { it.isDigit() } >= 3) "%$digits%" else like
+        val numberLike = if (looksLikeNumber(q)) "%$digits%" else like
         ctx.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(ContactsContract.CommonDataKinds.Phone.CONTACT_ID, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
@@ -309,6 +309,9 @@ object PhoneApps {
         }
     }
 
+    /** Only a query made of phone-number characters is matched on its digits; john1985@x.com is not a number. */
+    internal fun looksLikeNumber(q: String) = q.matches(Regex("[0-9\\s+\\-().]+")) && q.count { it.isDigit() } >= 3
+
     private fun inForeground() = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 
     /**
@@ -324,7 +327,11 @@ object PhoneApps {
             .setSmallIcon(dev.gbot.app.R.drawable.ic_notify)
             .setContentTitle("gbot needs a tap").setContentText(what)
             .setContentIntent(tap).setAutoCancel(true).build()
-        val posted = runCatching { NotificationManagerCompat.from(ctx).notify(System.currentTimeMillis().toInt(), n) }.isSuccess
+        // notify() doesn't throw when notifications are off, so ask whether anyone can see this one.
+        val nm = NotificationManagerCompat.from(ctx)
+        val visible = nm.areNotificationsEnabled() &&
+            (nm.getNotificationChannel(Alerts.CH_ALERTS)?.importance ?: NotificationManagerCompat.IMPORTANCE_DEFAULT) != NotificationManagerCompat.IMPORTANCE_NONE
+        val posted = visible && runCatching { nm.notify(System.currentTimeMillis().toInt(), n) }.isSuccess
         return if (posted) "gbot is in the background, so Android won't let it open this. A notification is waiting; the person taps it to finish. It is NOT done yet — don't say it is."
         else "gbot is in the background and Android blocked it. Nothing was done; ask the person to open gbot and try again."
     }

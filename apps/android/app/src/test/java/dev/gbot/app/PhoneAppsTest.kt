@@ -36,4 +36,12 @@ class PhoneAppsTest {
         assertFalse("calendar_list" in PhoneApps.needsApproval)
         assertFalse("contact_search" in PhoneApps.needsApproval)
     }
+
+    @Test fun `only phone-number-looking queries are matched on their digits`() {
+        assertTrue(PhoneApps.looksLikeNumber("+1 (555) 123-4567"))
+        assertTrue(PhoneApps.looksLikeNumber("5551234567"))
+        assertFalse(PhoneApps.looksLikeNumber("john1985@gmail.com"))
+        assertFalse(PhoneApps.looksLikeNumber("Room 101"))
+        assertFalse(PhoneApps.looksLikeNumber("42"))
+    }
 }
