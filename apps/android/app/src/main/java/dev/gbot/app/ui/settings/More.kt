@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -276,7 +277,7 @@ fun Integrations(back: () -> Unit) {
                 mine.forEach { a ->
                     val on = dev.gbot.app.local.PhoneApps.on(ctx, a.id)
                     Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(1.dp, g.line, RoundedCornerShape(16.dp)).background(if (on) g.surface2 else Color.Transparent)
+                        Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(16.dp)).border(1.dp, g.line, RoundedCornerShape(16.dp)).background(if (on) g.surface2 else Color.Transparent)
                             .pressable(true) { if (on) { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, false); phoneTick++ } else turnOn(a) }
                             .padding(horizontal = 10.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -284,8 +285,8 @@ fun Integrations(back: () -> Unit) {
                         AppIcon(a.name, 0xFF3B5BDB, 34.dp)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(a.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1)
-                            Text(a.why, style = T.tiny, color = g.ink2)
+                            Text(a.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(a.why, style = T.tiny, color = g.ink2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                         Spacer(Modifier.width(8.dp))
                         if (on) Row(verticalAlignment = Alignment.CenterVertically) {
