@@ -107,6 +107,9 @@ object LocalModels {
                             // HEAD: only the headers, no body. Tracked so Pause can cancel it too.
                             val probeCall = client.newCall(Request.Builder().url(e.url).head().build())
                             probe.set(probeCall)
+                            // Recorded first, then checked: a Pause that landed before this point cancels nothing yet,
+                            // so stop here instead of starting a request nobody can cancel.
+                            ensureActive()
                             probeCall.execute().use { r ->
                                 // A failed probe says nothing about the file, so keep the part and let the user retry.
                                 if (!r.isSuccessful) throw IOException("Could not check the file size (${r.code}). Try again.")
