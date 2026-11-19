@@ -366,7 +366,9 @@ fun choiceLines(raw: String, max: Int): List<String> {
     suspend fun run(name: String, args: JsonObject): String {
         val out = runTool(name, args)
         // A step that ended up on a mail site hands back none of the page.
-        if ((name.startsWith("browser_") || name == "vault_type") && name != "browser_back" && isWebmail(browser.url.value)) {
+        // That includes browser_back: Gmail and Outlook move between their
+        // own pages with history, so going back can stay on the mail site.
+        if ((name.startsWith("browser_") || name == "vault_type") && isWebmail(browser.url.value)) {
             return onWebmail()
         }
         // The first browser step that has a page open says where the person
@@ -485,7 +487,9 @@ fun choiceLines(raw: String, max: Int): List<String> {
         "profile" -> db.get("profile").orEmpty().ifBlank { "The person has not filled in their details." }
         "use_skill" -> skills.find { it.name.equals(args.str("name"), ignoreCase = true) }?.body
             ?: "No skill named ${args.str("name")}. Use one from the list in your system prompt."
-        "vault_type" -> vaultType(args)
+        // Checked again here: the page can move to a mail sign-in while the
+        // approval is open, and a secret must never be typed into one.
+        "vault_type" -> precheck(name, args) ?: vaultType(args)
         "routine_create" -> schedule(args.str("name"), args.str("prompt"), args.str("schedule"))
         "browser_forward" -> browser.forward().also(::noteLabels)
         "browser_reload" -> browser.reload().also(::noteLabels)
@@ -641,15 +645,30 @@ fun choiceLines(raw: String, max: Int): List<String> {
          * URI parser rejects (a space or | in a Gmail search, say).
          */
         internal fun isWebmail(url: String): Boolean {
-            val rest = url.trim().substringAfter("://")
+            // Check the address the browser would load, not the one the model
+            // wrote: browser_open strips quotes and fixes https:host first.
+            val loaded = BrowserController.normalize(url)
+            val scheme = SCHEME.find(loaded) ?: return false
+            val rest = loaded.substring(scheme.range.last + 1)
             val authority = rest.takeWhile { it !in "/?#\\" }
             val host = authority.substringAfterLast('@').substringBefore(':').lowercase().trimEnd('.')
             if (host.isEmpty()) return false
             fun under(d: String) = host == d || host.endsWith(".$d")
             if (WEBMAIL.any(::under)) return true
             val path = rest.drop(authority.length).lowercase()
-            return WEBMAIL_PATHS.any { (d, p) -> under(d) && (path == p || path.startsWith("$p/") || path.startsWith("$p?") || path.startsWith("$p#")) }
+            if (WEBMAIL_PATHS.any { (d, p) -> under(d) && (path == p || path.startsWith("$p/") || path.startsWith("$p?") || path.startsWith("$p#")) }) {
+                return true
+            }
+            // Gmail sends a signed-out visit to the Google sign-in, which
+            // names Gmail as where to go next.
+            if (under("accounts.google.com")) {
+                val asked = runCatching { java.net.URLDecoder.decode(path, "UTF-8") }.getOrDefault(path)
+                return "mail.google.com" in asked || "service=mail" in asked
+            }
+            return false
         }
+
+        private val SCHEME = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://")
 
         /** What the bot is told about email, depending on whether Email is on in Integrations. */
         internal fun mailRule(emailOn: Boolean): String =

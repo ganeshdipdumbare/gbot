@@ -66,7 +66,7 @@ class ToolArgsTest {
     fun bareConsumerMailHostsAreWebmail() {
         for (u in listOf(
             "outlook.com", "www.outlook.com", "https://hotmail.com", "live.com", "https://login.live.com/login.srf",
-            "https://account.proton.me/login", "https://www.icloud.com/mail", "icloud.com/mail/", "HTTPS://Mail.Google.com.",
+            "https://account.proton.me/login", "https://www.icloud.com/mail", "icloud.com/mail/", "https://Mail.Google.com.",
         )) assertTrue(u, LocalTools.isWebmail(u))
         for (u in listOf("https://www.icloud.com/photos", "https://proton.me/pricing", "https://mailchimp.com", "")) {
             assertFalse(u, LocalTools.isWebmail(u))
@@ -80,5 +80,22 @@ class ToolArgsTest {
         assertTrue(LocalTools.isWebmail("https://user@mail.google.com:443/"))
         // The host is what follows the last @, as a browser reads it.
         assertFalse(LocalTools.isWebmail("https://mail.google.com@example.com/"))
+    }
+
+    @Test
+    fun theAddressTheBrowserWouldLoadIsChecked() {
+        // browser_open fixes these before loading, so the check must too.
+        for (u in listOf("https:mail.google.com", "https//mail.google.com", "\"gmail.com\"", "<https://gmail.com>", "gmail.com/?next=https://example.com")) {
+            assertTrue(u, LocalTools.isWebmail(u))
+        }
+        assertFalse(LocalTools.isWebmail("example.com/?next=https://mail.google.com"))
+        assertFalse(LocalTools.isWebmail("gmail login help"))
+    }
+
+    @Test
+    fun googleSignInOnTheWayToGmailIsWebmail() {
+        assertTrue(LocalTools.isWebmail("https://accounts.google.com/ServiceLogin?service=mail&continue=https%3A%2F%2Fmail.google.com%2Fmail%2F"))
+        assertTrue(LocalTools.isWebmail("https://accounts.google.com/v3/signin/identifier?continue=https://mail.google.com/mail/u/0/"))
+        assertFalse(LocalTools.isWebmail("https://accounts.google.com/v3/signin/identifier?continue=https://www.youtube.com/"))
     }
 }
