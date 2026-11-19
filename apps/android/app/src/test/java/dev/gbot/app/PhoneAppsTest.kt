@@ -44,4 +44,31 @@ class PhoneAppsTest {
         assertFalse(PhoneApps.looksLikeNumber("Room 101"))
         assertFalse(PhoneApps.looksLikeNumber("42"))
     }
+
+    private val two = listOf("me@gmail.com", "work@corp.com")
+
+    @Test fun `one account or none means no question and no filter`() {
+        assertEquals(PhoneApps.Pick.Use(null), PhoneApps.pick(listOf("me@gmail.com"), "", null))
+        assertEquals(PhoneApps.Pick.Use(null), PhoneApps.pick(emptyList(), "", null))
+    }
+
+    @Test fun `several accounts and no choice asks the person with the list`() {
+        val p = PhoneApps.pick(two, "", null)
+        assertEquals(PhoneApps.Pick.Ask(two), p)
+        val text = PhoneApps.askWhich(p, allowAll = true)!!
+        assertTrue(text.contains("ask_user") && text.contains("me@gmail.com") && text.contains("work@corp.com") && text.contains("All accounts"))
+        assertFalse(PhoneApps.askWhich(p, allowAll = false)!!.contains("All accounts"))
+    }
+
+    @Test fun `a named account is matched loosely, and all means every account`() {
+        assertEquals(PhoneApps.Pick.Use("work@corp.com"), PhoneApps.pick(two, "WORK@corp.com", null))
+        assertEquals(PhoneApps.Pick.Use("work@corp.com"), PhoneApps.pick(two, "work", null))
+        assertEquals(PhoneApps.Pick.Use(null), PhoneApps.pick(two, "all", null))
+        assertTrue(PhoneApps.pick(two, "other@x.com", null) is PhoneApps.Pick.Unknown)
+    }
+
+    @Test fun `the last chosen account is reused while it still exists`() {
+        assertEquals(PhoneApps.Pick.Use("work@corp.com"), PhoneApps.pick(two, "", "work@corp.com"))
+        assertEquals(PhoneApps.Pick.Ask(two), PhoneApps.pick(two, "", "gone@x.com"))
+    }
 }

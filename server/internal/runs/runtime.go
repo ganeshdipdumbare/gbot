@@ -423,6 +423,7 @@ How to reply
 Working fast
 - If you can answer from this conversation, your memory or what you already know, answer now and use no tools.
 - Take the fewest steps that reach the answer. Call independent tools together in one step, never re-read or re-check something you already have, and stop as soon as the answer holds up — more checking is not more value.
+- For anything current or on the web, call web_search first, and web_fetch on one or two results (or a link the person gave) if a snippet isn't enough; do the searches in one step. The browser is for sign-ins, forms and pages that need clicks, not for looking things up.
 - Plan in your head. No visible plans or progress commentary; a one-line note only when a step will take a while.
 
 Taking a task
@@ -431,7 +432,7 @@ Taking a task
 - Start without being told every step; do ask before destructive or external actions.
 - When something blocks you, try another route before giving up. For a sign-in, CAPTCHA, payment or legal consent, use request_takeover with the exact step; after they say they're done, continue yourself. Never hand the whole job back, and never say a site "doesn't allow" automation when your browser and computer tools can do the work.
 - For an application, gather the profile and answers, fill the form, and submit only with approval; tell the person exactly what you will submit.
-- For a list of 2 or more things to compare (hotels, products, places) that you have read from a tool, call show_results: the person sees them as cards. Then say what matters in prose; don't repeat every row.
+- For a list of 2 or more things to compare (hotels, products, places) that you have read from a tool, call show_results: the person sees them as cards, one per item, with its picture (a page's Image line from web_fetch), price and rating as fields, and its link. Write your short reply first if you can, then show the cards; say what matters in prose and don't repeat every row.
 - For a multi-step deliverable the person will check, agree a short task_contract first (the goal and 3-6 verifiable checks), do the work, then task_verify before claiming it is done. If a check fails, fix it or say exactly what remains; never claim success against a failed check. A quick answer needs no contract.
 
 Evolving
@@ -598,6 +599,12 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 			rc.allow[t.Tool] = true
 		} else {
 			rc.block[t.Tool] = true
+		}
+	}
+	// A link the person wrote can be read by web_fetch; text from outside can't vouch for one.
+	if !j.Untrusted && j.Trigger == "chat" {
+		for _, u := range linksIn(j.Prompt) {
+			rc.allowFetch(u)
 		}
 	}
 	ctx = withRun(ctx, rc)
@@ -776,7 +783,10 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 				kritrim.Decisions(autoDecisions(rc, sess, j.Decisions)), kritrim.OnEvent(onEvent))
 		} else {
 			r.expireCards(bg, c)
-			history, prompt := r.groupHistory(bg, j, req)
+			history, prompt, links := r.groupHistory(bg, j, req)
+			for _, u := range links {
+				rc.allowFetch(u)
+			}
 			_ = r.sessions.Save(bg, &kritrim.Session{ID: th, Messages: history})
 			res, err = runAgent.Run(ctx, notes+prompt, kritrim.Thread(th), kritrim.User(userID), kritrim.OnEvent(onEvent))
 			delivered = true
@@ -1089,13 +1099,19 @@ func (r *Runtime) handoff(j *Job, reply string) {
 
 // groupHistory turns the group transcript into the acting bot's view:
 // its own messages are the assistant's; everyone else is named.
-func (r *Runtime) groupHistory(ctx context.Context, j *Job, who *store.User) ([]kritrim.Message, string) {
+func (r *Runtime) groupHistory(ctx context.Context, j *Job, who *store.User) ([]kritrim.Message, string, []string) {
 	msgs, _ := r.store.ListGroupMessages(ctx, j.Group.ID, nil, 40)
 	names := map[string]string{}
 	var hist []kritrim.Message
+	// Links the person wrote in this chat: web_fetch may read them. A bot's
+	// message in the group can't vouch for a link.
+	var theirs []string
 	for _, m := range msgs {
 		if m.Role != "user" && m.Role != "bot" {
 			continue
+		}
+		if m.Role == "user" && !j.Untrusted && j.Trigger == "chat" {
+			theirs = append(theirs, linksIn(m.Content)...)
 		}
 		if m.Role == "bot" && m.BotID == j.Bot.ID {
 			hist = append(hist, kritrim.Message{Role: kritrim.RoleAssistant, Content: m.Content})
@@ -1114,13 +1130,13 @@ func (r *Runtime) groupHistory(ctx context.Context, j *Job, who *store.User) ([]
 	}
 	if j.Prompt != "" {
 		// Not from the transcript, e.g. another bot's reply.
-		return hist, j.Prompt
+		return hist, j.Prompt, theirs
 	}
 	if len(hist) == 0 || hist[len(hist)-1].Role != kritrim.RoleUser {
-		return hist, "(Your turn. Reply if you have something useful to add; otherwise reply with a short acknowledgement.)"
+		return hist, "(Your turn. Reply if you have something useful to add; otherwise reply with a short acknowledgement.)", theirs
 	}
 	last := hist[len(hist)-1].Content
-	return hist[:len(hist)-1], last
+	return hist[:len(hist)-1], last, theirs
 }
 
 func (r *Runtime) event(c convo, b *store.Bot, text string, data map[string]any) {

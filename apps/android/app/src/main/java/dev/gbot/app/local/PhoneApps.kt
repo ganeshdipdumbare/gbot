@@ -92,6 +92,71 @@ object PhoneApps {
         "email_draft" to "email", "alarm_set" to "clock", "timer_set" to "clock",
     )
 
+    // ---- Accounts ---------------------------------------------------------
+    // A phone can hold several accounts. Calendar and contacts name the one
+    // they should use; when there is more than one and the person hasn't said,
+    // the tool answers with the list so the bot asks them (ask_user) first.
+
+    const val ACCOUNT_HELP = "The account to use, e.g. a Google address. Leave empty the first time: if the phone has several, the answer lists them so you can ask the person."
+
+    sealed interface Pick {
+        /** Use this account, or every account when null. */
+        data class Use(val account: String?) : Pick
+        /** Ask the person, offering these. */
+        data class Ask(val options: List<String>) : Pick
+        data class Unknown(val said: String, val options: List<String>) : Pick
+    }
+
+    /** Which account a call should use: what the bot said, else the one account, else the last one chosen, else ask. */
+    internal fun pick(accounts: List<String>, said: String, saved: String?): Pick {
+        val want = said.trim()
+        if (want.equals("all", true) || want.equals("every", true)) return Pick.Use(null)
+        if (want.isNotEmpty()) {
+            val hit = accounts.firstOrNull { it.equals(want, true) } ?: accounts.firstOrNull { it.contains(want, true) }
+            return if (hit != null) Pick.Use(hit) else Pick.Unknown(want, accounts)
+        }
+        // One account (or none) is nothing to choose between: search everything, local contacts and calendars included.
+        if (accounts.size <= 1) return Pick.Use(null)
+        saved?.let { s -> accounts.firstOrNull { it.equals(s, true) } }?.let { return Pick.Use(it) }
+        return Pick.Ask(accounts)
+    }
+
+    internal fun askWhich(p: Pick, allowAll: Boolean): String? = when (p) {
+        is Pick.Use -> null
+        is Pick.Ask -> "This phone has more than one account: ${p.options.joinToString(", ")}. Don't guess. Ask the person which one to use with ask_user" +
+            " (options: ${(p.options + if (allowAll) listOf("All accounts") else emptyList()).joinToString("; ")}), then call this again with account set to their answer" +
+            (if (allowAll) " (\"all\" for all accounts)." else ".")
+        is Pick.Unknown -> "No account like “${p.said}” on this phone. The accounts are: ${p.options.joinToString(", ")}. Ask the person which one with ask_user."
+    }
+
+    private fun savedAccount(ctx: Context, appId: String) = prefs(ctx).getString("phoneapp_account_$appId", null)
+    private fun saveAccount(ctx: Context, appId: String, account: String?) {
+        if (account != null) prefs(ctx).edit().putString("phoneapp_account_$appId", account).apply()
+    }
+
+    /** Only real mail-style accounts count; messaging apps and the phone itself register others. */
+    private fun isMailAccount(name: String) = name.contains('@')
+
+    /** Accounts that hold calendars the person can see (or write to). */
+    private fun calendarAccounts(ctx: Context, writable: Boolean): List<String> {
+        val out = linkedSetOf<String>()
+        ctx.contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI, arrayOf(CalendarContract.Calendars.ACCOUNT_NAME),
+            "${CalendarContract.Calendars.VISIBLE} = 1" + if (writable) " AND ${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR}" else "",
+            null, null,
+        )?.use { c -> while (c.moveToNext()) c.getString(0)?.takeIf { isMailAccount(it) }?.let { out += it } }
+        return out.toList()
+    }
+
+    private fun contactAccounts(ctx: Context): List<String> {
+        val out = linkedSetOf<String>()
+        ctx.contentResolver.query(
+            ContactsContract.RawContacts.CONTENT_URI, arrayOf(ContactsContract.RawContacts.ACCOUNT_NAME),
+            "${ContactsContract.RawContacts.DELETED} = 0", null, null,
+        )?.use { c -> while (c.moveToNext()) c.getString(0)?.takeIf { isMailAccount(it) }?.let { out += it } }
+        return out.toList()
+    }
+
     // ---- Tools ------------------------------------------------------------
 
     private fun p(vararg f: Any, required: List<String> = emptyList()) = LocalTools.params(*f, required = required)
@@ -105,6 +170,7 @@ object PhoneApps {
                         "from", "string", "Start, like 2026-11-20 or 2026-11-20T09:00 (phone's time zone). Default: now",
                         "to", "string", "End, same format. Default: 7 days after from",
                         "query", "string", "Only events whose title contains this",
+                        "account", "string", ACCOUNT_HELP + " Use \"all\" for every account.",
                     ),
                 ),
             )
@@ -117,6 +183,7 @@ object PhoneApps {
                         "end", "string", "End, same format. Default: an hour after start",
                         "location", "string", "Where",
                         "notes", "string", "Description",
+                        "account", "string", ACCOUNT_HELP,
                         required = listOf("title", "start"),
                     ),
                 ),
@@ -126,7 +193,11 @@ object PhoneApps {
             add(
                 ToolSchema(
                     "contact_search", "Look up people in the phone's contacts by name, phone number or email.",
-                    p("query", "string", "A name, number or email, or part of one", required = listOf("query")),
+                    p(
+                        "query", "string", "A name, number or email, or part of one",
+                        "account", "string", ACCOUNT_HELP + " Use \"all\" for every account.",
+                        required = listOf("query"),
+                    ),
                 ),
             )
         }
@@ -181,7 +252,7 @@ object PhoneApps {
         when (name) {
             "calendar_list" -> calendarList(ctx, a)
             "calendar_add" -> calendarAdd(ctx, a)
-            "contact_search" -> contactSearch(ctx, a.s("query"))
+            "contact_search" -> contactSearch(ctx, a.s("query"), a.s("account"))
             "email_draft" -> emailDraft(ctx, a)
             "alarm_set" -> alarm(ctx, a)
             "timer_set" -> timer(ctx, a)
@@ -214,6 +285,10 @@ object PhoneApps {
     private fun day(ms: Long) = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault()).withZone(ZoneOffset.UTC).format(Instant.ofEpochMilli(ms))
 
     private fun calendarList(ctx: Context, a: JsonObject): String {
+        val pick = pick(calendarAccounts(ctx, false), a.s("account"), savedAccount(ctx, "calendar"))
+        askWhich(pick, allowAll = true)?.let { return it }
+        val account = (pick as Pick.Use).account
+        saveAccount(ctx, "calendar", account)
         val local = ZoneId.systemDefault()
         val from = parse(a.s("from"), local, local)?.first ?: System.currentTimeMillis()
         val to = parse(a.s("to"), local, local)?.first ?: (from + 7 * 24 * 3600 * 1000L)
@@ -226,7 +301,8 @@ object PhoneApps {
             CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_LOCATION, CalendarContract.Instances.CALENDAR_DISPLAY_NAME,
         )
         val out = mutableListOf<String>()
-        ctx.contentResolver.query(uri, cols, null, null, "${CalendarContract.Instances.BEGIN} ASC")?.use { c ->
+        val where = if (account == null) null else "${CalendarContract.Calendars.ACCOUNT_NAME} = ?"
+        ctx.contentResolver.query(uri, cols, where, account?.let { arrayOf(it) }, "${CalendarContract.Instances.BEGIN} ASC")?.use { c ->
             while (c.moveToNext() && out.size < 40) {
                 val title = c.getString(0).orEmpty().ifEmpty { "(no title)" }
                 if (query.isNotEmpty() && !title.lowercase().contains(query)) continue
@@ -239,19 +315,29 @@ object PhoneApps {
                 out += "• $whenText · $title" + (if (place.isNotEmpty()) " · $place" else "") + " [${c.getString(5).orEmpty()}]"
             }
         }
-        return if (out.isEmpty()) "No events in that time." else out.joinToString("\n")
+        return if (out.isEmpty()) "No events in that time${account?.let { " in $it" } ?: ""}." else out.joinToString("\n")
     }
 
     private fun calendarAdd(ctx: Context, a: JsonObject): String {
         val title = a.s("title").ifEmpty { return "Give the event a title." }
         val (start, allDay) = parse(a.s("start")) ?: return "Give the start like 2026-11-20T15:00."
         val end = parse(a.s("end"))?.first?.takeIf { it > start } ?: (start + if (allDay) 24 * 3600 * 1000L else 3600 * 1000L)
+        val pick = pick(calendarAccounts(ctx, true), a.s("account"), savedAccount(ctx, "calendar"))
+        askWhich(pick, allowAll = false)?.let { return it }
+        // "all" makes no sense for a new event: it goes in one calendar.
+        val writable = calendarAccounts(ctx, true)
+        // With a single account the event goes there, not into a device-only calendar that never syncs.
+        val account = (pick as Pick.Use).account ?: writable.singleOrNull()
+        if (account == null && writable.size > 1) return askWhich(Pick.Ask(writable), allowAll = false)!!
+        saveAccount(ctx, "calendar", account)
         var calId = -1L
         ctx.contentResolver.query(
             CalendarContract.Calendars.CONTENT_URI,
             arrayOf(CalendarContract.Calendars._ID, CalendarContract.Calendars.IS_PRIMARY),
-            "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ? AND ${CalendarContract.Calendars.VISIBLE} = 1",
-            arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString()), null,
+            "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ? AND ${CalendarContract.Calendars.VISIBLE} = 1" +
+                if (account == null) "" else " AND ${CalendarContract.Calendars.ACCOUNT_NAME} = ?",
+            if (account == null) arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString())
+            else arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString(), account), null,
         )?.use { c ->
             while (c.moveToNext()) {
                 if (calId < 0 || c.getInt(1) == 1) calId = c.getLong(0)
@@ -269,11 +355,17 @@ object PhoneApps {
             a.s("notes").takeIf { it.isNotEmpty() }?.let { put(CalendarContract.Events.DESCRIPTION, it) }
         }
         ctx.contentResolver.insert(CalendarContract.Events.CONTENT_URI, v) ?: return "The calendar refused the event."
-        return "Added “$title” on ${if (allDay) day(start) else shown(start)}."
+        return "Added “$title” on ${if (allDay) day(start) else shown(start)}${account?.let { " to $it" } ?: ""}."
     }
 
-    private fun contactSearch(ctx: Context, q: String): String {
+    private fun contactSearch(ctx: Context, q: String, said: String): String {
         if (q.isEmpty()) return "Give a name, number or email."
+        val pick = pick(contactAccounts(ctx), said, savedAccount(ctx, "contacts"))
+        askWhich(pick, allowAll = true)?.let { return it }
+        val account = (pick as Pick.Use).account
+        saveAccount(ctx, "contacts", account)
+        val acct = if (account == null) "" else " AND ${ContactsContract.RawContacts.ACCOUNT_NAME} = ?"
+        fun args(vararg a: String) = if (account == null) arrayOf(*a) else arrayOf(*a, account)
         val people = linkedMapOf<Long, Triple<String, MutableSet<String>, MutableSet<String>>>()
         fun person(id: Long, name: String) = people.getOrPut(id) { Triple(name, linkedSetOf(), linkedSetOf()) }
         val like = "%$q%"
@@ -283,16 +375,16 @@ object PhoneApps {
         ctx.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(ContactsContract.CommonDataKinds.Phone.CONTACT_ID, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ? OR ${ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ? OR ${ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER} LIKE ?",
-            arrayOf(like, like, numberLike), null,
+            "(${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ? OR ${ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ? OR ${ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER} LIKE ?)$acct",
+            args(like, like, numberLike), null,
         )?.use { c -> while (c.moveToNext() && people.size < 15) person(c.getLong(0), c.getString(1).orEmpty()).second += c.getString(2).orEmpty() }
         ctx.contentResolver.query(
             ContactsContract.CommonDataKinds.Email.CONTENT_URI,
             arrayOf(ContactsContract.CommonDataKinds.Email.CONTACT_ID, ContactsContract.CommonDataKinds.Email.DISPLAY_NAME, ContactsContract.CommonDataKinds.Email.ADDRESS),
-            "${ContactsContract.CommonDataKinds.Email.DISPLAY_NAME} LIKE ? OR ${ContactsContract.CommonDataKinds.Email.ADDRESS} LIKE ?",
-            arrayOf(like, like), null,
+            "(${ContactsContract.CommonDataKinds.Email.DISPLAY_NAME} LIKE ? OR ${ContactsContract.CommonDataKinds.Email.ADDRESS} LIKE ?)$acct",
+            args(like, like), null,
         )?.use { c -> while (c.moveToNext() && people.size < 15) person(c.getLong(0), c.getString(1).orEmpty()).third += c.getString(2).orEmpty() }
-        if (people.isEmpty()) return "Nobody in the contacts matches “$q”."
+        if (people.isEmpty()) return "Nobody in the contacts${account?.let { " of $it" } ?: ""} matches “$q”."
         // A match on a name should show all that person's numbers and emails.
         people.forEach { (id, t) ->
             if (t.second.isEmpty()) ctx.contentResolver.query(

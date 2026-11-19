@@ -198,6 +198,12 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 			return clip(sb.String(), 8000), nil
 		}))
 
+	// Quick lookups without the browser: a search is one step, not a
+	// snapshot-and-click loop. What they return is outside text.
+	tools = append(tools,
+		kritrim.NewTool("web_search", "Search the web and get titles, links and snippets back in about a second. Use it first for anything current (hotels, prices, news, products, places); it is much faster than the browser. Several searches can run together.", r.webSearch),
+		kritrim.NewTool("web_fetch", "Read one https page as text, with its title and main picture. Use it on a search result when the snippet isn't enough; several pages can be read together. Use the browser only for pages that need a sign-in, clicks or JavaScript.", r.webFetch))
+
 	// A list to compare (hotels, products, places) is shown as cards. The
 	// bot picks the list; a tool's answer is never turned into cards by itself.
 	tools = append(tools, kritrim.NewTool("show_results", "Show a list of 2 to 12 things to compare as cards in the chat, e.g. hotels, products or places. Use it when the person would scan the list better than read it. Each item comes from a tool answer you have read; links and pictures must be https addresses from that answer. Then reply in prose about what matters.",
@@ -738,6 +744,8 @@ func clip(s string, n int) string {
 
 // Read-only tools never need approval and are never marked risky.
 var readonlyTools = map[string]bool{
+	"web_search":         true,
+	"web_fetch":          true,
 	"computer_read_file": true,
 	"browser_back":       true,
 	"browser_forward":    true,
@@ -760,6 +768,7 @@ func readonlyTool(name string) bool { return readonlyTools[name] }
 var untrustedTools = map[string]bool{
 	"browser_navigate": true, "browser_back": true,
 	"browser_forward": true, "browser_reload": true, "browser_snapshot": true,
+	"web_search": true, "web_fetch": true,
 }
 
 func untrustedTool(name string) bool {
@@ -777,6 +786,8 @@ var toolLabels = map[string]string{
 	"computer_shell":      "Running a command",
 	"computer_read_file":  "Reading a file",
 	"computer_write_file": "Writing a file",
+	"web_search":          "Searching the web",
+	"web_fetch":           "Reading a page",
 	"browser_navigate":    "Browsing",
 	"browser_back":        "Going back",
 	"browser_forward":     "Going forward",
