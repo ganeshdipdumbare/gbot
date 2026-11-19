@@ -1,0 +1,64 @@
+package dev.gbot.app.local
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/** Tool arguments keep their shape on the way from the model to a tool. */
+class ToolArgsTest {
+    private val results = LocalResults(File(System.getProperty("java.io.tmpdir"), "gbot-toolargs-test"))
+
+    private fun toJson(m: Map<String, Any?>) = JsonObject(m.mapValues { (_, v) -> LocalBrain.jsonOf(v) })
+
+    @Test
+    fun providerArgumentsPassThroughUnchanged() {
+        // A provider's call arrives as JSON already; it used to be turned
+        // into text, so items became a string and strings gained quotes.
+        val call = Json.parseToJsonElement(
+            """{"title":"Hotels","items":[{"title":"Hotel Paradiso","fields":[{"label":"4 nights","value":"₹5,783"}]},{"title":"The Grand"}],"n":7}""",
+        ).jsonObject
+        val args = toJson(call)
+        assertEquals(call, args)
+        assertTrue(args["items"] is JsonArray)
+        assertNotNull(results.build(args))
+    }
+
+    @Test
+    fun onDeviceListsAndMapsBecomeJson() {
+        val args = toJson(mapOf("title" to "Hotels", "items" to listOf(mapOf("title" to "A"), mapOf("title" to "B", "n" to 2))))
+        assertTrue(args["items"] is JsonArray)
+        assertEquals(2, results.build(args)!!.items.size)
+    }
+
+    @Test
+    fun itemsSentAsTextStillBecomeCards() {
+        val args = JsonObject(mapOf("items" to JsonPrimitive("""[{"title":"A"},{"title":"B"}]""")))
+        assertEquals(2, results.build(args)!!.items.size)
+    }
+
+    @Test
+    fun listWhereTextIsExpectedReadsAsItsJson() {
+        assertEquals("[\"a\",\"b\"]", argText(Json.parseToJsonElement("""["a","b"]""")))
+        assertEquals("a", argText(JsonPrimitive("a")))
+        assertEquals("", argText(null))
+        assertEquals(listOf("a", "b"), choiceLines(argText(Json.parseToJsonElement("""["a","b"]""")), 4))
+    }
+
+    @Test
+    fun webmailIsRecognised() {
+        assertTrue(LocalTools.isWebmail("https://mail.google.com/mail/u/0/#inbox"))
+        assertTrue(LocalTools.isWebmail("gmail.com"))
+        assertTrue(LocalTools.isWebmail("https://outlook.live.com/mail/"))
+        assertFalse(LocalTools.isWebmail("https://www.google.com/search?q=gmail"))
+        assertFalse(LocalTools.isWebmail("https://notgmail.com"))
+        assertFalse(LocalTools.isWebmail("https://booking.com"))
+    }
+}

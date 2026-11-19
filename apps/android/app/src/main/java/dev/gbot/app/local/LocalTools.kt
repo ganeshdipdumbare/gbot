@@ -13,6 +13,8 @@ import dev.gbot.app.live.Alerts
 import dev.gbot.app.net.Bot
 import dev.gbot.app.net.Skill
 import dev.gbot.app.net.VaultSecret
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -314,6 +316,10 @@ fun choiceLines(raw: String, max: Int): List<String> {
     fun precheck(name: String, args: JsonObject): String? = when {
         name in setOf("browser_click", "browser_fill", "browser_enter") && args.int("id") < 0 ->
             "Give the element's number from browser_read as id."
+        // Mail goes through the mail app, which is already signed in. The
+        // bot's own browser would mean a Gmail sign-in nobody asked for.
+        name == "browser_open" && isWebmail(args.str("url")) ->
+            "Not opened: email doesn't go through the browser. " + mailRule(PhoneApps.on(ctx, "email"))
         else -> null
     }
 
@@ -600,6 +606,29 @@ fun choiceLines(raw: String, max: Int): List<String> {
     }
 
     companion object {
+        /** Webmail sites the bot's browser must not open: mail is the mail app's job. */
+        private val WEBMAIL = listOf(
+            "mail.google.com", "gmail.com", "inbox.google.com", "outlook.live.com", "outlook.office.com",
+            "outlook.office365.com", "mail.yahoo.com", "mail.proton.me", "mail.aol.com", "mail.zoho.com",
+        )
+
+        /** True for a link to a webmail site, with or without its scheme. */
+        internal fun isWebmail(url: String): Boolean {
+            val u = url.trim().let { if (it.contains("://")) it else "https://$it" }
+            val host = runCatching { java.net.URI(u).host }.getOrNull()?.lowercase()?.trimEnd('.') ?: return false
+            return WEBMAIL.any { host == it || host.endsWith(".$it") }
+        }
+
+        /** What the bot is told about email, depending on whether Email is on in Integrations. */
+        internal fun mailRule(emailOn: Boolean): String =
+            if (emailOn) {
+                "To send an email use email_draft: it opens in the person's mail app, already signed in, and they press Send. " +
+                    "You can't read their inbox; say so if they ask. Never open Gmail or another mail site in the browser, and never sign in to one."
+            } else {
+                "You can't read or send their email. Never open Gmail or another mail site in the browser, and never sign in to one. " +
+                    "If they want an email written, say they can turn on Email in Settings → Integrations so you can draft it in their mail app."
+            }
+
         internal fun params(vararg fields: Any, required: List<String> = emptyList()): JsonObject = buildJsonObject {
             put("type", "object")
             put("properties", buildJsonObject {
@@ -651,9 +680,20 @@ fun choiceLines(raw: String, max: Int): List<String> {
     }
 }
 
-private fun JsonObject.str(k: String): String = this[k]?.jsonPrimitive?.contentOrNull.orEmpty()
-private fun JsonObject.int(k: String): Int = this[k]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.toInt() ?: -1
-private fun JsonObject.bool(k: String): Boolean = this[k]?.jsonPrimitive?.contentOrNull == "true"
+private fun JsonObject.str(k: String): String = argText(this[k])
+private fun JsonObject.int(k: String): Int = argText(this[k]).toDoubleOrNull()?.toInt() ?: -1
+private fun JsonObject.bool(k: String): Boolean = argText(this[k]) == "true"
+
+/**
+ * A tool argument as text. A model sometimes sends a list where a tool takes
+ * text (the options of a question, the checks of a contract); the list's JSON
+ * is read the same way choiceLines reads a list written as text.
+ */
+internal fun argText(v: JsonElement?): String = when (v) {
+    null, is JsonNull -> ""
+    is JsonPrimitive -> v.contentOrNull.orEmpty()
+    else -> v.toString()
+}
 
 // A small model does not always hand back the name it was given. It may
 // quote it, curly-quote it, keep the @, add a full stop, paste the whole

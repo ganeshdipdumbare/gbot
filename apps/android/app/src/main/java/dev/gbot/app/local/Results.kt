@@ -48,7 +48,7 @@ class LocalResults(
     /** The cards for a show_results call, or null when fewer than two have a title. */
     fun build(args: JsonObject): ResultSet? {
         val title = text(args, "title")?.let { clip(it) }.orEmpty()
-        val items = (args["items"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.take(MAX_CARDS)
+        val items = array(args["items"]).orEmpty().mapNotNull { it as? JsonObject }.take(MAX_CARDS)
         // Thumbnails download side by side, so one slow host can't hold the answer.
         val cards = runBlocking {
             items.map { async(Dispatchers.IO) { card(it) } }.awaitAll().filterNotNull()
@@ -63,7 +63,7 @@ class LocalResults(
         val subtitle = text(item, "subtitle")?.let { clip(it) }
         val link = text(item, "link")?.takeIf { isHttps(it) }
         val kept = text(item, "image")?.takeIf { isHttps(it) }?.let { keepImage(it) }
-        val fields = (item["fields"] as? JsonArray).orEmpty().mapNotNull { f ->
+        val fields = array(item["fields"]).orEmpty().mapNotNull { f ->
             val o = f as? JsonObject ?: return@mapNotNull null
             val label = text(o, "label")?.let { clip(it) } ?: return@mapNotNull null
             val value = text(o, "value")?.let { clip(it) } ?: return@mapNotNull null
@@ -152,6 +152,18 @@ class LocalResults(
         }
 
         fun text(o: JsonObject, key: String): String? = scalar(o[key])
+
+        /**
+         * A list, or a list a model sent as its JSON text (some models
+         * write a nested array as one string).
+         */
+        fun array(v: JsonElement?): JsonArray? = when (v) {
+            is JsonArray -> v
+            is JsonPrimitive -> if (v.isString) runCatching {
+                kotlinx.serialization.json.Json.parseToJsonElement(v.content.trim()) as? JsonArray
+            }.getOrNull() else null
+            else -> null
+        }
 
         fun clip(s: String): String {
             val t = s.trim()
