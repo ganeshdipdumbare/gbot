@@ -265,7 +265,7 @@ object PhoneApps {
         "That didn't work: ${e.message ?: e.javaClass.simpleName}"
     }
 
-    // Arguments from a hosted provider reach us still wrapped in quotes; plainText unwraps them.
+    // Arguments arrive as the model sent them; plainText unwraps a value the model quoted itself.
     private fun JsonObject.s(k: String) = plainText(argText(this[k]))
     private fun JsonObject.n(k: String) = plainText(argText(this[k])).toDoubleOrNull()?.toInt() ?: 0
 

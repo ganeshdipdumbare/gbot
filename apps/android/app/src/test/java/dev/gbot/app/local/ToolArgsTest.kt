@@ -61,4 +61,24 @@ class ToolArgsTest {
         assertFalse(LocalTools.isWebmail("https://notgmail.com"))
         assertFalse(LocalTools.isWebmail("https://booking.com"))
     }
+
+    @Test
+    fun bareConsumerMailHostsAreWebmail() {
+        for (u in listOf(
+            "outlook.com", "www.outlook.com", "https://hotmail.com", "live.com", "https://login.live.com/login.srf",
+            "https://account.proton.me/login", "https://www.icloud.com/mail", "icloud.com/mail/", "HTTPS://Mail.Google.com.",
+        )) assertTrue(u, LocalTools.isWebmail(u))
+        for (u in listOf("https://www.icloud.com/photos", "https://proton.me/pricing", "https://mailchimp.com", "")) {
+            assertFalse(u, LocalTools.isWebmail(u))
+        }
+    }
+
+    @Test
+    fun addressesAStrictParserRejectsAreStillChecked() {
+        assertTrue(LocalTools.isWebmail("https://mail.google.com/mail/u/0/#search/from:bob is:unread"))
+        assertTrue(LocalTools.isWebmail("https://mail.google.com/a|b{c}"))
+        assertTrue(LocalTools.isWebmail("https://user@mail.google.com:443/"))
+        // The host is what follows the last @, as a browser reads it.
+        assertFalse(LocalTools.isWebmail("https://mail.google.com@example.com/"))
+    }
 }

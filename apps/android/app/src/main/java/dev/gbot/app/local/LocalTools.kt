@@ -320,8 +320,16 @@ fun choiceLines(raw: String, max: Int): List<String> {
         // bot's own browser would mean a Gmail sign-in nobody asked for.
         name == "browser_open" && isWebmail(args.str("url")) ->
             "Not opened: email doesn't go through the browser. " + mailRule(PhoneApps.on(ctx, "email"))
+        // A click or redirect can land on a mail site too. Leaving it is
+        // allowed; acting on it is not.
+        (name.startsWith("browser_") || name == "vault_type") && name !in LEAVE_PAGE && isWebmail(browser.url.value) ->
+            onWebmail()
         else -> null
     }
+
+    private fun onWebmail(): String =
+        "The browser is on a mail site, and email doesn't go through the browser. Leave it with browser_back or browser_open another page. " +
+            mailRule(PhoneApps.on(ctx, "email"))
 
     fun describe(name: String, args: JsonObject): String = PhoneApps.describe(name, args) ?: when (name) {
         "browser_open" -> "Open ${args.str("url")}"
@@ -357,6 +365,10 @@ fun choiceLines(raw: String, max: Int): List<String> {
 
     suspend fun run(name: String, args: JsonObject): String {
         val out = runTool(name, args)
+        // A step that ended up on a mail site hands back none of the page.
+        if ((name.startsWith("browser_") || name == "vault_type") && name != "browser_back" && isWebmail(browser.url.value)) {
+            return onWebmail()
+        }
         // The first browser step that has a page open says where the person
         // can watch; before that the window would only say "Nothing open yet".
         if (!watchPosted && name.startsWith("browser_") && browser.url.value.isNotBlank()) {
@@ -606,17 +618,37 @@ fun choiceLines(raw: String, max: Int): List<String> {
     }
 
     companion object {
-        /** Webmail sites the bot's browser must not open: mail is the mail app's job. */
+        /** Steps that may still run on a mail site: the ways off it. */
+        private val LEAVE_PAGE = setOf("browser_open", "browser_back")
+
+        /**
+         * Webmail sites the bot's browser must not use: mail is the mail
+         * app's job. Each covers its subdomains too. live.com covers
+         * outlook.live.com and login.live.com, the Outlook sign-in.
+         */
         private val WEBMAIL = listOf(
-            "mail.google.com", "gmail.com", "inbox.google.com", "outlook.live.com", "outlook.office.com",
-            "outlook.office365.com", "mail.yahoo.com", "mail.proton.me", "mail.aol.com", "mail.zoho.com",
+            "mail.google.com", "gmail.com", "inbox.google.com",
+            "outlook.com", "outlook.office.com", "outlook.office365.com", "hotmail.com", "live.com",
+            "mail.yahoo.com", "mail.proton.me", "account.proton.me", "mail.aol.com", "mail.zoho.com",
         )
 
-        /** True for a link to a webmail site, with or without its scheme. */
+        /** Hosts where only part of the site is mail: iCloud Mail lives under icloud.com/mail. */
+        private val WEBMAIL_PATHS = mapOf("icloud.com" to "/mail")
+
+        /**
+         * True for a link to a webmail site, with or without its scheme. The
+         * host is read leniently, since the browser loads addresses a strict
+         * URI parser rejects (a space or | in a Gmail search, say).
+         */
         internal fun isWebmail(url: String): Boolean {
-            val u = url.trim().let { if (it.contains("://")) it else "https://$it" }
-            val host = runCatching { java.net.URI(u).host }.getOrNull()?.lowercase()?.trimEnd('.') ?: return false
-            return WEBMAIL.any { host == it || host.endsWith(".$it") }
+            val rest = url.trim().substringAfter("://")
+            val authority = rest.takeWhile { it !in "/?#\\" }
+            val host = authority.substringAfterLast('@').substringBefore(':').lowercase().trimEnd('.')
+            if (host.isEmpty()) return false
+            fun under(d: String) = host == d || host.endsWith(".$d")
+            if (WEBMAIL.any(::under)) return true
+            val path = rest.drop(authority.length).lowercase()
+            return WEBMAIL_PATHS.any { (d, p) -> under(d) && (path == p || path.startsWith("$p/") || path.startsWith("$p?") || path.startsWith("$p#")) }
         }
 
         /** What the bot is told about email, depending on whether Email is on in Integrations. */
