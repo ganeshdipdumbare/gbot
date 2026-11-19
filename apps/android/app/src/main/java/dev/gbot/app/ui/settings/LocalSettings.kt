@@ -39,7 +39,10 @@ import dev.gbot.app.ui.SectionTitle
 import dev.gbot.app.ui.T
 import dev.gbot.app.ui.Variant
 import dev.gbot.app.ui.attempt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,7 +71,10 @@ fun OnDeviceModels() {
     var notice by remember { mutableStateOf("") }
     var removing by remember { mutableStateOf<File?>(null) }
     var removingPart by remember { mutableStateOf<File?>(null) }
+    var download by remember { mutableStateOf<Job?>(null) }
+    var discarding by remember { mutableStateOf<LocalModels.Entry?>(null) }
     val chosen = app.store.now.me?.defaultModel
+    val mb = 1024 * 1024
 
     // The idle timer runs inside the brain; show where it got to.
     LaunchedEffect(Unit) {
@@ -83,6 +89,41 @@ fun OnDeviceModels() {
         parts = LocalModels.parts(ctx)
         loaded = runCatching { local.loadedModelId() }.getOrNull()
         scope.launch { runCatching { app.store.loadModels() } }
+    }
+
+    fun startDownload(e: LocalModels.Entry) {
+        busy = e.label; progress = 0f; error = ""; notice = ""
+        download = scope.launch {
+            runCatching {
+                val need = e.bytes - (LocalModels.partFor(ctx, e)?.length() ?: 0L)
+                val free = android.os.StatFs(ctx.filesDir.path).availableBytes
+                if (free < need * 6 / 5) throw IllegalStateException("Not enough space: needs ${need / mb} MB free")
+                LocalModels.download(ctx, e) { done, total ->
+                    progress = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+                }
+            }.onSuccess {
+                notice = "${e.label} is ready"
+                refresh()
+            }.onFailure {
+                // Pausing cancels the download; what it saved stays for Resume.
+                if (it is CancellationException) notice = "${e.label} paused. Resume whenever you like."
+                else error = it.message ?: "Download failed"
+            }
+            busy = null
+            download = null
+        }
+    }
+
+    /** Stop the running download and throw away what it saved. */
+    fun discardDownload(e: LocalModels.Entry) {
+        val running = download
+        scope.launch {
+            running?.cancelAndJoin()
+            LocalModels.deletePart(ctx, e.file + ".part")
+            notice = "${e.label} download discarded"
+            discarding = null
+            refresh()
+        }
     }
 
     fun removeModel(f: File) {
@@ -159,12 +200,13 @@ fun OnDeviceModels() {
             style = T.small, color = g.ink2,
         )
 
-        parts.forEach { p ->
+        // Partial files of models in the catalog show on their own card; anything else gets its own row.
+        parts.filter { p -> LocalModels.catalog.none { e -> e.file + ".part" == p.name } }.forEach { p ->
             Panel {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Incomplete download", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
-                        Text("${p.name.removeSuffix(".part")} · ${p.length() / (1024 * 1024)} MB so far", style = T.tiny, color = g.ink3)
+                        Text("${p.name.removeSuffix(".part")} · ${p.length() / mb} MB so far", style = T.tiny, color = g.ink3)
                     }
                     IconBtn("trash", "Remove incomplete download", { removingPart = p }, size = 34.dp, tint = g.danger)
                 }
@@ -172,32 +214,29 @@ fun OnDeviceModels() {
         }
 
         LocalModels.catalog.filter { e -> files.none { it.name == e.file } }.forEach { e ->
+            val saved = LocalModels.partFor(ctx, e)?.length() ?: 0L
             Panel {
                 Text(e.label, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
                 Text(e.note, style = T.small, color = g.ink2)
-                Text("${e.bytes / (1024 * 1024)} MB", style = T.tiny, color = g.ink3)
-                if (busy == e.label) {
-                    Spacer(Modifier.height(6.dp))
-                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-                    Text("${(progress * 100).toInt()}% — keep gbot open", style = T.tiny, color = g.ink2)
-                } else {
-                    GButton("Download over Wi‑Fi", {
-                        busy = e.label; progress = 0f; error = ""
-                        scope.launch {
-                            runCatching {
-                                val stat = android.os.StatFs(ctx.filesDir.path)
-                                val free = stat.availableBytes
-                                if (free < e.bytes * 6 / 5) throw IllegalStateException("Not enough space: needs ${e.bytes / (1024 * 1024)} MB free")
-                                LocalModels.download(ctx, e) { done, total ->
-                                    progress = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
-                                }
-                            }.onSuccess {
-                                notice = "${e.label} is ready"
-                                refresh()
-                            }.onFailure { error = it.message ?: "Download failed" }
-                            busy = null
+                Text("${e.bytes / mb} MB", style = T.tiny, color = g.ink3)
+                when {
+                    busy == e.label -> {
+                        Spacer(Modifier.height(6.dp))
+                        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                        Text("${(progress * 100).toInt()}% — keep gbot open. Pause keeps what is saved.", style = T.tiny, color = g.ink2)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GButton("Pause", { download?.cancel() }, variant = Variant.Soft, small = true)
+                            GButton("Cancel", { discarding = e }, variant = Variant.Soft, small = true)
                         }
-                    }, Modifier.fillMaxWidth(), small = true)
+                    }
+                    saved > 0 -> {
+                        Text("Partly downloaded: ${saved / mb} of ${e.bytes / mb} MB. Resume to finish it.", style = T.tiny, color = g.ink2)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GButton("Resume", { startDownload(e) }, small = true)
+                            GButton("Cancel", { discarding = e }, variant = Variant.Soft, small = true)
+                        }
+                    }
+                    else -> GButton("Download over Wi‑Fi", { startDownload(e) }, Modifier.fillMaxWidth(), small = true)
                 }
             }
         }
@@ -206,6 +245,16 @@ fun OnDeviceModels() {
         Text(
             "The model runs here, on the phone's GPU (CPU if the GPU can't). Loading it takes a few seconds; unloading gives the RAM back.",
             style = T.tiny, color = g.ink3,
+        )
+    }
+
+    discarding?.let { e ->
+        Confirm(
+            "Discard the ${e.label} download?",
+            "${(LocalModels.partFor(ctx, e)?.length() ?: 0L) / mb} MB saved so far will be deleted. You can start it again from the beginning.",
+            "Discard",
+            onConfirm = { discardDownload(e) },
+            onDismiss = { discarding = null },
         )
     }
 

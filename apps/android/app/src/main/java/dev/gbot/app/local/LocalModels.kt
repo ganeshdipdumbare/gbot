@@ -2,11 +2,16 @@ package dev.gbot.app.local
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.coroutineContext
 
 /**
  * Models that live on the phone. One `.litertlm` file each, downloaded on
@@ -26,6 +31,11 @@ object LocalModels {
             "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
             2_588_147_712, "Smaller and quicker; simpler tool use.",
         ),
+        Entry(
+            "Qwen 3.5 4B", "Qwen3.5-4B_mixed_int4.litertlm",
+            "https://huggingface.co/litert-community/Qwen3.5-4B/resolve/main/Qwen3.5-4B_mixed_int4.litertlm",
+            2_754_166_784, "Qwen 3.5, 4B, in a compact 4-bit build.",
+        ),
     )
 
     fun dir(ctx: Context): File = File(ctx.filesDir, "models").apply { mkdirs() }
@@ -40,11 +50,14 @@ object LocalModels {
     fun find(ctx: Context, id: String): File? =
         files(ctx).find { id(it) == id || it.name == id.removePrefix("local:") }
 
-    /** Downloads that stopped partway, so they can be removed. */
+    /** Downloads that stopped partway. They resume from where they stopped. */
     fun parts(ctx: Context): List<File> = dir(ctx).listFiles()
         ?.filter { it.isFile && it.name.endsWith(".litertlm.part") }
         ?.sortedBy { it.name }
         .orEmpty()
+
+    /** The partial file for a catalog entry, or null when nothing has been saved yet. */
+    fun partFor(ctx: Context, e: Entry): File? = File(dir(ctx), e.file + ".part").takeIf { it.isFile && it.length() > 0 }
 
     fun deletePart(ctx: Context, name: String) = File(dir(ctx), name).delete()
 
@@ -52,6 +65,11 @@ object LocalModels {
         find(ctx, id)?.delete()
     }
 
+    /**
+     * Downloads the model, continuing a partial file when there is one.
+     * Cancelling the calling coroutine pauses it: the partial file is kept
+     * so the next call picks up where this one stopped.
+     */
     suspend fun download(ctx: Context, e: Entry, progress: (Long, Long) -> Unit): File = withContext(Dispatchers.IO) {
         val target = File(dir(ctx), e.file)
         val part = File(dir(ctx), e.file + ".part")
@@ -60,24 +78,43 @@ object LocalModels {
         val req = Request.Builder().url(e.url).get().apply {
             if (have > 0) header("Range", "bytes=$have-")
         }.build()
-        client.newCall(req).execute().use { res ->
-            if (!res.isSuccessful) throw IllegalStateException("Download failed (${res.code})")
-            val total = if (res.code == 206) e.bytes else (res.body.contentLength().takeIf { it > 0 } ?: e.bytes)
-            val out = java.io.FileOutputStream(part, have > 0 && res.code == 206)
-            res.body.byteStream().use { input ->
-                val buf = ByteArray(1 shl 16)
-                var done = if (res.code == 206) have else 0L
-                while (true) {
-                    val n = input.read(buf)
-                    if (n <= 0) break
-                    out.write(buf, 0, n)
-                    done += n
-                    progress(done, total)
+        val call = client.newCall(req)
+        // Pausing or cancelling must not wait for the network: closing the call wakes a blocked read.
+        val stop = coroutineContext.job.invokeOnCompletion { call.cancel() }
+        try {
+            call.execute().use { res ->
+                // 416: the partial file already holds the whole model.
+                if (res.code == 416 && have > 0) return@withContext finish(part, target)
+                if (!res.isSuccessful) throw IllegalStateException("Download failed (${res.code})")
+                val resumed = res.code == 206
+                val total = if (resumed) e.bytes else (res.body.contentLength().takeIf { it > 0 } ?: e.bytes)
+                var done = if (resumed) have else 0L
+                FileOutputStream(part, resumed).use { out ->
+                    res.body.byteStream().use { input ->
+                        val buf = ByteArray(1 shl 16)
+                        while (true) {
+                            ensureActive()
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            done += n
+                            progress(done, total)
+                        }
+                    }
                 }
             }
-            out.close()
+        } catch (ex: IOException) {
+            // A pause or cancel closes the socket, which reads as an IOException. Report it as the cancel it is.
+            ensureActive()
+            throw ex
+        } finally {
+            stop.dispose()
         }
-        part.renameTo(target)
-        target
+        finish(part, target)
+    }
+
+    private fun finish(part: File, target: File): File {
+        if (!part.renameTo(target)) throw IOException("Could not save the model to ${target.name}")
+        return target
     }
 }
