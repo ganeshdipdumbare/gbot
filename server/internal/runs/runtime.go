@@ -603,8 +603,8 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	}
 	// A link the person wrote can be read by web_fetch; text from outside can't vouch for one.
 	if !j.Untrusted {
-		for _, u := range linkRE.FindAllString(j.Prompt, 20) {
-			rc.allowFetch(strings.TrimRight(u, ".,;:!?)\"'"))
+		for _, u := range linksIn(j.Prompt) {
+			rc.allowFetch(u)
 		}
 	}
 	ctx = withRun(ctx, rc)

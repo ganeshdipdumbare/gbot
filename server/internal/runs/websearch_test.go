@@ -57,3 +57,17 @@ func TestFetchOnlyReadsPagesFromSearchOrThePerson(t *testing.T) {
 		t.Fatal("a changed query must not be readable")
 	}
 }
+
+func TestLinksTheirWayInKeepBalancedParensAndMatchEncoded(t *testing.T) {
+	got := linksIn("see https://en.wikipedia.org/wiki/Mercury_(planet), and (https://de.wikipedia.org/wiki/München).")
+	if len(got) != 2 || got[0] != "https://en.wikipedia.org/wiki/Mercury_(planet)" || got[1] != "https://de.wikipedia.org/wiki/München" {
+		t.Fatalf("got %q", got)
+	}
+	rc := &runCtx{}
+	for _, u := range got {
+		rc.allowFetch(u)
+	}
+	if !rc.mayFetch("https://de.wikipedia.org/wiki/M%C3%BCnchen") {
+		t.Fatal("the encoded spelling of a pasted link must match")
+	}
+}

@@ -136,7 +136,16 @@ func (rc *runCtx) allowFetch(u string) {
 	if rc.fetchable == nil {
 		rc.fetchable = map[string]bool{}
 	}
-	rc.fetchable[strings.TrimRight(u, "/")] = true
+	rc.fetchable[fetchKey(u)] = true
+}
+
+// fetchKey is one spelling of a page address, so a link the person pasted
+// (Mü nchen as written) and the same one the bot passes (percent-encoded) match.
+func fetchKey(u string) string {
+	if n := safeLink(u); n != "" {
+		u = n
+	}
+	return strings.TrimRight(u, "/")
 }
 
 func (rc *runCtx) mayFetch(u string) bool {
@@ -145,7 +154,7 @@ func (rc *runCtx) mayFetch(u string) bool {
 	}
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
-	return rc.fetchable[strings.TrimRight(u, "/")]
+	return rc.fetchable[fetchKey(u)]
 }
 
 func (rc *runCtx) isTainted() bool { rc.mu.Lock(); defer rc.mu.Unlock(); return rc.tainted }

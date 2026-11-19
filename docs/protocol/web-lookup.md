@@ -17,17 +17,18 @@ sign-ins, forms and pages that need clicks.
 
 ## Rules
 
-- Links are https only. Search links are unwrapped from Bing's tracker, and
-  up to four https redirects are followed.
+- Links are https only. Search links are unwrapped from Bing's tracker. The
+  server follows up to four redirects and only to https; the phone follows
+  redirects too but never from https to http.
 - `web_fetch` reads only a page a search returned in the same run, or an https
-  link the person wrote in their message (on the server, not one from outside
-  text). It asks no approval, so a page the bot invented, such as one an
+  link the person wrote in their own message (not one from outside text, a
+  teammate bot, Slack or a routine). It asks no approval, so a page the bot invented, such as one an
   injected instruction wrote with private text in its address, is refused with
   a pointer to `browser_navigate`, which asks.
 - Server: requests go through the guarded client (link-local and cloud
   metadata addresses refused; loopback and private networks too on hosted
   installs, where `BlockPrivate` is set), 12 s timeout, 1 MB read, 12,000
-  characters of text, one connection per request.
+  characters of text, no kept-alive connections.
 - What they return is outside text. On the server the run is tainted after
   them, the same as after a browser page, so a risky tool still asks first.
   The phone does not track taint; the fetch limit above is its protection.

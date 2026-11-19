@@ -407,7 +407,8 @@ class LocalBrain(
                 createBot = { name, title -> api.createBot(name, title, dev.gbot.app.net.Look()) },
                 changeBot = { id, patch -> api.updateBot(id, patch) },
                 archiveBot = { id -> api.archiveBot(id) },
-                knownUrls = WebLookup.linksIn(prompt),
+                // Only the person's own message can vouch for a link; a teammate bot, Slack or a routine can't.
+                knownUrls = if (w.kind == "person" && w.from == null) WebLookup.linksIn(prompt) else emptySet(),
                 host = object : LocalTools.ToolHost {
                     override suspend fun ask(question: String, options: List<String>) = askPerson(bot, group, question, options)
                     override suspend fun routines() = db.routines(bot.id)

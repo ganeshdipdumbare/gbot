@@ -325,8 +325,10 @@ object PhoneApps {
         val pick = pick(calendarAccounts(ctx, true), a.s("account"), savedAccount(ctx, "calendar"))
         askWhich(pick, allowAll = false)?.let { return it }
         // "all" makes no sense for a new event: it goes in one calendar.
-        val account = (pick as Pick.Use).account
-        if (account == null && calendarAccounts(ctx, true).size > 1) return askWhich(Pick.Ask(calendarAccounts(ctx, true)), allowAll = false)!!
+        val writable = calendarAccounts(ctx, true)
+        // With a single account the event goes there, not into a device-only calendar that never syncs.
+        val account = (pick as Pick.Use).account ?: writable.singleOrNull()
+        if (account == null && writable.size > 1) return askWhich(Pick.Ask(writable), allowAll = false)!!
         saveAccount(ctx, "calendar", account)
         var calId = -1L
         ctx.contentResolver.query(

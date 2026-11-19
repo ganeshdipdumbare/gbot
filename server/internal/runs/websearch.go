@@ -34,6 +34,25 @@ const (
 	searchEndpoint = "https://www.bing.com/search"
 )
 
+// linksIn returns the https links a person wrote. Trailing punctuation goes,
+// but a closing ) stays when the link has its own opening one, as in
+// .../Mercury_(planet).
+func linksIn(text string) []string {
+	var out []string
+	for _, u := range linkRE.FindAllString(text, 20) {
+		for u != "" {
+			last := u[len(u)-1]
+			if strings.IndexByte(".,;:!?\"'", last) >= 0 || (last == ')' && strings.Count(u, ")") > strings.Count(u, "(")) {
+				u = u[:len(u)-1]
+				continue
+			}
+			break
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
 var linkRE = regexp.MustCompile(`https://[^\s<>"']+`)
 
 type searchIn struct {
@@ -134,6 +153,11 @@ func get(ctx context.Context, rawURL string, post url.Values) ([]byte, string, e
 	// One lookup per connection: nothing reuses it, so don't leave it idle.
 	req.Close = true
 	client := netguard.Client(webTimeout)
+	// Redirect hops are new requests, so closing the first isn't enough:
+	// keep nothing alive on this throwaway transport.
+	if t, ok := client.Transport.(*http.Transport); ok {
+		t.DisableKeepAlives = true
+	}
 	// Follow a few redirects (http to https, www, locale), each still https
 	// and each dialled through the guard.
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {

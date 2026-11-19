@@ -89,7 +89,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
     knownUrls: Set<String> = emptySet(),
 ) {
     /** Pages web_fetch may read: search results and the person's own links. Nothing else, since it asks no approval. */
-    private val fetchable = java.util.concurrent.ConcurrentHashMap.newKeySet<String>().apply { addAll(knownUrls.map { it.trimEnd('/') }) }
+    private val fetchable = java.util.concurrent.ConcurrentHashMap.newKeySet<String>().apply { addAll(knownUrls.map(WebLookup::key)) }
 
     /** The run behind these tools. */
     interface ToolHost {
@@ -118,6 +118,8 @@ fun choiceLines(raw: String, max: Int): List<String> {
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS)
+        // Never follow a redirect from https to http.
+        .followSslRedirects(false)
         .build()
 
     val schemas: List<ToolSchema> = listOf(
@@ -585,13 +587,13 @@ fun choiceLines(raw: String, max: Int): List<String> {
     private fun search(query: String): String {
         if (query.isBlank()) return "Give a query."
         val hits = WebLookup.parseSearch(get(WebLookup.searchUrl(query)))
-        hits.forEach { fetchable += it.url.trimEnd('/') }
+        hits.forEach { fetchable += WebLookup.key(it.url) }
         return WebLookup.format(hits)
     }
 
     private fun fetch(raw: String): String {
         val url = WebLookup.https(BrowserController.normalize(raw)) ?: return "Give an absolute https address."
-        if (url.trimEnd('/') !in fetchable) {
+        if (WebLookup.key(url) !in fetchable) {
             return "That page didn't come from a search result or the person's message. Search for it first, or use browser_open, which asks the person."
         }
         return WebLookup.pageText(url, get(url))

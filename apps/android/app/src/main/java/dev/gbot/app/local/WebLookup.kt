@@ -30,8 +30,15 @@ object WebLookup {
 
     private val link = Regex("https://[^\\s<>\"']+")
 
-    /** https links the person wrote, without the punctuation that follows them. */
-    fun linksIn(text: String): Set<String> = link.findAll(text).map { it.value.trimEnd('.', ',', ';', ':', '!', '?', ')', '"', '\'') }.take(20).toSet()
+    /** https links the person wrote. Trailing punctuation goes; a closing ) stays when the link has its own ( . */
+    fun linksIn(text: String): Set<String> = link.findAll(text).take(20).map { m ->
+        var u = m.value
+        while (u.isNotEmpty() && (u.last() in ".,;:!?\"'" || (u.last() == ')' && u.count { it == ')' } > u.count { it == '(' }))) u = u.dropLast(1)
+        u
+    }.toSet()
+
+    /** One spelling of a page address, so a pasted link and the bot's encoded copy of it match. */
+    fun key(u: String): String = (runCatching { URI(u.trim()).toASCIIString() }.getOrDefault(u.trim())).trimEnd('/')
 
     fun searchUrl(query: String): String = SEARCH + "?setlang=en&q=" + URLEncoder.encode(query.trim(), "UTF-8")
 
