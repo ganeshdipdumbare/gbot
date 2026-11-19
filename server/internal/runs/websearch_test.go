@@ -71,3 +71,11 @@ func TestLinksTheirWayInKeepBalancedParensAndMatchEncoded(t *testing.T) {
 		t.Fatal("the encoded spelling of a pasted link must match")
 	}
 }
+
+func TestPastedLinkWithAccentedQueryMatches(t *testing.T) {
+	rc := &runCtx{}
+	rc.allowFetch("https://x.de/s?q=München&l=de")
+	if !rc.mayFetch("https://x.de/s?q=M%C3%BCnchen&l=de") {
+		t.Fatal("encoded query must match the pasted one")
+	}
+}

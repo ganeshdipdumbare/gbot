@@ -3,6 +3,7 @@ package runs
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -144,6 +145,14 @@ func (rc *runCtx) allowFetch(u string) {
 func fetchKey(u string) string {
 	if n := safeLink(u); n != "" {
 		u = n
+	}
+	// The path is already percent-encoded by parsing; do the query too, so
+	// ?q=München and ?q=M%C3%BCnchen are one address.
+	if parsed, err := url.Parse(u); err == nil && parsed.RawQuery != "" {
+		if q, err := url.ParseQuery(parsed.RawQuery); err == nil {
+			parsed.RawQuery = q.Encode()
+			u = parsed.String()
+		}
 	}
 	return strings.TrimRight(u, "/")
 }

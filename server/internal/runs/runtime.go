@@ -602,7 +602,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		}
 	}
 	// A link the person wrote can be read by web_fetch; text from outside can't vouch for one.
-	if !j.Untrusted {
+	if !j.Untrusted && j.Trigger == "chat" {
 		for _, u := range linksIn(j.Prompt) {
 			rc.allowFetch(u)
 		}

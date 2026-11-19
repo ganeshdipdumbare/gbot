@@ -21,8 +21,8 @@ sign-ins, forms and pages that need clicks.
   server follows up to four redirects and only to https; the phone follows
   redirects too but never from https to http.
 - `web_fetch` reads only a page a search returned in the same run, or an https
-  link the person wrote in their own message (not one from outside text, a
-  teammate bot, Slack or a routine). It asks no approval, so a page the bot invented, such as one an
+  link the person wrote in their own message (a chat message: not one from outside
+  text, a teammate bot, Slack, a routine or a group hand-off). It asks no approval, so a page the bot invented, such as one an
   injected instruction wrote with private text in its address, is refused with
   a pointer to `browser_navigate`, which asks.
 - Server: requests go through the guarded client (link-local and cloud
