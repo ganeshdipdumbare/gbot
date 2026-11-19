@@ -1,7 +1,10 @@
 package dev.gbot.app.local
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
@@ -20,6 +23,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class LocalModelsTest {
     @get:Rule val folder = TemporaryFolder()
@@ -41,7 +46,10 @@ class LocalModelsTest {
                     MockResponse.Builder().code(200).body(Buffer().write(model)).build()
                 } else {
                     val from = range.removePrefix("bytes=").removeSuffix("-").toInt()
-                    MockResponse.Builder().code(206).body(Buffer().write(model.copyOfRange(from, model.size))).build()
+                    MockResponse.Builder().code(206)
+                        .addHeader("Content-Range", "bytes $from-${model.size - 1}/${model.size}")
+                        .body(Buffer().write(model.copyOfRange(from, model.size)))
+                        .build()
                 }
             }
         }
@@ -53,10 +61,21 @@ class LocalModelsTest {
         server.close()
     }
 
-    private fun entry() = LocalModels.Entry(
+    private fun entry(bytes: Long = model.size.toLong()) = LocalModels.Entry(
         label = "Test model", file = "test-model.litertlm",
-        url = server.url("/model.litertlm").toString(), bytes = model.size.toLong(), note = "",
+        url = server.url("/model.litertlm").toString(), bytes = bytes, note = "",
     )
+
+    /** Pauses by cancelling once more than half the model has arrived. Returns the bytes saved. */
+    private fun pauseHalfway(e: LocalModels.Entry): Long = runBlocking {
+        lateinit var job: Job
+        job = launch(start = CoroutineStart.LAZY) {
+            LocalModels.downloadTo(dir, e) { done, _ -> if (done > model.size / 2) job.cancel() }
+        }
+        job.start()
+        job.join()
+        File(dir, "test-model.litertlm.part").length()
+    }
 
     @Test
     fun `a fresh download saves the whole model`() = runBlocking {
@@ -69,17 +88,9 @@ class LocalModelsTest {
 
     @Test
     fun `pausing keeps the partial file and resuming continues from it`() = runBlocking {
-        // Pause by cancelling once more than half the model has arrived.
-        lateinit var job: Job
-        job = launch(start = CoroutineStart.LAZY) {
-            LocalModels.downloadTo(dir, entry()) { done, _ -> if (done > model.size / 2) job.cancel() }
-        }
-        job.start()
-        job.join()
+        val saved = pauseHalfway(entry())
 
         val part = File(dir, "test-model.litertlm.part")
-        assertTrue("partial file should be kept", part.exists())
-        val saved = part.length()
         assertTrue("paused partway, saved $saved", saved > model.size / 2 && saved < model.size)
         assertFalse(File(dir, "test-model.litertlm").exists())
 
@@ -92,10 +103,43 @@ class LocalModelsTest {
     }
 
     @Test
+    fun `pausing while the connection is stalled reports a cancel, not a network error`() = runBlocking {
+        // The body trickles in, so the download is blocked on a read when it is paused.
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse.Builder().code(200).body(Buffer().write(model))
+                    .throttleBody(8_192, 200, TimeUnit.MILLISECONDS).build()
+        }
+        val firstBytes = CountDownLatch(1)
+        val download = async(Dispatchers.IO) {
+            LocalModels.downloadTo(dir, entry()) { done, _ -> if (done > 0) firstBytes.countDown() }
+        }
+        assertTrue(firstBytes.await(10, TimeUnit.SECONDS))
+
+        download.cancel()
+        val failure = runCatching { runBlocking { download.await() } }.exceptionOrNull()
+
+        assertTrue("pause should look like a cancel, got $failure", failure is CancellationException)
+        assertTrue(File(dir, "test-model.litertlm.part").exists())
+    }
+
+    @Test
+    fun `resuming uses the server's size when the catalog size is wrong`() = runBlocking {
+        val wrong = entry(bytes = model.size + 1_000L)
+        val saved = pauseHalfway(wrong)
+        assertTrue(saved > 0)
+
+        val file = LocalModels.downloadTo(dir, wrong) { _, _ -> }
+
+        assertArrayEquals(model, file.readBytes())
+    }
+
+    @Test
     fun `a saved part that is longer than the model is removed, not installed`() = runBlocking {
         // The server has nothing past a part this long, so it answers 416.
         server.dispatcher = object : Dispatcher() {
-            override fun dispatch(request: RecordedRequest): MockResponse = MockResponse.Builder().code(416).build()
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse.Builder().code(416).addHeader("Content-Range", "bytes */${model.size}").build()
         }
         val part = File(dir, "test-model.litertlm.part")
         part.writeBytes(ByteArray(model.size + 10))

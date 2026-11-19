@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -73,7 +74,16 @@ object LocalModels {
         downloadTo(dir(ctx), e, progress)
 
     /** [download] into a given folder. Kept apart from the Context so it can be tested on the JVM. */
-    suspend fun downloadTo(folder: File, e: Entry, progress: (Long, Long) -> Unit): File = coroutineScope {
+    suspend fun downloadTo(folder: File, e: Entry, progress: (Long, Long) -> Unit): File = try {
+        downloadScope(folder, e, progress)
+    } catch (ex: IOException) {
+        // A pause or cancel closes the socket mid-read, which surfaces as an IOException.
+        // If this coroutine was cancelled, report it as the cancel it is.
+        currentCoroutineContext().ensureActive()
+        throw ex
+    }
+
+    private suspend fun downloadScope(folder: File, e: Entry, progress: (Long, Long) -> Unit): File = coroutineScope {
         val target = File(folder, e.file)
         val part = File(folder, e.file + ".part")
         val have = if (part.exists()) part.length() else 0L
@@ -85,15 +95,19 @@ object LocalModels {
         try {
             async(Dispatchers.IO) {
                 call.execute().use { res ->
-                    // 416: the server has no bytes past the part. That is only fine if the part is the whole model.
+                    // The size the server reports for the whole file. The catalog size is only a fallback.
+                    val serverTotal = res.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                    // 416: the server has no bytes past the part. That is fine only if the part is the whole model.
                     if (res.code == 416 && have > 0) {
-                        if (part.length() == e.bytes) return@async finish(part, target)
-                        part.delete()
-                        throw IllegalStateException("The saved part didn't match the model, so it was removed. Download it again.")
+                        val expected = serverTotal ?: e.bytes
+                        if (part.length() == expected) return@async finish(part, target)
+                        // Only a part longer than the file is clearly bad; a short one may still be worth keeping.
+                        if (part.length() > expected) part.delete()
+                        throw IllegalStateException("The saved part doesn't match the model. Download it again.")
                     }
                     if (!res.isSuccessful) throw IllegalStateException("Download failed (${res.code})")
                     val resumed = res.code == 206
-                    val total = if (resumed) e.bytes else (res.body.contentLength().takeIf { it > 0 } ?: e.bytes)
+                    val total = if (resumed) (serverTotal ?: e.bytes) else (res.body.contentLength().takeIf { it > 0 } ?: e.bytes)
                     var done = if (resumed) have else 0L
                     FileOutputStream(part, resumed).use { out ->
                         res.body.byteStream().use { input ->
