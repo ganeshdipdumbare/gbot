@@ -5,6 +5,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 
 /**
  * The bots' light, mirrored from the web rig in packages/characters/src/gl.ts:
@@ -54,85 +55,73 @@ private fun mix3(a: Color, b: Color, c: Color, t: Float): Color {
 /** Everything one bot needs to paint itself, in the 100-unit body box. */
 @Immutable
 internal class BotPaint(
-    /** The body's thickness, showing just under the front face. */
-    val wall: Color,
+    /** The body's thickness under the front face, darkening toward its far edge. */
+    val wall: Brush,
     val face: Brush,
-    /** Key light along the top bevel. */
-    val crown: Brush,
-    /** Rim light down the right bevel. */
-    val rim: Brush,
-    /** The under-edge easing into shade. */
-    val under: Brush,
-    val sheen: Brush,
-    val sheenAt: Offset,
+    /** A broad, soft lift on the upper face: the sky light on a rounded top. */
+    val dome: Brush,
+    /** Edge falloff: the pillow turning away from the light all round. */
+    val falloff: Brush,
+    /** Key light rolling over the upper bevel: a soft, blurred stroke. */
+    val crown: android.graphics.Paint,
+    /** The lower bevel turning into shade. */
+    val under: android.graphics.Paint,
     /** A hairline silhouette, so pale bots keep an edge on light paper. */
     val contour: Color,
     val shadow: Brush,
 )
 
 internal object Glow {
-    /** The specular catch, a little up and left of centre. */
-    private fun sheenAt(b: Rect) = Offset(b.left + b.width * 0.34f, b.top + b.height * 0.21f)
+    /** How thick the body is, in body units; the web rig's 0.38 at its scale. */
+    const val DEPTH = 5
 
     fun paint(tint: Long, b: Rect, dark: Boolean): BotPaint {
         val l = lumOf(tint)
-        // A bright hue can take a brighter highlight; cream would go white.
-        val lift = (if (dark) 0.36f else 0.24f) * (1f - 0.5f * l)
-        val low = if (dark) 0.58f - 0.10f * l else 0.70f - 0.18f * l
-        val inner = shade(tint, 1f + lift)
-        val mid = shade(tint, 1f + lift * 0.12f)
-        val edge = shade(tint, low, warm = 0.22f)
-
-        val n = 20
-        val stops = Array(n + 1) { i ->
-            val u = i / n.toFloat()
-            // Pack the stops near the rim, where the form turns fastest.
-            (1f - (1f - u) * (1f - u)) to mix3(inner, mid, edge, u)
+        // Matte clay, as the web's standard material: a gentle top-to-bottom
+        // turn, not a glossy spot. Pale hues take less lift, or cream goes white.
+        val top = shade(tint, 1f + (if (dark) 0.16f else 0.12f) * (1f - 0.6f * l))
+        val bottom = shade(tint, if (dark) 0.80f else 0.84f, warm = 0.12f)
+        val face = Brush.verticalGradient(
+            0f to top, 0.45f to Color(tint), 1f to bottom,
+            startY = b.top, endY = b.bottom,
+        )
+        val dome = Brush.radialGradient(
+            0f to Color.White.copy(alpha = (if (dark) 0.16f else 0.13f) * (1f - 0.5f * l)),
+            1f to Color.Transparent,
+            center = Offset(b.center.x, b.top + b.height * 0.22f), radius = maxOf(b.width, b.height) * 0.55f,
+        )
+        val falloff = Brush.radialGradient(
+            0f to Color.Transparent, 0.72f to Color.Transparent,
+            1f to Color.Black.copy(alpha = if (dark) 0.16f else 0.12f),
+            center = Offset(b.center.x, b.center.y - b.height * 0.06f), radius = maxOf(b.width, b.height) * 0.60f,
+        )
+        fun bevel(from: Color, to: Color, y0: Float, y1: Float) = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 14f
+            shader = android.graphics.LinearGradient(0f, y0, 0f, y1, from.toArgb(), to.toArgb(), android.graphics.Shader.TileMode.CLAMP)
+            // In body units: the canvas scale carries it to pixels.
+            maskFilter = android.graphics.BlurMaskFilter(4.5f, android.graphics.BlurMaskFilter.Blur.NORMAL)
         }
-        val hi = Offset(b.left + b.width * 0.32f, b.top + b.height * 0.13f)
-        val face = Brush.radialGradient(
-            colorStops = stops, center = hi, radius = maxOf(b.width, b.height) * 1.02f,
-        )
+        val crown = bevel(Color.White.copy(alpha = if (dark) 0.42f else 0.38f), Color.Transparent, b.top, b.top + b.height * 0.6f)
+        val under = bevel(Color.Transparent, Color.Black.copy(alpha = if (dark) 0.34f else 0.26f), b.bottom - b.height * 0.6f, b.bottom)
 
-        val crown = Brush.verticalGradient(
-            0f to Color.White.copy(alpha = if (dark) 0.46f else 0.38f),
-            0.5f to Color.White.copy(alpha = if (dark) 0.10f else 0.07f),
-            1f to Color.Transparent,
-            startY = b.top, endY = b.top + b.height * 0.46f,
-        )
-        val rim = Brush.horizontalGradient(
-            0f to Color.Transparent,
-            1f to Color.White.copy(alpha = if (dark) 0.30f else 0.24f),
-            startX = b.left + b.width * 0.42f, endX = b.right,
-        )
-        val under = Brush.verticalGradient(
-            0f to Color.Transparent,
-            1f to Color.Black.copy(alpha = if (dark) 0.26f else 0.20f),
-            startY = b.bottom - b.height * 0.40f, endY = b.bottom,
-        )
-        val sheen = Brush.radialGradient(
-            0f to Color.White.copy(alpha = if (dark) 0.40f else 0.30f),
-            0.4f to Color.White.copy(alpha = if (dark) 0.14f else 0.10f),
-            1f to Color.Transparent,
-            center = sheenAt(b), radius = maxOf(b.width, b.height) * 0.30f,
-        )
+        // The side wall: one gradient by height, so the stacked steps read as one surface.
+        val far = shade(tint, if (dark) 0.50f else 0.56f, warm = 0.25f)
+        val near = shade(tint, if (dark) 0.70f else 0.76f, warm = 0.18f)
+        val wall = Brush.verticalGradient(0f to near, 1f to far, startY = b.bottom - b.height * 0.35f, endY = b.bottom + DEPTH)
 
         // On white paper a cream bot has no silhouette of its own; give it
         // one, in its own colour, scaled by how pale it is.
-        val contourA = if (dark) 0.06f + 0.10f * l * l else 0.09f + 0.40f * l * l * l
+        val contourA = if (dark) 0.04f + 0.08f * l * l else 0.04f + 0.42f * l * l * l
         val contour = shade(tint, 0.50f, warm = 0.1f).copy(alpha = contourA)
 
         val shadow = Brush.radialGradient(
-            0f to Color.Black.copy(alpha = if (dark) 0.26f else 0.20f),
-            0.5f to Color.Black.copy(alpha = if (dark) 0.11f else 0.08f),
+            0f to Color.Black.copy(alpha = if (dark) 0.34f else 0.24f),
+            0.45f to Color.Black.copy(alpha = if (dark) 0.15f else 0.10f),
             1f to Color.Transparent,
             center = Offset(50f, 95.5f), radius = 30f,
         )
 
-        return BotPaint(
-            wall = shade(tint, if (dark) 0.52f else 0.60f, warm = 0.3f),
-            face = face, crown = crown, rim = rim, under = under,
-            sheen = sheen, sheenAt = sheenAt(b), contour = contour, shadow = shadow,
-        )
+        return BotPaint(wall, face, dome, falloff, crown, under, contour, shadow)
     }
 }

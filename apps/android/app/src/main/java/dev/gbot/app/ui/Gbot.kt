@@ -36,6 +36,9 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.semantics.contentDescription
@@ -307,21 +310,24 @@ internal fun DrawScope.drawGround(paint: BotPaint, lift: Float, sx: Float) {
 internal fun DrawScope.drawBody(
     path: Path, b: Rect, paint: BotPaint, simple: Boolean, flat: Boolean, px: Float, py: Float,
 ) {
-    // The body's thickness, peeking out under the front face.
-    if (!flat) withTransform({ translate(0f, 2.4f) }) { drawPath(path, paint.wall) }
+    // The body's thickness: the outline stepped down, far edge first, so the
+    // side shades smoothly into the face like the web rig's extrusion.
+    if (!flat) for (i in Glow.DEPTH downTo 1) {
+        withTransform({ translate(0f, i.toFloat()) }) { drawPath(path, paint.wall) }
+    }
     drawPath(path, paint.face)
     clipPath(path) {
+        withTransform({ translate(-px * 0.25f, -py * 0.25f) }) { drawRect(paint.dome, b.topLeft, b.size) }
         if (!flat) {
-            drawPath(path, paint.crown, style = Stroke(5.2f))
-            drawPath(path, paint.rim, style = Stroke(4f))
-            drawPath(path, paint.under, style = Stroke(7f))
-        }
-        if (!simple) withTransform({
-            translate(-px * 0.3f, -py * 0.3f)
-            scale(1f, 0.62f, paint.sheenAt)
-        }) {
-            drawCircle(paint.sheen, maxOf(b.width, b.height) * 0.30f, paint.sheenAt)
+            drawRect(paint.falloff, b.topLeft, b.size)
+            // A rounded bevel: a blurred stroke, so the light rolls over the
+            // edge instead of drawing a ring.
+            val native = path.asAndroidPath()
+            drawIntoCanvas { c ->
+                c.nativeCanvas.drawPath(native, paint.crown)
+                c.nativeCanvas.drawPath(native, paint.under)
+            }
         }
     }
-    drawPath(path, paint.contour, style = Stroke(if (flat) 1.8f else 1.4f))
+    drawPath(path, paint.contour, style = Stroke(if (flat) 1.8f else 1.2f))
 }
