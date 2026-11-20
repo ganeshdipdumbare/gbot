@@ -50,3 +50,13 @@ func (l *Limiter) Over(key string) bool {
 	b := l.hits[key]
 	return b != nil && time.Since(b.start) <= l.window && b.n >= l.max
 }
+
+// Refund gives back one hit counted by Allow, for an attempt that turned
+// out not to count (a sign-in that succeeded).
+func (l *Limiter) Refund(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if b := l.hits[key]; b != nil && b.n > 0 {
+		b.n--
+	}
+}

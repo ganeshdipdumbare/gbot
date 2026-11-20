@@ -23,3 +23,17 @@ func TestOverCountsOnlyWhatAllowCounted(t *testing.T) {
 		t.Fatal("another key was limited")
 	}
 }
+
+func TestRefundGivesBackAnAttempt(t *testing.T) {
+	l := NewLimiter(1, time.Minute)
+	if !l.Allow("a") {
+		t.Fatal("first attempt refused")
+	}
+	l.Refund("a")
+	if !l.Allow("a") {
+		t.Fatal("a refunded attempt still counted")
+	}
+	if l.Allow("a") {
+		t.Fatal("over the limit allowed")
+	}
+}

@@ -150,17 +150,20 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(c.Email))
 	// Only failures count, per account from this address, and (much more
-	// loosely) per account from anywhere.
+	// loosely) per account from anywhere. Each attempt takes its slot before
+	// the password check, so parallel guesses can't all slip past the cap,
+	// and a sign-in that succeeds gives it back.
 	here := email + "|" + s.authKey(r)
-	if s.loginLimit.Over(here) || s.accountLimit.Over(email) {
+	if !s.loginLimit.Allow(here) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts for this account, try again in a few minutes")
 		return
 	}
-	failed := func() {
-		s.loginLimit.Allow(here)
-		s.accountLimit.Allow(email)
-		writeErr(w, 401, "wrong email or password")
+	if !s.accountLimit.Allow(email) {
+		s.loginLimit.Refund(here)
+		writeErr(w, http.StatusTooManyRequests, "too many attempts for this account, try again in a few minutes")
+		return
 	}
+	failed := func() { writeErr(w, 401, "wrong email or password") }
 	u, err := s.Store.UserByEmail(r.Context(), email)
 	if err != nil {
 		auth.CheckDummy(c.Password)
@@ -171,6 +174,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		failed()
 		return
 	}
+	s.loginLimit.Refund(here)
+	s.accountLimit.Refund(email)
 	s.startSession(w, r, u)
 }
 
