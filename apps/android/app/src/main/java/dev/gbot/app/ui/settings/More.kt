@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.gbot.app.GbotApp
 import dev.gbot.app.Mode
+import dev.gbot.app.local.Mail
 import dev.gbot.app.net.McpServer
 import dev.gbot.app.net.Member
 import dev.gbot.app.net.Skill
@@ -214,6 +215,8 @@ fun Integrations(back: () -> Unit) {
     // "On this phone": the apps already here, switched on one by one.
     var phoneTick by remember { mutableStateOf(0) }
     var pendingPhone by remember { mutableStateOf<dev.gbot.app.local.PhoneApps.App?>(null) }
+    var connectingMail by remember { mutableStateOf(false) }
+    var forgettingMail by remember { mutableStateOf(false) }
     val askPermissions = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) {
         pendingPhone?.let { a ->
             if (dev.gbot.app.local.PhoneApps.granted(ctx, a)) { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, true); app.toast("${a.name} is on") }
@@ -229,8 +232,12 @@ fun Integrations(back: () -> Unit) {
         onDispose { lifecycle.removeObserver(obs) }
     }
     fun turnOn(a: dev.gbot.app.local.PhoneApps.App) {
-        if (a.permissions.isEmpty() || dev.gbot.app.local.PhoneApps.granted(ctx, a)) { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, true); phoneTick++ }
-        else pendingPhone = a
+        if (a.permissions.isEmpty() || dev.gbot.app.local.PhoneApps.granted(ctx, a)) {
+            dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, true); phoneTick++
+            // Email is most useful with the inbox: offer it straight away.
+            if (a.id == "email" && !dev.gbot.app.local.Mail.connected(ctx)) connectingMail = true
+            else app.toast("${a.name} is on")
+        } else pendingPhone = a
     }
     LaunchedEffect(pendingPhone) { pendingPhone?.let { askPermissions.launch(it.permissions.toTypedArray()) } }
     // Servers connect in the background: poll while any is connecting.
@@ -276,9 +283,20 @@ fun Integrations(back: () -> Unit) {
                 phoneTick.let { }
                 mine.forEach { a ->
                     val on = dev.gbot.app.local.PhoneApps.on(ctx, a.id)
+                    val inbox = if (a.id == "email") dev.gbot.app.local.Mail.account(ctx)?.email else null
+                    // Email needs one more step to read mail; it shows here, so every card stays one size.
+                    val needsInbox = a.id == "email" && on && inbox == null
+                    val blurb = if (a.id == "email" && on) inbox?.let { "Reads $it, and drafts in your mail app." } ?: "Drafts only. Connect your inbox so bots can read mail." else a.why
                     Row(
                         Modifier.fillMaxWidth().heightIn(min = 64.dp).clip(RoundedCornerShape(16.dp)).border(1.dp, g.line, RoundedCornerShape(16.dp)).background(if (on) g.surface2 else Color.Transparent)
-                            .pressable(true) { if (on) { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, false); phoneTick++ } else turnOn(a) }
+                            .pressable(true) {
+                                when {
+                                    !on -> turnOn(a)
+                                    // Turning Email off also removes the app password, after asking.
+                                    a.id == "email" && inbox != null -> forgettingMail = true
+                                    else -> { dev.gbot.app.local.PhoneApps.setEnabled(ctx, a.id, false); phoneTick++; app.toast("${a.name} is off") }
+                                }
+                            }
                             .padding(horizontal = 10.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -286,10 +304,13 @@ fun Integrations(back: () -> Unit) {
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(a.name, style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(a.why, style = T.tiny, color = g.ink2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(blurb, style = T.tiny, color = g.ink2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                         Spacer(Modifier.width(8.dp))
-                        if (on) Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (needsInbox) Text(
+                            "Connect inbox", style = T.tiny.copy(fontWeight = FontWeight.Medium), color = g.onEmphasis,
+                            modifier = Modifier.clip(RoundedCornerShape(50)).background(g.emphasis).pressable(true) { connectingMail = true }.padding(horizontal = 10.dp, vertical = 5.dp),
+                        ) else if (on) Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon("check", size = 14.dp, color = g.live); Spacer(Modifier.width(4.dp)); Text("On · turn off", style = T.tiny, color = g.ink3)
                         } else Text(
                             "Turn on", style = T.tiny.copy(fontWeight = FontWeight.Medium), color = g.ink,
@@ -384,6 +405,80 @@ fun Integrations(back: () -> Unit) {
                         }
                     }, small = true, enabled = !busy && name.isNotBlank() && url.isNotBlank() && (!fromCatalog || token.isNotBlank()))
                 }
+        }
+    }
+    if (connectingMail) MailConnect(onDone = { ok -> connectingMail = false; phoneTick++; if (ok) app.toast("Inbox connected. Try “what's new in my mail?”") })
+    if (forgettingMail) Confirm(
+        "Turn off Email?", "Bots won't read or draft your mail, and the app password is removed from this phone. Turn it on again any time.", "Turn off",
+        onConfirm = { dev.gbot.app.local.Mail.forget(ctx); dev.gbot.app.local.PhoneApps.setEnabled(ctx, "email", false); phoneTick++; app.toast("Email is off") }, onDismiss = { forgettingMail = false },
+    )
+}
+
+/**
+ * Connecting an inbox: the address, an app password, and the server,
+ * guessed from the address. The account is signed in to once before it is
+ * saved, so a wrong password shows here, not in a chat later.
+ */
+@Composable
+private fun MailConnect(onDone: (Boolean) -> Unit) {
+    val g = LocalG.current
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val saved = remember { Mail.account(ctx) }
+    var email by remember { mutableStateOf(saved?.email.orEmpty()) }
+    var password by remember { mutableStateOf("") }
+    var host by remember { mutableStateOf(saved?.host.orEmpty()) }
+    var hostEdited by remember { mutableStateOf(saved != null) }
+    var port by remember { mutableStateOf((saved?.port ?: 993).toString()) }
+    var advanced by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val provider = Mail.providerFor(email)
+    val validEmail = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$").matches(email.trim())
+    LaunchedEffect(email) { if (!hostEdited) host = Mail.guessHost(email) }
+
+    fun connect() {
+        error = ""; busy = true
+        val acct = Mail.Account(email.trim(), host.trim(), port.trim().toIntOrNull() ?: 993, password.filterNot { it == ' ' && provider?.name == "Gmail" })
+        scope.launch {
+            val problem = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Mail.test(acct) }
+            busy = false
+            if (problem == null) { Mail.save(ctx, acct); onDone(true) }
+            else { error = problem; if (problem.contains("server", true)) advanced = true }
+        }
+    }
+
+    Popup({ if (!busy) onDone(false) }, dismissable = !busy) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(g.surface2), contentAlignment = Alignment.Center) { Icon("lock", size = 18.dp, color = g.ink2) }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("Connect your inbox", style = T.h2, color = g.ink)
+                Text("So bots can read and search your mail", style = T.tiny, color = g.ink3)
+            }
+        }
+        Column { Label("Email address"); Field(email, { email = it.trim() }, placeholder = "you@gmail.com", keyboard = KeyboardType.Email, enabled = !busy) }
+        if (provider != null) Panel(padding = 12.dp) {
+            Text("${provider.name}: ${provider.note}", style = T.small, color = g.ink2)
+            provider.appPasswordUrl?.let { url ->
+                GButton("Make an app password", { runCatching { CustomTabsIntent.Builder().build().launchUrl(ctx, Uri.parse(url)) } }, variant = Variant.Soft, small = true, icon = "globe")
+            }
+        }
+        Column { Label("App password", "Not your normal password"); Field(password, { password = it }, placeholder = "xxxx xxxx xxxx xxxx", password = true, enabled = !busy) }
+        if (advanced) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f)) { Label("IMAP server"); Field(host, { host = it.trim(); hostEdited = true }, placeholder = "imap.example.com", keyboard = KeyboardType.Uri, enabled = !busy) }
+                Column(Modifier.width(88.dp)) { Label("Port"); Field(port, { port = it.filter(Char::isDigit).take(5) }, placeholder = "993", keyboard = KeyboardType.Number, enabled = !busy) }
+            }
+        } else if (validEmail) {
+            Text("Server: ${host.ifEmpty { "?" }} · Change", style = T.tiny, color = g.ink3, modifier = Modifier.pressable(!busy) { advanced = true })
+        }
+        Text("The password stays on this phone and is never shown to bots. Reading never marks mail as read, and nothing is sent without you tapping Send.", style = T.tiny, color = g.ink3)
+        ErrorText(error)
+        Row(horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            GButton(if (saved == null) "Drafts only" else "Cancel", { onDone(false) }, variant = Variant.Ghost, small = true, enabled = !busy)
+            Spacer(Modifier.width(6.dp))
+            GButton(if (busy) "Signing in…" else "Connect", { connect() }, small = true, enabled = !busy && validEmail && password.isNotBlank() && host.isNotBlank())
         }
     }
 }

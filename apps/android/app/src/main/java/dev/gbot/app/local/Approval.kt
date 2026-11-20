@@ -16,12 +16,12 @@ object Approval {
     )
 
     /**
-     * The phone's own calendar and contacts: once outside text is in the
+     * The phone's own calendar, contacts and mail: once outside text is in the
      * run (a Slack message, a web page), reading them asks first, since the
      * answer can be posted back to Slack or carried off. web_fetch and card
      * pictures are limited to addresses already seen instead of asking.
      */
-    val ASK_WHEN_TAINTED = setOf("calendar_list", "contact_search")
+    val ASK_WHEN_TAINTED = setOf("calendar_list", "contact_search", "email_list", "email_read")
 
     fun canAlwaysAllow(tool: String) = tool !in NO_BLANKET
 
@@ -50,10 +50,26 @@ class RunTaint(initial: Boolean = false) {
     @Volatile var on: Boolean = initial
         private set
 
-    fun mark() { on = true }
+    /** Outside text other than the person's own mail: a page, Slack, an integration. */
+    @Volatile var beyondMail: Boolean = initial
+        private set
+
+    fun mark() { on = true; beyondMail = true }
+
+    /** Marks a tool's answer as outside text, noting when it was only mail. */
+    fun mark(tool: String) { on = true; if (tool !in MAIL) beyondMail = true }
+
+    /**
+     * Whether a step should be treated as tainted. Reading one more email
+     * after reading mail doesn't ask; reading mail after a web page or a
+     * Slack message does.
+     */
+    fun taints(tool: String) = if (tool in MAIL) beyondMail else on
 
     companion object {
+        val MAIL = setOf("email_list", "email_read")
+
         /** Tools whose answer is outside text. */
-        val SOURCES = setOf("web_search", "web_fetch", "browser_open", "browser_read", "calendar_list", "file_read", "recall")
+        val SOURCES = setOf("web_search", "web_fetch", "browser_open", "browser_read", "calendar_list", "email_list", "email_read", "file_read", "recall")
     }
 }
