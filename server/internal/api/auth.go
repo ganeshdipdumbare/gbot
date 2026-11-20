@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -155,16 +154,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	// the password check, so parallel guesses can't all slip past the cap,
 	// and a sign-in that succeeds gives it back.
 	here := email + "|" + s.authKey(r)
-	if !s.loginLimit.Allow(here) {
+	ok, hereTicket := s.loginLimit.Take(here)
+	if !ok {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts for this account, try again in a few minutes")
 		return
 	}
-	ok := s.accountLimit.Allow(email)
-	// Taken after both counts: the windows this attempt landed in started
-	// no later than this, and any that replace them start after it.
-	at := time.Now()
+	ok, emailTicket := s.accountLimit.Take(email)
 	if !ok {
-		s.loginLimit.Refund(here, at)
+		s.loginLimit.Refund(hereTicket)
 		writeErr(w, http.StatusTooManyRequests, "too many attempts for this account, try again in a few minutes")
 		return
 	}
@@ -179,8 +176,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		failed()
 		return
 	}
-	s.loginLimit.Refund(here, at)
-	s.accountLimit.Refund(email, at)
+	s.loginLimit.Refund(hereTicket)
+	s.accountLimit.Refund(emailTicket)
 	s.startSession(w, r, u)
 }
 
