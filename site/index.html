@@ -33,6 +33,7 @@
     <nav class="nav-links" aria-label="Sections">
       <a href="#features">Features</a>
       <a href="#computer">Computer</a>
+      <a href="#vault">Vault</a>
       <a href="#crew">Crew</a>
       <a href="#integrations">Integrations</a>
       <a href="#apps">Apps</a>
@@ -102,7 +103,7 @@
         </li>
         <li data-reveal>
           <h3>A vault for passwords</h3>
-          <p>Passwords and tokens are sealed and never shown to a model. A bot can type one into a password field, but only on the sites you list for it.</p>
+          <p>Passwords and tokens are sealed and never shown to a model. A bot can type one into a password field, but only on the sites you list for it. <a class="inline" href="#vault">See it work</a></p>
         </li>
         <li data-reveal>
           <h3>Skills</h3>
@@ -155,6 +156,57 @@
         <div class="desk-foot">
           <span>Read 3 results</span>
           <span class="take">Take control</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section split vault-sec" id="vault">
+      <div class="split-copy" data-reveal>
+        <span class="kicker">The vault</span>
+        <h2>Your passwords.<br />Never their business.</h2>
+        <p>Bots sign in for you without ever knowing your passwords. Secrets are sealed on hardware you own. The model only ever sees a name, like “LinkedIn”, and a row of dots.</p>
+        <ul class="ticks">
+          <li>Sealed on your phone or your server, and never shown again.</li>
+          <li>Typed only on the sites you list for each secret.</li>
+          <li>Every use waits for your OK.</li>
+          <li>Lookalike sites and webmail are refused before anything is typed.</li>
+        </ul>
+      </div>
+      <div class="vault-stage" data-vault data-reveal>
+        <p class="sr">An animation: a bot asks to use the LinkedIn secret, you approve, and the vault types it into linkedin.com while the model sees only dots. Then the bot lands on a lookalike site and the vault refuses.</p>
+        <div class="vault-grid" aria-hidden="true">
+          <div class="safe" data-safe>
+            <div class="safe-head">
+              <span class="safe-lock" data-safe-lock><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="5" y="10" width="14" height="10" rx="2.5"/><path class="shackle" d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+              <b>Vault</b>
+              <span class="sealed">Sealed</span>
+            </div>
+            <ul class="secrets">
+              <li data-secret="linkedin"><i>in</i><span><b>LinkedIn</b><em>linkedin.com</em></span><code>••••••</code></li>
+              <li><i>gh</i><span><b>GitHub token</b><em>github.com</em></span><code>••••••</code></li>
+              <li><i>✈</i><span><b>Airline</b><em>lufthansa.com</em></span><code>••••••</code></li>
+            </ul>
+            <p class="safe-note" data-safe-note>Bots see names, never values.</p>
+          </div>
+          <div class="site" data-site>
+            <div class="page-url"><i data-url-dot></i><span data-url>linkedin.com/login</span></div>
+            <div class="site-body">
+              <b class="site-title">Sign in</b>
+              <label>Email<span class="input">pixel.helps@you.me</span></label>
+              <label>Password<span class="input pw" data-pw><span data-dots></span><i class="caret"></i></span></label>
+              <span class="site-btn" data-signin>Sign in</span>
+            </div>
+            <div class="stamp" data-stamp></div>
+          </div>
+          <div class="crew-row">
+            <div class="vault-bot" data-vault-bot></div>
+            <div class="ask" data-ask>
+              <p data-ask-text>Type your <b>LinkedIn</b> secret into “Password”?</p>
+              <span class="ask-actions"><span class="btn primary tiny" data-approve>Approve</span><span class="btn tiny">Decline</span></span>
+            </div>
+          </div>
+          <div class="model" data-model><span>What the model sees</span><code data-model-text>vault_type(name: "LinkedIn")</code></div>
+          <div class="key" data-key><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M21 12v2"/></svg></div>
         </div>
       </div>
     </section>
