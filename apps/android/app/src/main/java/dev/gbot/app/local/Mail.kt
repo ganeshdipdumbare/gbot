@@ -192,7 +192,7 @@ internal class Imap private constructor(private val input: InputStream, private 
         fun literalAfter(item: String): ByteArray? {
             val at = text.indexOf(item, ignoreCase = true)
             if (at < 0) return null
-            val before = Regex("\\{\\d+\\+?}").findAll(text.substring(0, at)).count()
+            val before = Regex(LITERAL_SIZE).findAll(text.substring(0, at)).count()
             return literals.getOrNull(before)
         }
     }
@@ -200,6 +200,16 @@ internal class Imap private constructor(private val input: InputStream, private 
     private var tag = 0
 
     companion object {
+        /**
+         * IMAP `{n}` size markers in FETCH text. Android's ICU rejects an unescaped
+         * `}` (the desktop JVM often accepts it), which is how Connect inbox crashed
+         * on `\{(\d+)\+?}$`. Quote `}` with `\}` or put it in a class (`[}]`). The
+         * optional `+` is only defensive; servers send synchronizing `{n}`
+         * (LITERAL+ is client→server, RFC 7888).
+         */
+        internal const val LITERAL_SIZE = "[{]\\d+[+]?[}]"
+        internal const val LITERAL_SIZE_AT_END = "[{](\\d+)[+]?[}]$"
+
         /** Generous: a slow mobile network and a big mailbox can both take a while. */
         private const val TIMEOUT_MS = 120_000
         /** Reaching the server at all; a wrong host or port shouldn't wait for the OS TCP timeout. */
@@ -318,7 +328,7 @@ internal class Imap private constructor(private val input: InputStream, private 
         output.flush()
     }
 
-    private val literalAtEnd = Regex("\\{(\\d+)\\+?}$")
+    private val literalAtEnd = Regex(LITERAL_SIZE_AT_END)
 
     internal fun readResponse(): Response {
         val text = StringBuilder()

@@ -54,6 +54,83 @@ class MailTest {
     }
 
     @Test
+    fun literalSizePatternsAvoidUnescapedClosingBrace() {
+        // ICU rejects a bare `}` that does not close a quantifier. Escaped `\}`,
+        // a class `[}]`, quantifier `\d{1,10}`, nested classes, and `\Q}\E` are fine.
+        assertTrue(hasUnescapedClosingBrace("\\{(\\d+)\\+?}$")) // pre-fix
+        assertTrue(hasUnescapedClosingBrace("[{]\\d+}"))
+        assertFalse(hasUnescapedClosingBrace("\\{\\d+\\}"))
+        assertFalse(hasUnescapedClosingBrace("[{]\\d+[}]"))
+        assertFalse(hasUnescapedClosingBrace("\\d{1,10}"))
+        assertFalse(hasUnescapedClosingBrace("[a[b]}]"))
+        assertFalse(hasUnescapedClosingBrace("\\Q}\\E"))
+        for (p in listOf(Imap.LITERAL_SIZE, Imap.LITERAL_SIZE_AT_END)) {
+            assertFalse("unescaped } in $p", hasUnescapedClosingBrace(p))
+            assertTrue(p, Regex(p).containsMatchIn("x{12}"))
+            assertTrue(p, Regex(p).containsMatchIn("x{12+}"))
+        }
+        assertTrue(Regex(Imap.LITERAL_SIZE_AT_END).matches("{12}"))
+        assertFalse(Regex(Imap.LITERAL_SIZE_AT_END).containsMatchIn("x{12}y"))
+    }
+
+    /**
+     * True when `}` is neither escaped, inside `[]` (nested depth), inside `\Q…\E`,
+     * nor closing an open `{` quantifier — the cases ICU actually rejects.
+     */
+    private fun hasUnescapedClosingBrace(pattern: String): Boolean {
+        var i = 0
+        var classDepth = 0
+        var quantDepth = 0
+        var quoted = false
+        while (i < pattern.length) {
+            if (quoted) {
+                if (pattern.startsWith("\\E", i)) {
+                    quoted = false
+                    i += 2
+                } else {
+                    i++
+                }
+                continue
+            }
+            if (pattern[i] == '\\') {
+                if (pattern.startsWith("\\Q", i)) {
+                    quoted = true
+                    i += 2
+                } else {
+                    i += 2
+                }
+                continue
+            }
+            when (pattern[i]) {
+                '[' -> {
+                    classDepth++
+                    i++
+                }
+                ']' -> {
+                    if (classDepth > 0) classDepth--
+                    i++
+                }
+                '{' -> {
+                    if (classDepth == 0) quantDepth++
+                    i++
+                }
+                '}' -> {
+                    when {
+                        classDepth > 0 -> i++
+                        quantDepth > 0 -> {
+                            quantDepth--
+                            i++
+                        }
+                        else -> return true
+                    }
+                }
+                else -> i++
+            }
+        }
+        return false
+    }
+
+    @Test
     fun quotesAreEscaped() {
         val sent = ByteArrayOutputStream()
         Imap.over(ByteArrayInputStream("a1 OK\r\n".toByteArray()), sent).login("a@b.c", "x\"y\\z")
