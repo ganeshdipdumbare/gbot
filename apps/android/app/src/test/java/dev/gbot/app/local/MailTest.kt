@@ -54,6 +54,18 @@ class MailTest {
     }
 
     @Test
+    fun nonSynchronizingLiteralIsRead() {
+        // Gmail and others may send {n+} (literal+, no + go-ahead). The size
+        // marker used to be matched with \{ \}, which Android's ICU rejects.
+        val body = "hello"
+        val server = "* 1 FETCH (UID 9 BODY[] {${body.length}+}\r\n$body)\r\na1 OK done\r\n"
+        val imap = Imap.over(ByteArrayInputStream(server.toByteArray()), ByteArrayOutputStream())
+        val f = imap.fetch(listOf(9), "(UID BODY.PEEK[])").single()
+        assertEquals(9L, f.uid)
+        assertEquals(body, f.literalAfter("BODY[]")!!.toString(Charsets.UTF_8))
+    }
+
+    @Test
     fun quotesAreEscaped() {
         val sent = ByteArrayOutputStream()
         Imap.over(ByteArrayInputStream("a1 OK\r\n".toByteArray()), sent).login("a@b.c", "x\"y\\z")

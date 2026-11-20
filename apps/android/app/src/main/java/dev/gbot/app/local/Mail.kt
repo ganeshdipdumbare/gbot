@@ -192,7 +192,8 @@ internal class Imap private constructor(private val input: InputStream, private 
         fun literalAfter(item: String): ByteArray? {
             val at = text.indexOf(item, ignoreCase = true)
             if (at < 0) return null
-            val before = Regex("\\{\\d+\\+?}").findAll(text.substring(0, at)).count()
+            // Character classes, not \{ \}: Android's ICU rejects those escapes.
+            val before = Regex("[{]\\d+[+]?[}]").findAll(text.substring(0, at)).count()
             return literals.getOrNull(before)
         }
     }
@@ -318,7 +319,9 @@ internal class Imap private constructor(private val input: InputStream, private 
         output.flush()
     }
 
-    private val literalAtEnd = Regex("\\{(\\d+)\\+?}$")
+    // Character classes, not \{ \}: Android's ICU rejects those escapes
+    // ("Syntax error in regexp pattern near index … \{(\d+)\+?\}$").
+    private val literalAtEnd = Regex("[{](\\d+)[+]?[}]$")
 
     internal fun readResponse(): Response {
         val text = StringBuilder()
