@@ -54,15 +54,18 @@ class MailTest {
     }
 
     @Test
-    fun nonSynchronizingLiteralIsRead() {
-        // Gmail and others may send {n+} (literal+, no + go-ahead). The size
-        // marker used to be matched with \{ \}, which Android's ICU rejects.
-        val body = "hello"
-        val server = "* 1 FETCH (UID 9 BODY[] {${body.length}+}\r\n$body)\r\na1 OK done\r\n"
-        val imap = Imap.over(ByteArrayInputStream(server.toByteArray()), ByteArrayOutputStream())
-        val f = imap.fetch(listOf(9), "(UID BODY.PEEK[])").single()
-        assertEquals(9L, f.uid)
-        assertEquals(body, f.literalAfter("BODY[]")!!.toString(Charsets.UTF_8))
+    fun literalSizePatternsAvoidIcuBraceEscapes() {
+        // The Connect inbox crash was Pattern.compile on Android ICU rejecting \{ \}.
+        // Desktop JVM accepts those escapes, so a match-only unit test would still
+        // pass if someone reverted Mail.kt. Guard the pattern text itself.
+        for (p in listOf(Imap.LITERAL_SIZE, Imap.LITERAL_SIZE_AT_END)) {
+            assertFalse("ICU-unsafe \\{ in $p", p.contains("\\{"))
+            assertFalse("ICU-unsafe \\} in $p", p.contains("\\}"))
+            assertTrue(p, Regex(p).containsMatchIn("x{12}"))
+            assertTrue(p, Regex(p).containsMatchIn("x{12+}"))
+        }
+        assertTrue(Regex(Imap.LITERAL_SIZE_AT_END).matches("{12}"))
+        assertFalse(Regex(Imap.LITERAL_SIZE_AT_END).containsMatchIn("x{12}y"))
     }
 
     @Test
