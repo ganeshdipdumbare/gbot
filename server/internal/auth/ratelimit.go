@@ -42,21 +42,16 @@ func (l *Limiter) Allow(key string) bool {
 	return b.n <= l.max
 }
 
-// Over reports whether key has used up its window, without counting this
-// call. With Allow called only on failures, it limits failed attempts.
-func (l *Limiter) Over(key string) bool {
+// Refund gives back one hit that Allow counted before time at, for an attempt
+// that turned out not to count (a sign-in that succeeded). Only the window
+// that hit landed in is changed: if it has since ended, or a new window
+// started, there is nothing to give back.
+func (l *Limiter) Refund(key string, at time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b := l.hits[key]
-	return b != nil && time.Since(b.start) <= l.window && b.n >= l.max
-}
-
-// Refund gives back one hit counted by Allow, for an attempt that turned
-// out not to count (a sign-in that succeeded).
-func (l *Limiter) Refund(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if b := l.hits[key]; b != nil && b.n > 0 {
-		b.n--
+	if b == nil || b.n == 0 || b.start.After(at) || time.Since(b.start) > l.window {
+		return
 	}
+	b.n--
 }
