@@ -165,6 +165,12 @@ func (r *Runtime) keepImage(ctx context.Context, rc *runCtx, src string) (string
 	if netguard.Endpoint(src) != nil {
 		return "", ""
 	}
+	// Only a picture whose address a tool answered with (a page's Image
+	// line, an integration's result) or the person wrote: a made-up address
+	// could carry what the bot knows to whoever runs that host.
+	if !rc.mayShow(src) {
+		return "", ""
+	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)

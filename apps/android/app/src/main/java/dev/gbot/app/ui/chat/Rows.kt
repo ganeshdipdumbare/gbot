@@ -357,7 +357,11 @@ fun Card(m: Message, bot: Bot, onTakeover: () -> Unit) {
                 Spacer(Modifier.width(6.dp))
                 GButton("Decline", { answer("reject") }, enabled = !busy, small = true, variant = Variant.Soft)
                 Spacer(Modifier.weight(1f))
-                Text("Always allow", style = T.tiny, color = g.ink3, modifier = Modifier.clip(RoundedCornerShape(6.dp)).tap(!busy) { answer("approve", null, true) }.padding(6.dp))
+                // A blanket rule is never offered for tools that act on the
+                // person's machine, accounts, secrets or bots (phone and server).
+                if (m.str("tool").orEmpty() !in NO_BLANKET_ALLOW) {
+                    Text("Always allow", style = T.tiny, color = g.ink3, modifier = Modifier.clip(RoundedCornerShape(6.dp)).tap(!busy) { answer("approve", null, true) }.padding(6.dp))
+                }
             }
             "question" -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 options.forEach { o ->
@@ -391,3 +395,8 @@ fun EventLine(m: Message, author: Bot?, onTap: (() -> Unit)? = null) {
         Markdown(m.content, color = if (err) g.danger else g.ink2, style = T.small.copy(textAlign = TextAlign.Center))
     }
 }
+
+/** Tools "Always allow" is never offered for: the phone's list plus the server's. */
+private val NO_BLANKET_ALLOW = dev.gbot.app.local.Approval.NO_BLANKET + setOf(
+    "computer_shell", "computer_write_file", "browser_navigate", "routine_run",
+)

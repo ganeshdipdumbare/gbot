@@ -219,6 +219,7 @@ app-level `xapp-` token with `connections:write` next to the bot token.
 | `GBOT_CODEX_USERS` | | comma-separated emails allowed to use the server's Codex (ChatGPT) login |
 | `GBOT_CODEX_HOME` | `$CODEX_HOME` or `~/.codex` | where Codex keeps its login |
 | `GBOT_PUBLIC_URL` | | the `https://` address people open, e.g. `https://bots.example.com`. Required for integration sign-in from another device; also enables secure cookies and HSTS |
+| `GBOT_HOSTS` | | extra host names, comma-separated, that a server listening only on `127.0.0.1` answers to (besides IP addresses, `localhost` and the `GBOT_PUBLIC_URL` host). Other names are refused, which stops DNS-rebinding pages |
 | `GBOT_COOKIE_SECURE` | from `GBOT_PUBLIC_URL` | `true` or `false`; set `false` when phones reach the same server over plain http on a LAN |
 | `GBOT_COMPUTER` | `on` | `off` disables bot computers |
 | `GBOT_COMPUTER_BACKEND` | auto | `microsandbox` or `docker`; auto prefers microsandbox when `msb` is installed |

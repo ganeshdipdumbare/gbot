@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +38,13 @@ type Server struct {
 	Voice    VoiceConfig
 	// SecureCookies is set when served over HTTPS.
 	SecureCookies bool
+	// LoopbackOnly is set when the server listens only on this machine. It
+	// then answers only to local names, the PublicURL host and ExtraHosts,
+	// so a web page that points its own name at 127.0.0.1 (DNS rebinding)
+	// can't use it.
+	LoopbackOnly bool
+	// ExtraHosts are further names this server answers to (GBOT_HOSTS).
+	ExtraHosts []string
 	// PublicURL is the address people open in a browser, when this server
 	// sits behind a proxy. OAuth callbacks must use it, not the internal
 	// host the proxy connects to.
@@ -50,7 +59,10 @@ type Server struct {
 	// X-Forwarded-For. Only then are client addresses read from it.
 	TrustProxy bool
 
-	authLimit  *auth.Limiter
+	authLimit *auth.Limiter
+	// loginLimit counts sign-in attempts per account, so guesses spread
+	// over many addresses still slow down for one account.
+	loginLimit *auth.Limiter
 	msgLimit   *auth.Limiter
 	voiceLimit *auth.Limiter
 	hookLimit  *auth.Limiter
@@ -79,6 +91,7 @@ const sessionTTL = 30 * 24 * time.Hour
 func (s *Server) Handler() http.Handler {
 	s.startMCPSync()
 	s.authLimit = auth.NewLimiter(10, time.Minute)
+	s.loginLimit = auth.NewLimiter(20, 15*time.Minute)
 	s.msgLimit = auth.NewLimiter(60, time.Minute)
 	// Speech calls cost the operator money when a hosted service is set.
 	s.voiceLimit = auth.NewLimiter(30, time.Minute)
@@ -158,6 +171,10 @@ func (s *Server) secure(next http.Handler) http.Handler {
 		if s.SecureCookies {
 			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
+		if !s.hostAllowed(r.Host) {
+			writeErr(w, http.StatusMisdirectedRequest, "this server doesn't answer to that name; set GBOT_PUBLIC_URL or GBOT_HOSTS")
+			return
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			// Signed machine callers (Slack events, webhook hooks) check their
 			// own signatures instead of the browser header.
@@ -174,6 +191,26 @@ func (s *Server) secure(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hostAllowed applies LoopbackOnly. IP addresses always pass: rebinding
+// needs a name the attacker controls. A trusted proxy picks the name.
+func (s *Server) hostAllowed(hostport string) bool {
+	if !s.LoopbackOnly || s.TrustProxy {
+		return true
+	}
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	if host == "" || net.ParseIP(host) != nil || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	if u, err := url.Parse(s.PublicURL); err == nil && s.PublicURL != "" && strings.EqualFold(u.Hostname(), host) {
+		return true
+	}
+	return slices.Contains(s.ExtraHosts, host)
 }
 
 func sameOrigin(r *http.Request) bool {
@@ -206,6 +243,46 @@ func (s *Server) authed(fn http.HandlerFunc) http.Handler {
 		}
 		fn(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 	})
+}
+
+// stillAllowed re-checks a long-lived request (an event or screen stream)
+// against the current session: it ends when the person signs out, the
+// session expires, or they leave the team the stream was opened in. With a
+// bot, they must also still be able to open it.
+func (s *Server) stillAllowed(r *http.Request, botID string) bool {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	now, err := s.Store.UserBySession(ctx, c.Value)
+	if err != nil {
+		// Only a definite answer ends the stream; a passing database error
+		// does not cut someone off mid-session.
+		return !errors.Is(err, store.ErrNotFound)
+	}
+	was := userFrom(r)
+	if now.ID != was.ID || now.SpaceID != was.SpaceID {
+		return false
+	}
+	if botID != "" {
+		if _, err := s.Store.GetBotFor(ctx, now.SpaceID, now.ID, botID); errors.Is(err, store.ErrNotFound) {
+			return false
+		}
+	}
+	return true
+}
+
+// authKey is the rate-limit key for sign-in and sign-up: the client's
+// address, with an IPv6 address widened to its /64, since one host
+// usually holds the whole /64.
+func (s *Server) authKey(r *http.Request) string {
+	ip := net.ParseIP(s.clientIP(r))
+	if ip != nil && ip.To4() == nil {
+		return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+	}
+	return s.clientIP(r)
 }
 
 // clientIP names the caller for rate limits. Behind a proxy every request

@@ -19,7 +19,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        read(intent)
+        // A restored activity, or one reopened from Recents, gets the intent
+        // it was first started with again: an old notification or shortcut
+        // would reopen a chat that may since have gone. Only a fresh launch
+        // reads it.
+        val fromHistory = (intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (savedInstanceState == null && !fromHistory) read(intent)
         setContent { GbotTheme { AppRoot(this) } }
     }
 
@@ -31,7 +36,12 @@ class MainActivity : ComponentActivity() {
     /** A notification or shortcut names a chat; a share carries text. */
     private fun read(intent: Intent?) {
         intent ?: return
-        intent.getStringExtra(EXTRA_CHAT)?.let { openRequest.value = it; return }
+        intent.getStringExtra(EXTRA_CHAT)?.let { chat ->
+            // Read once: the same intent must not open the chat again later.
+            intent.removeExtra(EXTRA_CHAT)
+            if (chat.isNotBlank()) openRequest.value = chat
+            return
+        }
         if (intent.action == Intent.ACTION_SEND && intent.type == "text/plain") {
             val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty()
             val body = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()

@@ -64,14 +64,15 @@ func (s *Store) SlackInstallByTeam(ctx context.Context, teamID string) (*SlackIn
 	return scanSlack(s.DB.QueryRow(ctx, `SELECT `+slackCols+` FROM slack_installs WHERE team_id=$1`, teamID))
 }
 
-// SaveSlackInstall connects a workspace, or replaces the secrets of one
-// already connected to this space.
+// SaveSlackInstall connects a workspace, or replaces the secrets of one the
+// same person already connected to this space. The secrets are sealed to
+// their owner, so another member's save would leave them unreadable.
 func (s *Store) SaveSlackInstall(ctx context.Context, in *SlackInstall) (*SlackInstall, error) {
 	return scanSlack(s.DB.QueryRow(ctx, `INSERT INTO slack_installs(space_id,owner_id,team_id,team_name,bot_token,signing_key)
 		VALUES($1,$2,$3,$4,$5,$6)
 		ON CONFLICT (team_id) DO UPDATE SET
 			team_name=EXCLUDED.team_name, bot_token=EXCLUDED.bot_token, signing_key=EXCLUDED.signing_key
-		WHERE slack_installs.space_id=EXCLUDED.space_id
+		WHERE slack_installs.space_id=EXCLUDED.space_id AND slack_installs.owner_id=EXCLUDED.owner_id
 		RETURNING `+slackCols,
 		in.SpaceID, in.OwnerID, in.TeamID, in.TeamName, in.BotToken, in.SigningKey))
 }

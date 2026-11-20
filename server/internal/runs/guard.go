@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -28,6 +29,10 @@ type runCtx struct {
 	tainted bool
 	// fetchable are the pages web_fetch may read in this run.
 	fetchable map[string]bool
+	// seen are the https addresses that appeared in a tool's answer this
+	// run. A result card's picture is fetched only from one of these, so
+	// the bot can't compose an address that carries what it knows.
+	seen map[string]bool
 	// sources are the pages this run opened, for the Sources section.
 	sources []source
 	// pictures are what a tool handed back for the person to look at,
@@ -57,7 +62,7 @@ func sourceKey(url string) string {
 }
 
 func (rc *runCtx) addSource(title, url string) {
-	url = strings.TrimSpace(url)
+	url = sourceURL(url)
 	if url == "" {
 		return
 	}
@@ -114,7 +119,7 @@ func (rc *runCtx) sourcesMarkdown(answer string) string {
 		if strings.Contains(answer, s.URL) || strings.Contains(answer, sourceKey(s.URL)) {
 			continue
 		}
-		title := strings.ReplaceAll(strings.TrimSpace(s.Title), "]", "\\]")
+		title := mdEscaper.Replace(strings.TrimSpace(s.Title))
 		if title == "" {
 			title = s.URL
 		}
@@ -125,6 +130,19 @@ func (rc *runCtx) sourcesMarkdown(answer string) string {
 	}
 	return "\n\n**Sources**\n" + strings.Join(lines, "\n")
 }
+
+// sourceURL keeps an http(s) address as one Markdown link target: no
+// spaces, and parentheses encoded so the link can't be closed early.
+func sourceURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ""
+	}
+	return strings.NewReplacer(" ", "%20", "(", "%28", ")", "%29", "<", "%3C", ">", "%3E").Replace(u.String())
+}
+
+// mdEscaper keeps a page title inside its link text.
+var mdEscaper = strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "\n", " ", "\r", " ")
 
 // allowFetch records a page web_fetch may read: a search result, or a link
 // the person wrote. Both are nil-safe so tools can run without a run.
@@ -155,6 +173,39 @@ func fetchKey(u string) string {
 		}
 	}
 	return strings.TrimRight(u, "/")
+}
+
+// see records the https addresses in a tool's answer.
+func (rc *runCtx) see(text string) {
+	if rc == nil {
+		return
+	}
+	found := seenLinkRE.FindAllString(text, 200)
+	if len(found) == 0 {
+		return
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if rc.seen == nil {
+		rc.seen = map[string]bool{}
+	}
+	for _, u := range found {
+		rc.seen[fetchKey(strings.TrimRight(u, ".,;:!?)]}"))] = true
+	}
+}
+
+var seenLinkRE = regexp.MustCompile(`https://[^\s<>"'\x60]+`)
+
+// mayShow reports whether a card picture's address came from a tool's
+// answer or the person in this run.
+func (rc *runCtx) mayShow(u string) bool {
+	if rc == nil {
+		return false
+	}
+	k := fetchKey(u)
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	return rc.seen[k] || rc.fetchable[k]
 }
 
 func (rc *runCtx) mayFetch(u string) bool {
@@ -198,6 +249,10 @@ var internalTools = map[string]bool{
 // its whole screen; a silent Auto run is the wrong default.
 var alwaysAsk = map[string]bool{
 	"routine_create": true,
+	// Changing or firing a routine is the same capability as creating one:
+	// a stored prompt that later runs unattended.
+	"routine_update": true,
+	"routine_run":    true,
 	"task_contract":  true,
 	"vault_type":     true,
 	// Opening a page leaves the bot's own state (the person's IP, cookies,
@@ -220,8 +275,13 @@ var noBlanketAllow = map[string]bool{
 	"vault_type":          true,
 	"browser_navigate":    true,
 	"routine_create":      true,
+	"routine_update":      true,
+	"routine_run":         true,
 	"task_contract":       true,
-	// Archiving takes a teammate away; never behind a blanket rule.
+	// The roster rewrites what the person's bots (and teammates on shared
+	// bots) are told to do; archiving takes a teammate away.
+	"bot_create":  true,
+	"bot_update":  true,
 	"bot_archive": true,
 }
 
@@ -230,7 +290,9 @@ func CanAlwaysAllow(tool string) bool { return !noBlanketAllow[tool] }
 
 // needsApproval applies the requester's approval mode to one call.
 func needsApproval(rc *runCtx, name string) bool {
-	if internalTools[name] || rc.allow[name] || readonlyTool(name) {
+	// A rule for a tool that may never be blanket-allowed is ignored, however
+	// it was stored.
+	if internalTools[name] || (rc.allow[name] && CanAlwaysAllow(name)) || readonlyTool(name) {
 		return false
 	}
 	// "Never ask" is an explicit choice, and it still wins.
@@ -277,6 +339,10 @@ func describeCall(name string, args map[string]any) string {
 		return fmt.Sprintf("Type the saved secret %q into [%v] (its value is never shown)", args["secret"], args["ref"])
 	case "routine_delete":
 		return "Delete a routine"
+	case "routine_update":
+		return fmt.Sprintf("Change a routine · %s", clip(fmt.Sprint(args["prompt"]), 200))
+	case "routine_run":
+		return "Run a routine now"
 	case "bot_create":
 		return fmt.Sprintf("Hatch a bot: %v", args["name"])
 	case "bot_update":
@@ -446,12 +512,20 @@ func (r *Runtime) afterTool(ctx context.Context, e *kritrim.ToolEvent) {
 		return
 	}
 	r.captureEvidence(rc, e)
+	if e.Call.Name != "show_results" {
+		rc.see(e.Result.Content)
+	}
 	// The navigate argument is the exact URL; the Source line adds the
 	// title and covers clicks, redirects and later pages.
 	if e.Call.Name == "browser_navigate" {
 		if u, ok := e.Args["url"].(string); ok {
 			rc.addSource("", u)
 		}
+	}
+	// Only the browser prints Source lines; any other tool's text (a page
+	// read with web_fetch, an MCP result, a file) is not trusted to add one.
+	if !strings.HasPrefix(e.Call.Name, "browser_") {
+		return
 	}
 	for _, line := range strings.Split(e.Result.Content, "\n") {
 		rest, ok := strings.CutPrefix(line, "Source: ")

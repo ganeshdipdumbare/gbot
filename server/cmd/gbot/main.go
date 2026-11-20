@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -209,6 +210,8 @@ func run(cmd string, log *slog.Logger) error {
 		AllowSignup:   env("GBOT_SIGNUP", "open") == "open",
 		SetupToken:    env("GBOT_SETUP_TOKEN", ""),
 		TrustProxy:    env("GBOT_TRUST_PROXY", "") != "",
+		LoopbackOnly:  loopbackAddr(addr),
+		ExtraHosts:    hostList(env("GBOT_HOSTS", "")),
 	}
 	hs := &http.Server{
 		Addr:              addr,
@@ -235,4 +238,28 @@ func run(cmd string, log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// loopbackAddr reports whether a listen address only reaches this machine.
+func loopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// hostList reads a comma-separated list of host names.
+func hostList(v string) []string {
+	var out []string
+	for _, h := range strings.Split(v, ",") {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }

@@ -73,6 +73,8 @@ fun choiceLines(raw: String, max: Int): List<String> {
     private val db: LocalDb,
     private val browser: BrowserController,
     private val botId: String,
+    /** Whether outside text has entered this run; see [RunTaint]. */
+    val taint: RunTaint = RunTaint(),
     private val skills: List<Skill> = emptyList(),
     private val secret: (String) -> Pair<VaultSecret, String>? = { null },
     private val schedule: suspend (String, String, String) -> String = { _, _, _ -> "Scheduling isn't available." },
@@ -92,6 +94,17 @@ fun choiceLines(raw: String, max: Int): List<String> {
 ) {
     /** Pages web_fetch may read: search results and the person's own links. Nothing else, since it asks no approval. */
     private val fetchable = java.util.concurrent.ConcurrentHashMap.newKeySet<String>().apply { addAll(knownUrls.map(WebLookup::key)) }
+
+    /** https addresses a tool answered with this run; card pictures come only from these or [fetchable]. */
+    private val seen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Records the https addresses in a tool's answer. */
+    fun see(text: String) {
+        SEEN_LINK.findAll(text).take(200).forEach { seen += WebLookup.key(it.value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}')) }
+    }
+
+    /** Whether a card picture's address came from a tool's answer or the person, not made up by the bot. */
+    fun mayShow(url: String): Boolean = WebLookup.key(url).let { it in seen || it in fetchable }
 
     /** The run behind these tools. */
     interface ToolHost {
@@ -117,11 +130,12 @@ fun choiceLines(raw: String, max: Int): List<String> {
 
     /** Set once a browser step has told the person where to watch. */
     private var watchPosted = false
+    // web_search and web_fetch reach the public internet only, as on the
+    // server: a page or a redirect can't send the phone to its LAN.
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS)
-        // Never follow a redirect from https to http.
-        .followSslRedirects(false)
+        .publicOnly()
         .build()
 
     val schemas: List<ToolSchema> = listOf(
@@ -602,7 +616,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
         val req = Request.Builder().url(url).header("User-Agent", WebLookup.AGENT).header("Accept-Language", "en").build()
         return http.newCall(req).execute().use { res ->
             if (!res.isSuccessful) throw java.io.IOException("the site answered ${res.code}")
-            res.body.string()
+            res.body.cappedString(MAX_PAGE_BYTES)
         }
     }
 
@@ -622,6 +636,11 @@ fun choiceLines(raw: String, max: Int): List<String> {
     }
 
     companion object {
+        private val SEEN_LINK = Regex("""https://[^\s<>"'`]+""")
+
+        /** One fetched page is read up to this much; the model gets far less. */
+        const val MAX_PAGE_BYTES = 4L * 1024 * 1024
+
         /** Steps that may still run on a mail site: the ways off it. */
         private val LEAVE_PAGE = setOf("browser_open", "browser_back")
 

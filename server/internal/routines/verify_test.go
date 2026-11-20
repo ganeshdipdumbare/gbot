@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,5 +47,22 @@ func TestVerifyTimestampWindow(t *testing.T) {
 	// A body-only signature, with no timestamp, is refused.
 	if Verify(r, body, sign(key, body), "", "", now) {
 		t.Fatal("signature without a timestamp accepted")
+	}
+}
+
+// The replay cache keys on the MAC, so the same signature in upper-case hex
+// is the same signature.
+func TestVerifyReplayIgnoresHexCase(t *testing.T) {
+	r := routine()
+	body := []byte(`{"event":"case"}`)
+	now := time.Now()
+	ts := strconv.FormatInt(now.Unix(), 10)
+	good := sign(r.SecretHash(), append([]byte(ts+"."), body...))
+	if !Verify(r, body, good, ts, "", now) {
+		t.Fatal("fresh signature rejected")
+	}
+	upper := "sha256=" + strings.ToUpper(strings.TrimPrefix(good, "sha256="))
+	if Verify(r, body, upper, ts, "", now) {
+		t.Fatal("the same signature in upper case was accepted again")
 	}
 }

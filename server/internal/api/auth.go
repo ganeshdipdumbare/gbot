@@ -71,7 +71,7 @@ type credentials struct {
 }
 
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimit.Allow(s.clientIP(r)) {
+	if !s.authLimit.Allow(s.authKey(r)) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimit.Allow(s.clientIP(r)) {
+	if !s.authLimit.Allow(s.authKey(r)) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 		return
 	}
@@ -148,7 +148,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &c) {
 		return
 	}
-	u, err := s.Store.UserByEmail(r.Context(), strings.ToLower(strings.TrimSpace(c.Email)))
+	email := strings.ToLower(strings.TrimSpace(c.Email))
+	if !s.loginLimit.Allow(email) {
+		writeErr(w, http.StatusTooManyRequests, "too many attempts for this account, try again in a few minutes")
+		return
+	}
+	u, err := s.Store.UserByEmail(r.Context(), email)
 	if err != nil {
 		auth.CheckDummy(c.Password)
 		writeErr(w, 401, "wrong email or password")

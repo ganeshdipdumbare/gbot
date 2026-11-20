@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"time"
 )
@@ -20,10 +21,65 @@ import (
 // tool servers are the point of running gbot at home.
 var BlockPrivate bool
 
-// Dial refuses link-local addresses, which include cloud metadata services
-// (169.254.169.254, fd00:ec2::254). Loopback and LAN addresses stay
-// reachable, because local and home-network model and tool servers are a
-// supported setup.
+// metadata are cloud metadata and host-agent addresses outside the
+// link-local range; they are refused in every mode.
+var metadata = []netip.Prefix{
+	netip.MustParsePrefix("fd00:ec2::254/128"),  // AWS IPv6 metadata (unique-local, not link-local)
+	netip.MustParsePrefix("100.100.100.200/32"), // Alibaba Cloud metadata
+	netip.MustParsePrefix("168.63.129.16/32"),   // Azure wire server
+	netip.MustParsePrefix("192.0.0.192/32"),     // Oracle Cloud metadata
+	netip.MustParsePrefix("0.0.0.0/8"),          // "this network"
+}
+
+// internal are non-RFC 1918 ranges that still reach a provider's or the
+// host's own network (carrier NAT and Tailscale, benchmarking, IETF
+// special use). Refused with BlockPrivate, like loopback and private.
+var internal = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+}
+
+// nat64 maps IPv4 addresses into IPv6 (64:ff9b::/96); the IPv4 address
+// inside is what is reached, so that is what gets checked.
+var nat64 = netip.MustParsePrefix("64:ff9b::/96")
+
+// Refused says why an address may not be dialed, or "" when it may.
+func Refused(ip net.IP) string {
+	a, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return "not a server address"
+	}
+	a = a.Unmap()
+	if nat64.Contains(a) {
+		b := a.As16()
+		a = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	}
+	if a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsUnspecified() {
+		return "not a server address"
+	}
+	for _, p := range metadata {
+		if p.Contains(a) {
+			return "not a server address"
+		}
+	}
+	if BlockPrivate {
+		if a.IsLoopback() || a.IsPrivate() {
+			return "on this server's network, which this install does not reach"
+		}
+		for _, p := range internal {
+			if p.Contains(a) {
+				return "on this server's network, which this install does not reach"
+			}
+		}
+	}
+	return ""
+}
+
+// Dial refuses link-local addresses and the other cloud metadata addresses
+// in metadata, in every mode. Loopback and LAN addresses stay reachable
+// unless BlockPrivate is set, because local and home-network model and
+// tool servers are a supported setup.
 func Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -34,11 +90,8 @@ func Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 		return nil, fmt.Errorf("couldn't resolve %s", host)
 	}
 	for _, ip := range ips {
-		if ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() || ip.IP.IsUnspecified() {
-			return nil, fmt.Errorf("%s is not a server address", host)
-		}
-		if BlockPrivate && (ip.IP.IsLoopback() || ip.IP.IsPrivate()) {
-			return nil, fmt.Errorf("%s is on this server's network, which this install does not reach", host)
+		if why := Refused(ip.IP); why != "" {
+			return nil, fmt.Errorf("%s is %s", host, why)
 		}
 	}
 	var d net.Dialer
@@ -48,11 +101,14 @@ func Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 }
 
 // Client returns an HTTP client with the dial guard, no proxy from the
-// environment (a proxy would skip the guard), and no redirects.
+// environment (a proxy would skip the guard), and no redirects. Idle
+// connections close after a while: a client is often built per call, and
+// a server that never hangs up would otherwise keep each one open forever.
 func Client(timeout time.Duration) *http.Client {
 	return &http.Client{
-		Timeout:       timeout,
-		Transport:     &http.Transport{DialContext: Dial, Proxy: nil},
+		Timeout: timeout,
+		Transport: &http.Transport{DialContext: Dial, Proxy: nil,
+			IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 4},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }
@@ -72,7 +128,7 @@ func Endpoint(raw string) error {
 	default:
 		return errors.New("sign-in endpoints must use https")
 	}
-	if ip := net.ParseIP(host); ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()) {
+	if ip := net.ParseIP(host); ip != nil && Refused(ip) == "not a server address" {
 		return errors.New("sign-in endpoints can't point at this network's link-local addresses")
 	}
 	return nil

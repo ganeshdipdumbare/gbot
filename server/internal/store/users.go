@@ -68,8 +68,14 @@ func (s *Store) CreateUser(ctx context.Context, email, name, hash, model string,
 	return u, nil
 }
 
+// homeSpace picks the team a person lands in when nothing else was chosen:
+// a team they own (their own first, oldest first) before any team someone
+// else added them to, so being added to a team can't move them.
+const homeSpace = `(SELECT m.space_id FROM space_members m JOIN spaces sp ON sp.id = m.space_id
+	WHERE m.user_id=u.id ORDER BY (m.role='owner') DESC, sp.created_at, m.space_id LIMIT 1)`
+
 const userCols = `u.id, u.email, u.name, u.default_model, u.approval_mode, u.password_hash,
-	(SELECT space_id FROM space_members m WHERE m.user_id=u.id ORDER BY space_id LIMIT 1)`
+	` + homeSpace
 
 func scanUser(row pgx.Row) (*User, error) {
 	u := &User{}
@@ -108,12 +114,12 @@ func (s *Store) DeleteSession(ctx context.Context, token string) error {
 
 // UserBySession returns the session's user, or ErrNotFound when the
 // token is unknown or expired. The user's team is the one the session
-// picked, if they're still a member; otherwise their first team.
+// picked, if they're still a member; otherwise their home team.
 func (s *Store) UserBySession(ctx context.Context, token string) (*User, error) {
 	return scanUser(s.DB.QueryRow(ctx, `SELECT u.id, u.email, u.name, u.default_model, u.approval_mode, u.password_hash,
 		COALESCE(
 			(SELECT m.space_id FROM space_members m WHERE m.user_id=u.id AND m.space_id=s.space_id),
-			(SELECT m.space_id FROM space_members m WHERE m.user_id=u.id ORDER BY space_id LIMIT 1))
+			`+homeSpace+`)
 		FROM sessions s JOIN users u ON u.id=s.user_id
 		WHERE s.token_hash=$1 AND s.expires_at > now()`, hashToken(token)))
 }

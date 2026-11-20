@@ -202,7 +202,16 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 	// snapshot-and-click loop. What they return is outside text.
 	tools = append(tools,
 		kritrim.NewTool("web_search", "Search the web and get titles, links and snippets back in about a second. Use it first for anything current (hotels, prices, news, products, places); it is much faster than the browser. Several searches can run together.", r.webSearch),
-		kritrim.NewTool("web_fetch", "Read one https page as text, with its title and main picture. Use it on a search result when the snippet isn't enough; several pages can be read together. Use the browser only for pages that need a sign-in, clicks or JavaScript.", r.webFetch))
+		// web_fetch reads only search results and links the person wrote
+		// (webFetch), and a bot's site allowlist applies to it as it does
+		// to the browser.
+		kritrim.NewTool("web_fetch", "Read one https page as text, with its title and main picture. Use it on a search result when the snippet isn't enough; several pages can be read together. Use the browser only for pages that need a sign-in, clicks or JavaScript.",
+			func(ctx context.Context, in fetchIn) (string, error) {
+				if !hostAllowed(b.AllowedHosts, in.URL) {
+					return "", errors.New("this bot has a site allowlist and that page isn't on it")
+				}
+				return r.webFetch(ctx, in)
+			}))
 
 	// A list to compare (hotels, products, places) is shown as cards. The
 	// bot picks the list; a tool's answer is never turned into cards by itself.
@@ -721,6 +730,28 @@ func fetchesWeb(command string) bool {
 	c := " " + strings.ToLower(command) + " "
 	for _, word := range []string{"curl ", "wget ", "http://", "https://", "python -m http", "requests.", "urlopen("} {
 		if strings.Contains(c, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostAllowed applies a bot's site allowlist the way the browser does: a
+// listed domain covers its subdomains. No list means every host.
+func hostAllowed(list []string, raw string) bool {
+	if len(list) == 0 {
+		return true
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return false
+	}
+	for _, a := range list {
+		if host == a || strings.HasSuffix(host, "."+a) {
 			return true
 		}
 	}
