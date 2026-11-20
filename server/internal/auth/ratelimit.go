@@ -41,3 +41,12 @@ func (l *Limiter) Allow(key string) bool {
 	b.n++
 	return b.n <= l.max
 }
+
+// Over reports whether key has used up its window, without counting this
+// call. With Allow called only on failures, it limits failed attempts.
+func (l *Limiter) Over(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.hits[key]
+	return b != nil && time.Since(b.start) <= l.window && b.n >= l.max
+}

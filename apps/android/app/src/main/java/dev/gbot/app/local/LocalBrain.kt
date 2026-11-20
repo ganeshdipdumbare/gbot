@@ -271,6 +271,9 @@ class LocalBrain(
                     inn.botId.orEmpty(), askPrompt(sender.name, inn.str("message").orEmpty(), expect),
                     depth = inn.str("depth")?.toIntOrNull() ?: 1, kind = expect, root = inn.str("root").orEmpty(),
                     exchange = listOf(out.id, inn.id), from = sender.id,
+                    // Whether the sender had read outside text wasn't kept
+                    // across the restart, so assume it had (as the server does).
+                    untrusted = true,
                 ),
             )
             asks++
@@ -513,7 +516,7 @@ class LocalBrain(
                 if (said.isNotEmpty()) reply(bot, group, said)
                 // Asked from Slack: the answer goes back into that thread too.
                 if (said.isNotEmpty()) w.slack?.let { t -> runCatching { api.slack.post(t, said) } }
-                if (group != null && w.depth < 3) handoff(group, bot, said, w)
+                if (group != null && w.depth < 3) handoff(group, bot, said, w, taint.on)
                 landed = said.isNotEmpty()
             }
         } catch (e: Throwable) {
@@ -537,7 +540,7 @@ class LocalBrain(
     }
 
     /** Wake teammates this reply @mentions, like the server's group handoff. */
-    private fun handoff(group: Group, from: Bot, reply: String, w: Work) {
+    private fun handoff(group: Group, from: Bot, reply: String, w: Work, tainted: Boolean) {
         if (!reply.contains("@")) return
         for (id in group.botIds) {
             if (id == from.id) continue
@@ -547,6 +550,8 @@ class LocalBrain(
                     Work(
                         mate.id, "Continue the group task. ${from.name} mentioned you: $reply",
                         groupId = group.id, depth = w.depth + 1, kind = "group", root = w.root,
+                        // A reply written after outside text carries it on.
+                        untrusted = tainted,
                     ),
                 )
             }
@@ -1044,6 +1049,9 @@ class LocalBrain(
             Work(
                 sender.id, joinPrompt(answers), depth = maxOf((first.str("depth")?.toIntOrNull() ?: 1) - 1, 0),
                 kind = "join", root = first.str("root").orEmpty(), joinRound = round,
+                // Teammates' answers can carry what they read; their runs'
+                // taint isn't recorded on the cards, so treat them as outside text.
+                untrusted = true,
             ),
         )
         return true

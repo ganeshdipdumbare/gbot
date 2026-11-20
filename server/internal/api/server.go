@@ -60,13 +60,16 @@ type Server struct {
 	TrustProxy bool
 
 	authLimit *auth.Limiter
-	// loginLimit counts sign-in attempts per account, so guesses spread
-	// over many addresses still slow down for one account.
-	loginLimit *auth.Limiter
-	msgLimit   *auth.Limiter
-	voiceLimit *auth.Limiter
-	hookLimit  *auth.Limiter
-	probeLimit *auth.Limiter
+	// loginLimit counts failed sign-ins per account and address, and
+	// accountLimit, much looser, per account alone: guesses spread over many
+	// addresses still slow down, but a stranger needs many failures an hour
+	// to lock the owner out, and the owner's own address keeps its own count.
+	loginLimit   *auth.Limiter
+	accountLimit *auth.Limiter
+	msgLimit     *auth.Limiter
+	voiceLimit   *auth.Limiter
+	hookLimit    *auth.Limiter
+	probeLimit   *auth.Limiter
 
 	// mcpWake coalesces integration changes onto one background worker,
 	// so adding or removing a server never waits on a slow one.
@@ -91,7 +94,8 @@ const sessionTTL = 30 * 24 * time.Hour
 func (s *Server) Handler() http.Handler {
 	s.startMCPSync()
 	s.authLimit = auth.NewLimiter(10, time.Minute)
-	s.loginLimit = auth.NewLimiter(20, 15*time.Minute)
+	s.loginLimit = auth.NewLimiter(10, 15*time.Minute)
+	s.accountLimit = auth.NewLimiter(200, time.Hour)
 	s.msgLimit = auth.NewLimiter(60, time.Minute)
 	// Speech calls cost the operator money when a hosted service is set.
 	s.voiceLimit = auth.NewLimiter(30, time.Minute)

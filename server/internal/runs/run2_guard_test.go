@@ -132,3 +132,18 @@ func TestCardPicturesOnlyFromSeenAddresses(t *testing.T) {
 		t.Fatal("a picture the person linked was refused")
 	}
 }
+
+// Web text a shell command fetched counts as outside text in a summary.
+func TestSummaryOfShellFetchIsOutside(t *testing.T) {
+	msgs := []kritrim.Message{
+		{Role: kritrim.RoleAssistant, ToolCalls: []kritrim.ToolCall{{ID: "s", Name: "computer_shell", Args: map[string]any{"command": "curl -s https://example.com"}}}},
+		{Role: kritrim.RoleTool, ToolCallID: "s", Content: "page"},
+	}
+	if !carriesOutside(msgs) {
+		t.Fatal("a shell web fetch was not treated as outside text")
+	}
+	msgs[0].ToolCalls[0].Args["command"] = "ls -la"
+	if carriesOutside(msgs) {
+		t.Fatal("a local shell command was treated as outside text")
+	}
+}

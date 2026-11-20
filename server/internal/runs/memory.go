@@ -110,19 +110,24 @@ func markOutside(text string, outside bool) string {
 // carriesOutside reports whether any dropped tool result came from a tool
 // whose answer is outside text.
 func carriesOutside(msgs []kritrim.Message) bool {
-	names := map[string]string{}
+	calls := map[string]kritrim.ToolCall{}
 	for _, m := range msgs {
 		for _, c := range m.ToolCalls {
-			names[c.ID] = c.Name
+			calls[c.ID] = c
 		}
 	}
 	for _, m := range msgs {
 		if m.Role != kritrim.RoleTool {
 			continue
 		}
-		name, ok := names[m.ToolCallID]
-		if !ok || untrustedTool(name) || readsStoredOutside[name] {
+		c, ok := calls[m.ToolCallID]
+		if !ok || untrustedTool(c.Name) || readsStoredOutside[c.Name] {
 			return true // an orphaned result is treated as outside text
+		}
+		// A shell command that fetched the web returned web text, as
+		// afterTool counts it.
+		if cmd, _ := c.Args["command"].(string); c.Name == "computer_shell" && fetchesWeb(cmd) {
+			return true
 		}
 	}
 	return false

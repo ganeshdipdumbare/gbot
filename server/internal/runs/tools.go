@@ -210,7 +210,7 @@ func (r *Runtime) runTools(ctx context.Context, j *Job) []kritrim.Tool {
 				if !hostAllowed(b.AllowedHosts, in.URL) {
 					return "", errors.New("this bot has a site allowlist and that page isn't on it")
 				}
-				return r.webFetch(ctx, in)
+				return r.webFetch(withAllowedHosts(ctx, b.AllowedHosts), in)
 			}))
 
 	// A list to compare (hotels, products, places) is shown as cards. The

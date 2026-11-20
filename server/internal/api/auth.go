@@ -149,18 +149,26 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(c.Email))
-	if !s.loginLimit.Allow(email) {
+	// Only failures count, per account from this address, and (much more
+	// loosely) per account from anywhere.
+	here := email + "|" + s.authKey(r)
+	if s.loginLimit.Over(here) || s.accountLimit.Over(email) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts for this account, try again in a few minutes")
 		return
+	}
+	failed := func() {
+		s.loginLimit.Allow(here)
+		s.accountLimit.Allow(email)
+		writeErr(w, 401, "wrong email or password")
 	}
 	u, err := s.Store.UserByEmail(r.Context(), email)
 	if err != nil {
 		auth.CheckDummy(c.Password)
-		writeErr(w, 401, "wrong email or password")
+		failed()
 		return
 	}
 	if ok, _ := auth.CheckPassword(c.Password, u.PasswordHash()); !ok {
-		writeErr(w, 401, "wrong email or password")
+		failed()
 		return
 	}
 	s.startSession(w, r, u)

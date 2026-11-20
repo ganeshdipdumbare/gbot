@@ -232,7 +232,12 @@ func (s *Server) createSpace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "name the team (up to 40 characters)")
 		return
 	}
-	if n, err := s.Store.CountOwnedSpaces(r.Context(), userFrom(r).ID); err != nil || n >= maxOwnedSpaces {
+	n, err := s.Store.CountOwnedSpaces(r.Context(), userFrom(r).ID)
+	if err != nil {
+		writeErr(w, 500, "could not create the team")
+		return
+	}
+	if n >= maxOwnedSpaces {
 		writeErr(w, 400, fmt.Sprintf("you can own up to %d teams", maxOwnedSpaces))
 		return
 	}
