@@ -38,15 +38,20 @@ type found struct{ botID, id string }
 // read and dropped, so the command is never blocked or cut short.
 const maxOutput = 32 << 20
 
-// capped keeps the first maxOutput bytes written to it.
-type capped struct{ bytes.Buffer }
+// capped keeps the first maxOutput bytes written to it. The buffer is a
+// field, not embedded: an embedded bytes.Buffer brings its ReadFrom along,
+// and exec's io.Copy would use that and skip the cap.
+type capped struct{ buf bytes.Buffer }
 
 func (c *capped) Write(p []byte) (int, error) {
-	if room := maxOutput - c.Len(); room > 0 {
-		c.Buffer.Write(p[:min(len(p), room)])
+	if room := maxOutput - c.buf.Len(); room > 0 {
+		c.buf.Write(p[:min(len(p), room)])
 	}
 	return len(p), nil
 }
+
+func (c *capped) Len() int       { return c.buf.Len() }
+func (c *capped) String() string { return c.buf.String() }
 
 func run(ctx context.Context, bin string, stdin []byte, args ...string) (string, string, int, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)

@@ -321,5 +321,10 @@ func (s *Server) removeSpaceMember(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "could not remove them")
 		return
 	}
+	if self {
+		// They are no longer a member, so they can't read the list.
+		writeJSON(w, 200, map[string]bool{"left": true})
+		return
+	}
 	s.spaceMembers(w, r)
 }

@@ -40,8 +40,6 @@ func (s *Store) CreateSpace(ctx context.Context, userID, name string) (*Space, e
 	return sp, nil
 }
 
-// SpaceRole returns the person's role in a space, or ErrNotFound when
-// they aren't a member.
 // CountOwnedSpaces counts the teams a person owns, their own included.
 func (s *Store) CountOwnedSpaces(ctx context.Context, userID string) (int, error) {
 	var n int
@@ -49,6 +47,8 @@ func (s *Store) CountOwnedSpaces(ctx context.Context, userID string) (int, error
 	return n, err
 }
 
+// SpaceRole returns the person's role in a space, or ErrNotFound when
+// they aren't a member.
 func (s *Store) SpaceRole(ctx context.Context, spaceID, userID string) (string, error) {
 	var role string
 	err := s.DB.QueryRow(ctx, `SELECT role FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, userID).Scan(&role)

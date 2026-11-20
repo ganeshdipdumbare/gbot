@@ -116,6 +116,13 @@ func (r *Runtime) claim(j *Job) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := r.store.GetBotFor(ctx, j.Bot.SpaceID, j.user(), j.Bot.ID); err != nil {
+		// An internal job (a bot-to-bot ask, its replies, a hand-off) has
+		// state waiting on it in memory, so only a definite "no access"
+		// drops it; a passing database error lets it run.
+		if j.QueueID == "" && !errors.Is(err, store.ErrNotFound) {
+			r.log.Error("claim access check", "err", err)
+			return true
+		}
 		if j.QueueID != "" {
 			_ = r.store.SetQueueStatus(ctx, j.QueueID, "cancelled", "you no longer have access to this bot")
 		}
