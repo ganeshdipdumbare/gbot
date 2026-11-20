@@ -54,18 +54,43 @@ class MailTest {
     }
 
     @Test
-    fun literalSizePatternsAvoidIcuBraceEscapes() {
-        // The Connect inbox crash was Pattern.compile on Android ICU rejecting \{ \}.
-        // Desktop JVM accepts those escapes, so a match-only unit test would still
-        // pass if someone reverted Mail.kt. Guard the pattern text itself.
+    fun literalSizePatternsAvoidUnescapedClosingBrace() {
+        // ICU rejects a bare `}` (desktop JVM often does not). Escaped `\}` or a
+        // class `[}]` is fine; checking for `\{`/`\}` would miss `[{]\d+}` and
+        // wrongly fail a correct `\{\d+\}`.
+        assertTrue(hasUnescapedClosingBrace("\\{(\\d+)\\+?}$")) // pre-fix
+        assertTrue(hasUnescapedClosingBrace("[{]\\d+}"))
+        assertFalse(hasUnescapedClosingBrace("\\{\\d+\\}"))
+        assertFalse(hasUnescapedClosingBrace("[{]\\d+[}]"))
         for (p in listOf(Imap.LITERAL_SIZE, Imap.LITERAL_SIZE_AT_END)) {
-            assertFalse("ICU-unsafe \\{ in $p", p.contains("\\{"))
-            assertFalse("ICU-unsafe \\} in $p", p.contains("\\}"))
+            assertFalse("unescaped } in $p", hasUnescapedClosingBrace(p))
             assertTrue(p, Regex(p).containsMatchIn("x{12}"))
             assertTrue(p, Regex(p).containsMatchIn("x{12+}"))
         }
         assertTrue(Regex(Imap.LITERAL_SIZE_AT_END).matches("{12}"))
         assertFalse(Regex(Imap.LITERAL_SIZE_AT_END).containsMatchIn("x{12}y"))
+    }
+
+    /** True when `}` appears neither escaped nor inside `[]`. */
+    private fun hasUnescapedClosingBrace(pattern: String): Boolean {
+        var i = 0
+        var inClass = false
+        while (i < pattern.length) {
+            when (pattern[i]) {
+                '\\' -> i += 2
+                '[' -> {
+                    if (!inClass) inClass = true
+                    i++
+                }
+                ']' -> {
+                    if (inClass) inClass = false
+                    i++
+                }
+                '}' -> if (!inClass) return true else i++
+                else -> i++
+            }
+        }
+        return false
     }
 
     @Test

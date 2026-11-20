@@ -201,10 +201,11 @@ internal class Imap private constructor(private val input: InputStream, private 
 
     companion object {
         /**
-         * IMAP `{n}` size markers in FETCH text. Use character classes (`[{]` / `[}]`),
-         * never `\{` / `\}`: Android's ICU rejects those escapes and Connect inbox
-         * crashed while compiling the pattern. The optional `+` is only defensive;
-         * servers send synchronizing `{n}` (LITERAL+ is client→server, RFC 7888).
+         * IMAP `{n}` size markers in FETCH text. Android's ICU rejects an unescaped
+         * `}` (the desktop JVM often accepts it), which is how Connect inbox crashed
+         * on `\{(\d+)\+?}$`. Quote `}` with `\}` or put it in a class (`[}]`). The
+         * optional `+` is only defensive; servers send synchronizing `{n}`
+         * (LITERAL+ is client→server, RFC 7888).
          */
         internal const val LITERAL_SIZE = "[{]\\d+[+]?[}]"
         internal const val LITERAL_SIZE_AT_END = "[{](\\d+)[+]?[}]$"
