@@ -334,6 +334,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ping.C:
+			if !s.stillAllowed(r, "") {
+				return
+			}
 			fmt.Fprint(w, ": ping\n\n")
 			fl.Flush()
 		case b, ok := <-ch:

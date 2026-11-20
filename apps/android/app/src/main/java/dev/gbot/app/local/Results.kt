@@ -15,9 +15,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import okhttp3.Dns
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.IOException
 import java.net.InetAddress
 import java.net.Proxy
 import java.net.URI
@@ -36,11 +38,14 @@ class LocalResults(
     private val dir: File,
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
-        .dns(PublicDns)
-        // A system proxy would connect for us, so the public-address rule
-        // above would not hold. Go direct.
-        .proxy(Proxy.NO_PROXY)
+        .publicOnly()
         .build(),
+    /**
+     * Whether a picture's address may be fetched: in a run, only one a tool
+     * answered with or the person wrote, so the bot can't compose an
+     * address that carries what it knows.
+     */
+    private val allowImage: (String) -> Boolean = { true },
 ) {
     /** A set of cards, ready for the chat. */
     data class ResultSet(val title: String, val items: JsonArray)
@@ -62,7 +67,7 @@ class LocalResults(
         val title = text(item, "title")?.let { clip(it) } ?: return null
         val subtitle = text(item, "subtitle")?.let { clip(it) }
         val link = text(item, "link")?.takeIf { isHttps(it) }
-        val kept = text(item, "image")?.takeIf { isHttps(it) }?.let { keepImage(it) }
+        val kept = text(item, "image")?.takeIf { isHttps(it) && allowImage(it) }?.let { keepImage(it) }
         val fields = array(item["fields"]).orEmpty().mapNotNull { f ->
             val o = f as? JsonObject ?: return@mapNotNull null
             val label = text(o, "label")?.let { clip(it) } ?: return@mapNotNull null
@@ -89,20 +94,13 @@ class LocalResults(
 
     /** Fetches a thumbnail over https and keeps it under the app's files. */
     private fun keepImage(src: String): Pair<String, String>? {
-        // OkHttp doesn't ask the resolver for an IP-literal host, so check
-        // a literal address here.
-        val host = URI(src).host.trim('[', ']')
-        if (host.contains(':') || host.all { it.isDigit() || it == '.' }) {
-            val literal = runCatching { InetAddress.getByName(host) }.getOrNull() ?: return null
-            if (!isPublic(literal)) return null
-        }
         return runCatching {
             http.newCall(Request.Builder().url(src).build()).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val mime = resp.header("Content-Type").orEmpty().substringBefore(';').trim().lowercase()
                 if (!showableImage(mime)) return@use null
-                val bytes = resp.body.bytes()
-                if (bytes.isEmpty() || bytes.size > MAX_PICTURE) return@use null
+                val bytes = resp.body.capped(MAX_PICTURE.toLong())
+                if (bytes.isEmpty()) return@use null
                 dir.mkdirs()
                 val file = File(dir, "res_" + UUID.randomUUID().toString().take(8) + extensionOf(mime))
                 file.writeBytes(bytes)
@@ -132,8 +130,26 @@ class LocalResults(
             if (a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress ||
                 a.isAnyLocalAddress || a.isMulticastAddress) return false
             val b = a.address
+            if (b.size == 4) {
+                val first = b[0].toInt() and 0xff
+                val second = b[1].toInt() and 0xff
+                // 0.0.0.0/8, and carrier NAT and Tailscale (100.64.0.0/10).
+                if (first == 0 || (first == 100 && second in 64..127)) return false
+            }
             // IPv6 unique local addresses (fc00::/7) are private too.
             return !(b.size == 16 && (b[0].toInt() and 0xfe) == 0xfc)
+        }
+
+        /**
+         * Checks the address actually connected to, on every hop. The
+         * resolver check alone misses an IP-literal host (OkHttp doesn't
+         * resolve those) and a redirect to one; this runs once the socket
+         * is open and before the request is written.
+         */
+        val PublicConnection = Interceptor { chain ->
+            val addr = chain.connection()?.socket()?.inetAddress
+            if (addr != null && !isPublic(addr)) throw IOException("that address is on a private network")
+            chain.proceed(chain.request())
         }
 
         fun isHttps(s: String): Boolean = runCatching {
@@ -171,3 +187,14 @@ class LocalResults(
         }
     }
 }
+
+/**
+ * Public internet only: public addresses from the resolver, the connected
+ * address checked on every hop, no system proxy (it would connect for us and
+ * skip both checks), and no redirect from https down to http.
+ */
+fun OkHttpClient.Builder.publicOnly(): OkHttpClient.Builder = this
+    .dns(LocalResults.PublicDns)
+    .addNetworkInterceptor(LocalResults.PublicConnection)
+    .proxy(Proxy.NO_PROXY)
+    .followSslRedirects(false)

@@ -64,7 +64,7 @@ export function Card({ m, bot, onTakeover }: { m: Message; bot: Bot; onTakeover?
 
   // A blanket rule is never offered for tools that act on the machine,
   // accounts or secrets (the server enforces the same list).
-  const noBlanket = ["computer_shell", "computer_write_file", "vault_type", "browser_navigate", "routine_create", "task_contract"];
+  const noBlanket = ["computer_shell", "computer_write_file", "vault_type", "browser_navigate", "routine_create", "routine_update", "routine_run", "task_contract", "bot_create", "bot_update", "bot_archive"];
   const canAlways = kind === "approval" && !noBlanket.includes(String(d.tool));
   const preview = kind === "approval" ? argsPreview(String(d.tool), d.args as Record<string, unknown>) : null;
   const options = (d.options as string[] | undefined) ?? [];

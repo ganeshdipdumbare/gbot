@@ -34,7 +34,9 @@ object McpOAuth {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .callTimeout(30, TimeUnit.SECONDS)
+        .followSslRedirects(false)
         .build()
+    private const val MAX_METADATA_BYTES = 1L * 1024 * 1024
 
     /** What a server's authorization metadata tells us. */
     @Serializable
@@ -70,7 +72,7 @@ object McpOAuth {
 
     private fun getJson(url: String): JsonObject? = runCatching {
         client.newCall(Request.Builder().url(url).header("Accept", "application/json").build()).execute().use { res ->
-            if (res.code != 200) null else json.parseToJsonElement(res.body.string()).jsonObject
+            if (res.code != 200) null else json.parseToJsonElement(res.body.cappedString(MAX_METADATA_BYTES)).jsonObject
         }
     }.getOrNull()
 
@@ -185,7 +187,7 @@ object McpOAuth {
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build(),
         ).execute().use { res ->
-            val text = res.body.string()
+            val text = res.body.cappedString(MAX_METADATA_BYTES)
             if (res.code / 100 != 2) throw OAuthException("The app refused to register gbot (${res.code}): ${text.take(200)}")
             val o = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: throw OAuthException("The app's registration made no sense.")
             val id = o.str("client_id").ifEmpty { throw OAuthException("The app returned no client id.") }
@@ -212,7 +214,7 @@ object McpOAuth {
         if (!safeSignInEndpoint(endpoint)) throw OAuthException("The app's token address must use https.")
         val body = FormBody.Builder().apply { form.forEach { (k, v) -> add(k, v) } }.build()
         client.newCall(Request.Builder().url(endpoint).header("Accept", "application/json").post(body).build()).execute().use { res ->
-            val text = res.body.string()
+            val text = res.body.cappedString(MAX_METADATA_BYTES)
             val o = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
                 ?: throw OAuthException("The app's token answer made no sense (${res.code}).")
             o.str("error").takeIf { it.isNotEmpty() }?.let { throw OAuthException(o.str("error_description").ifEmpty { it }) }

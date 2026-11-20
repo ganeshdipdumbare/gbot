@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -215,6 +216,10 @@ func (s *Server) listSpaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"spaces": list, "current": u.SpaceID})
 }
 
+// maxOwnedSpaces bounds the teams one person can create. It is generous;
+// without a bound, team creation is free for anyone who signs up.
+const maxOwnedSpaces = 50
+
 func (s *Server) createSpace(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
@@ -225,6 +230,15 @@ func (s *Server) createSpace(w http.ResponseWriter, r *http.Request) {
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" || utf8.RuneCountInString(body.Name) > 40 {
 		writeErr(w, 400, "name the team (up to 40 characters)")
+		return
+	}
+	n, err := s.Store.CountOwnedSpaces(r.Context(), userFrom(r).ID)
+	if err != nil {
+		writeErr(w, 500, "could not create the team")
+		return
+	}
+	if n >= maxOwnedSpaces {
+		writeErr(w, 400, fmt.Sprintf("you can own up to %d teams", maxOwnedSpaces))
 		return
 	}
 	sp, err := s.Store.CreateSpace(r.Context(), userFrom(r).ID, body.Name)
@@ -292,7 +306,10 @@ func (s *Server) addSpaceMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeSpaceMember(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.spaceAs(w, r, true)
+	// Anyone may leave a team they were added to; only the owner removes
+	// others. An owner's own row is never removed (the store refuses).
+	self := r.PathValue("uid") == userFrom(r).ID
+	id, ok := s.spaceAs(w, r, !self)
 	if !ok {
 		return
 	}
@@ -302,6 +319,11 @@ func (s *Server) removeSpaceMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeErr(w, 500, "could not remove them")
+		return
+	}
+	if self {
+		// They are no longer a member, so they can't read the list.
+		writeJSON(w, 200, map[string]bool{"left": true})
 		return
 	}
 	s.spaceMembers(w, r)

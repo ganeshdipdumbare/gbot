@@ -71,7 +71,7 @@ type credentials struct {
 }
 
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimit.Allow(s.clientIP(r)) {
+	if !s.authLimit.Allow(s.authKey(r)) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimit.Allow(s.clientIP(r)) {
+	if !s.authLimit.Allow(s.authKey(r)) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 		return
 	}
@@ -148,16 +148,36 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &c) {
 		return
 	}
-	u, err := s.Store.UserByEmail(r.Context(), strings.ToLower(strings.TrimSpace(c.Email)))
+	email := strings.ToLower(strings.TrimSpace(c.Email))
+	// Only failures count, per account from this address, and (much more
+	// loosely) per account from anywhere. Each attempt takes its slot before
+	// the password check, so parallel guesses can't all slip past the cap,
+	// and a sign-in that succeeds gives it back.
+	here := email + "|" + s.authKey(r)
+	ok, hereTicket := s.loginLimit.Take(here)
+	if !ok {
+		writeErr(w, http.StatusTooManyRequests, "too many attempts for this account, try again in a few minutes")
+		return
+	}
+	ok, emailTicket := s.accountLimit.Take(email)
+	if !ok {
+		s.loginLimit.Refund(hereTicket)
+		writeErr(w, http.StatusTooManyRequests, "too many attempts for this account, try again in a few minutes")
+		return
+	}
+	failed := func() { writeErr(w, 401, "wrong email or password") }
+	u, err := s.Store.UserByEmail(r.Context(), email)
 	if err != nil {
 		auth.CheckDummy(c.Password)
-		writeErr(w, 401, "wrong email or password")
+		failed()
 		return
 	}
 	if ok, _ := auth.CheckPassword(c.Password, u.PasswordHash()); !ok {
-		writeErr(w, 401, "wrong email or password")
+		failed()
 		return
 	}
+	s.loginLimit.Refund(hereTicket)
+	s.accountLimit.Refund(emailTicket)
 	s.startSession(w, r, u)
 }
 

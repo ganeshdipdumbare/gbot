@@ -32,9 +32,30 @@ type driver interface {
 
 type found struct{ botID, id string }
 
+// maxOutput caps what the server keeps of one command's stdout or stderr.
+// A guest command can print without end (yes, cat /dev/zero); the guest's
+// memory limit does not cover this side. Past the cap the output is still
+// read and dropped, so the command is never blocked or cut short.
+const maxOutput = 32 << 20
+
+// capped keeps the first maxOutput bytes written to it. The buffer is a
+// field, not embedded: an embedded bytes.Buffer brings its ReadFrom along,
+// and exec's io.Copy would use that and skip the cap.
+type capped struct{ buf bytes.Buffer }
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := maxOutput - c.buf.Len(); room > 0 {
+		c.buf.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+func (c *capped) Len() int       { return c.buf.Len() }
+func (c *capped) String() string { return c.buf.String() }
+
 func run(ctx context.Context, bin string, stdin []byte, args ...string) (string, string, int, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
-	var out, errb bytes.Buffer
+	var out, errb capped
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)

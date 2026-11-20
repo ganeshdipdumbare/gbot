@@ -482,6 +482,10 @@ func (p *mcpProbe) call(ctx context.Context, method string, params any, out any)
 	if out == nil {
 		return nil
 	}
+	// One answer is read up to a generous cap, so a server that streams
+	// without end can't fill the server's memory. Large tool lists and
+	// results fit well within it.
+	answer := io.LimitReader(resp.Body, maxMCPResponse)
 	var msg struct {
 		Result json.RawMessage `json:"result"`
 		Error  *struct {
@@ -489,7 +493,7 @@ func (p *mcpProbe) call(ctx context.Context, method string, params any, out any)
 		} `json:"error"`
 	}
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-		sc := bufio.NewScanner(resp.Body)
+		sc := bufio.NewScanner(answer)
 		// A tool list can be far larger than bufio's 64 KB default; Notion's
 		// is. A short buffer would silently drop the response.
 		sc.Buffer(make([]byte, 64*1024), 16<<20)
@@ -517,9 +521,12 @@ func (p *mcpProbe) call(ctx context.Context, method string, params any, out any)
 		if err := sc.Err(); err != nil {
 			return fmt.Errorf("read response: %w", err)
 		}
-	} else if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil {
+	} else if err := json.NewDecoder(answer).Decode(&msg); err != nil {
 		if errors.Is(err, io.EOF) {
 			return errors.New("the server sent an empty response")
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return fmt.Errorf("the server's response was cut off (over %d MB, or the connection closed)", maxMCPResponse>>20)
 		}
 		return err
 	}
@@ -531,6 +538,9 @@ func (p *mcpProbe) call(ctx context.Context, method string, params any, out any)
 	}
 	return json.Unmarshal(msg.Result, out)
 }
+
+// maxMCPResponse caps one MCP answer.
+const maxMCPResponse = 64 << 20
 
 // probe connects one server and returns its tools. It fails with the
 // server's own error, which is what the person needs to see.

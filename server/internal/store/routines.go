@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -71,9 +72,32 @@ func (s *Store) RoutineByID(ctx context.Context, id string) (*Routine, error) {
 	return scanRoutine(s.DB.QueryRow(ctx, `SELECT `+routineCols+` FROM routines WHERE id=$1`, id))
 }
 
+// ErrTooManyRoutines is returned when a person already has
+// MaxRoutinesPerPerson routines.
+var ErrTooManyRoutines = errors.New("too many routines")
+
+// CreateRoutine saves a routine, counting the person's routines in the same
+// transaction under a per-person lock, so parallel creates can't pass the
+// cap together.
 func (s *Store) CreateRoutine(ctx context.Context, r *Routine, secretHash []byte) (*Routine, error) {
-	return scanRoutine(s.DB.QueryRow(ctx, `INSERT INTO routines(bot_id,user_id,name,prompt,kind,schedule,secret_hash,next_run_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING `+routineCols, r.BotID, r.UserID, r.Name, r.Prompt, r.Kind, r.Schedule, secretHash, r.NextRunAt))
+	var out *Routine
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('routines:' || $1::text))`, r.UserID); err != nil {
+			return err
+		}
+		var n int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM routines WHERE user_id=$1`, r.UserID).Scan(&n); err != nil {
+			return err
+		}
+		if n >= MaxRoutinesPerPerson {
+			return ErrTooManyRoutines
+		}
+		var err error
+		out, err = scanRoutine(tx.QueryRow(ctx, `INSERT INTO routines(bot_id,user_id,name,prompt,kind,schedule,secret_hash,next_run_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING `+routineCols, r.BotID, r.UserID, r.Name, r.Prompt, r.Kind, r.Schedule, secretHash, r.NextRunAt))
+		return err
+	})
+	return out, err
 }
 
 func (s *Store) UpdateRoutine(ctx context.Context, botID, userID, id string, active *bool, next *time.Time) (*Routine, error) {

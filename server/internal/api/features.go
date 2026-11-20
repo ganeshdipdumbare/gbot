@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -101,6 +102,10 @@ func (s *Server) setRule(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Tool == "" || len(body.Tool) > 200 || (body.Rule != "" && body.Rule != "allow" && body.Rule != "block") {
 		writeErr(w, 400, "rule is allow, block, or empty to remove")
+		return
+	}
+	if body.Rule == "allow" && !runs.CanAlwaysAllow(body.Tool) {
+		writeErr(w, 400, "that tool always asks; it can be blocked but not always allowed")
 		return
 	}
 	if err := s.Store.SetToolRule(r.Context(), userFrom(r).ID, body.Tool, body.Rule); err != nil {
@@ -276,11 +281,43 @@ func (s *Server) computerScreen(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(img)
 }
 
+// maxStreams bounds open screen streams per computer. Each one runs a
+// capture inside the computer every frame; a few windows is plenty, and
+// the stream itself has no time limit.
+const maxStreams = 4
+
+type streamCount struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+var streams = streamCount{n: map[string]int{}}
+
+func (c *streamCount) open(o computer.Owner) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	k := o.Bot + "|" + o.User
+	if c.n[k] >= maxStreams {
+		return false
+	}
+	c.n[k]++
+	return true
+}
+
+func (c *streamCount) close(o computer.Owner) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	k := o.Bot + "|" + o.User
+	if c.n[k]--; c.n[k] <= 0 {
+		delete(c.n, k)
+	}
+}
+
 // computerStream sends the screen as a multipart MJPEG stream. One
 // connection replaces the browser's frame-by-frame polling, so watching
 // or taking control doesn't pay a request per frame.
 func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
-	_, o, ok := s.computerOf(w, r)
+	b, o, ok := s.computerOf(w, r)
 	if !ok {
 		return
 	}
@@ -289,6 +326,11 @@ func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "streaming is not supported")
 		return
 	}
+	if !streams.open(o) {
+		writeErr(w, 429, "this computer is already shown in several windows; close one")
+		return
+	}
+	defer streams.close(o)
 	if _, err := s.Computer.Screenshot(r.Context(), o); err != nil {
 		writeErr(w, 409, err.Error())
 		return
@@ -305,7 +347,16 @@ func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
 	fails, sent := 0, 0
 	var last []byte
 	lastSent := time.Time{}
+	checked := time.Now()
 	for {
+		// The stream has no end of its own, so access is checked again now
+		// and then: signing out or losing the bot ends it.
+		if time.Since(checked) > 30*time.Second {
+			if !s.stillAllowed(r, b.ID) {
+				return
+			}
+			checked = time.Now()
+		}
 		img, err := s.Computer.Screenshot(r.Context(), o)
 		if err == nil {
 			fails = 0

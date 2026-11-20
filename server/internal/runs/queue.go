@@ -108,25 +108,34 @@ func (r *Runtime) drain(k string, j Job, w *worker) {
 }
 
 // claim moves a running item from queued to running. A paused, cancelled
-// or already finished item is skipped; internal jobs always run.
+// or already finished item is skipped. Every job, queued or internal (a
+// bot-to-bot ask, a reply, a group handoff), runs only while its person can
+// still use the bot: a removed team member's work is dropped, not run with
+// their own credentials. A failed lookup also drops the job.
 func (r *Runtime) claim(j *Job) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := r.store.GetBotFor(ctx, j.Bot.SpaceID, j.user(), j.Bot.ID); err != nil {
+		// An internal job (a bot-to-bot ask, its replies, a hand-off) has
+		// state waiting on it in memory, so only a definite "no access"
+		// drops it; a passing database error lets it run.
+		if j.QueueID == "" && !errors.Is(err, store.ErrNotFound) {
+			r.log.Error("claim access check", "err", err)
+			return true
+		}
+		if j.QueueID != "" {
+			_ = r.store.SetQueueStatus(ctx, j.QueueID, "cancelled", "you no longer have access to this bot")
+		}
+		return false
+	}
 	if j.QueueID == "" {
 		return true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	q, err := r.store.QueueItem(ctx, j.QueueID)
 	if err != nil {
-		return true // the record is best effort; still do the work
+		return true // the record is best effort; access was checked above
 	}
 	if q.Status != "queued" {
-		return false
-	}
-	// Work queued while a person could use the bot runs only while they still
-	// can. A removed team member's queued messages are dropped, not run with
-	// their own credentials. A failed lookup also drops the job.
-	if _, err := r.store.GetBotFor(ctx, j.Bot.SpaceID, j.user(), j.Bot.ID); err != nil {
-		_ = r.store.SetQueueStatus(ctx, j.QueueID, "cancelled", "you no longer have access to this bot")
 		return false
 	}
 	if err := r.store.SetQueueStatus(ctx, j.QueueID, "running", ""); err != nil {

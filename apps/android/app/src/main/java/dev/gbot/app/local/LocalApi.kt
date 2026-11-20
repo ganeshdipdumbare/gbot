@@ -287,7 +287,9 @@ class LocalApi(
             JsonObject(d)
         })
         db.patchMessage(next)
-        if (approved && always == true) m.str("tool")?.takeIf { it.isNotBlank() }?.let { setRule(it, "allow") }
+        if (approved && always == true) {
+            m.str("tool")?.takeIf { it.isNotBlank() && Approval.canAlwaysAllow(it) }?.let { setRule(it, "allow") }
+        }
         cards.remove(cardId)?.complete(approved)
         emit("message_update", m.botId.orEmpty(), json.encodeToJsonElement(Message.serializer(), next))
         next
@@ -313,6 +315,7 @@ class LocalApi(
     override suspend fun rules(): RulesResp = RulesResp(ruleList())
 
     override suspend fun setRule(tool: String, rule: String): RulesResp {
+        require(rule != "allow" || Approval.canAlwaysAllow(tool)) { "That tool always asks; it can be blocked but not always allowed." }
         val list = ruleList().filter { it.tool != tool }.toMutableList()
         if (rule.isNotBlank()) list += ToolRule(tool, rule)
         db.set("rules", json.encodeToString(kotlinx.serialization.builtins.ListSerializer(ToolRule.serializer()), list))

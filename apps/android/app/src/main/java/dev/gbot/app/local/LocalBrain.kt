@@ -271,6 +271,9 @@ class LocalBrain(
                     inn.botId.orEmpty(), askPrompt(sender.name, inn.str("message").orEmpty(), expect),
                     depth = inn.str("depth")?.toIntOrNull() ?: 1, kind = expect, root = inn.str("root").orEmpty(),
                     exchange = listOf(out.id, inn.id), from = sender.id,
+                    // Whether the sender had read outside text wasn't kept
+                    // across the restart, so assume it had (as the server does).
+                    untrusted = true,
                 ),
             )
             asks++
@@ -384,6 +387,9 @@ class LocalBrain(
         // The asks this run sends go back together once it ends.
         val round = RunRound()
         val runProof = RunBook().also { proof = it }
+        // A Slack message is outside text from the start, and so is a
+        // message from a bot whose own run had read some.
+        val taint = RunTaint(w.untrusted || w.kind == "slack")
         emitPresence(bot.id, group, "thinking")
         try {
             fun stage(detail: String) = emitPresence(bot.id, group, "working", detail)
@@ -398,11 +404,12 @@ class LocalBrain(
             else db.bots().filter { it.id != bot.id && it.id != w.from }
             val tools = LocalTools(
                 ctx, db, browser, bot.id,
+                taint = taint,
                 skills = api.localSkills(),
                 secret = { name -> api.secret(name) },
                 schedule = { name, p, cron -> api.scheduleFromChat(bot.id, name, p, cron) },
                 peers = peers,
-                messageBot = { target, text, expect -> messageBot(bot, target, text, expect, w, round) },
+                messageBot = { target, text, expect -> messageBot(bot, target, text, expect, w, round, taint.on) },
                 roster = { db.bots() },
                 createBot = { name, title -> api.createBot(name, title, dev.gbot.app.net.Look()) },
                 changeBot = { id, patch -> api.updateBot(id, patch) },
@@ -509,7 +516,7 @@ class LocalBrain(
                 if (said.isNotEmpty()) reply(bot, group, said)
                 // Asked from Slack: the answer goes back into that thread too.
                 if (said.isNotEmpty()) w.slack?.let { t -> runCatching { api.slack.post(t, said) } }
-                if (group != null && w.depth < 3) handoff(group, bot, said, w)
+                if (group != null && w.depth < 3) handoff(group, bot, said, w, taint.on)
                 landed = said.isNotEmpty()
             }
         } catch (e: Throwable) {
@@ -533,7 +540,7 @@ class LocalBrain(
     }
 
     /** Wake teammates this reply @mentions, like the server's group handoff. */
-    private fun handoff(group: Group, from: Bot, reply: String, w: Work) {
+    private fun handoff(group: Group, from: Bot, reply: String, w: Work, tainted: Boolean) {
         if (!reply.contains("@")) return
         for (id in group.botIds) {
             if (id == from.id) continue
@@ -543,6 +550,8 @@ class LocalBrain(
                     Work(
                         mate.id, "Continue the group task. ${from.name} mentioned you: $reply",
                         groupId = group.id, depth = w.depth + 1, kind = "group", root = w.root,
+                        // A reply written after outside text carries it on.
+                        untrusted = tainted,
                     ),
                 )
             }
@@ -744,18 +753,20 @@ class LocalBrain(
         log("tool $name")
         tools.precheck(name, args)?.let { return it }
         val world = tools.needsApproval(name) || api.isMcpTool(name)
-        if (!ask(bot, group, name, tools.describe(name, args), args, touchesWorld = world)) {
+        if (!ask(bot, group, name, tools.describe(name, args), args, touchesWorld = world, tainted = tools.taint.on)) {
             return "The person declined or blocked this step. Do not retry it; ask what they would like instead."
         }
         val out = runCatching {
             if (name == "show_results") {
-                showResults(bot, group, args)
+                showResults(bot, group, args, tools::mayShow)
             } else if (api.isMcpTool(name)) {
                 api.callMcp(name, args) { bytes, mime, from -> keepPicture(bot, group, bytes, mime, from) }.take(4000)
             } else {
                 tools.run(name, args).take(4000)
             }
         }.getOrElse { "The tool failed: ${it.message}" }
+        if (name in RunTaint.SOURCES || api.isMcpTool(name)) tools.taint.mark()
+        if (name != "show_results") tools.see(out)
         proof?.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
         // the bot is and what they could be watching.
@@ -824,8 +835,8 @@ class LocalBrain(
     }
 
     /** A card in the chat, and a wait. Nothing changes outside until it is answered. */
-    private suspend fun ask(bot: Bot, group: Group?, tool: String, what: String, args: JsonObject, touchesWorld: Boolean): Boolean {
-        when (Approval.decide(api.approvalMode(), api.ruleFor(tool), touchesWorld)) {
+    private suspend fun ask(bot: Bot, group: Group?, tool: String, what: String, args: JsonObject, touchesWorld: Boolean, tainted: Boolean = false): Boolean {
+        when (Approval.decide(api.approvalMode(), api.ruleFor(tool), touchesWorld, tool, tainted)) {
             Approval.Choice.Run -> return true
             Approval.Choice.Refuse -> return false
             Approval.Choice.Ask -> Unit
@@ -967,7 +978,7 @@ class LocalBrain(
      * and goes back to the sender with the rest of its round; a tell's goes
      * nowhere (docs/protocol/bot-asks.md).
      */
-    private fun messageBot(from: Bot, to: Bot, text: String, expect: String, w: Work, round: RunRound): String {
+    private fun messageBot(from: Bot, to: Bot, text: String, expect: String, w: Work, round: RunRound, tainted: Boolean): String {
         val body = text.trim()
         if (body.isEmpty()) return "Write something to send."
         val kind = if (expect == "tell") "tell" else "ask"
@@ -985,7 +996,7 @@ class LocalBrain(
         start(
             Work(
                 to.id, askPrompt(from.name, body, kind), depth = w.depth + 1, kind = kind, root = w.root,
-                exchange = listOf(out.id, inn.id), from = from.id,
+                exchange = listOf(out.id, inn.id), from = from.id, untrusted = tainted,
             ),
         )
         return if (kind == "tell") {
@@ -1038,6 +1049,9 @@ class LocalBrain(
             Work(
                 sender.id, joinPrompt(answers), depth = maxOf((first.str("depth")?.toIntOrNull() ?: 1) - 1, 0),
                 kind = "join", root = first.str("root").orEmpty(), joinRound = round,
+                // Teammates' answers can carry what they read; their runs'
+                // taint isn't recorded on the cards, so treat them as outside text.
+                untrusted = true,
             ),
         )
         return true
@@ -1097,8 +1111,8 @@ class LocalBrain(
      * The bot's list to compare, as cards in the chat: the phone's copy of
      * the server's show_results. Returns the line the model reads back.
      */
-    private fun showResults(bot: Bot, group: Group?, args: JsonObject): String {
-        val set = LocalResults(java.io.File(ctx.filesDir, "pictures")).build(args)
+    private fun showResults(bot: Bot, group: Group?, args: JsonObject, mayShow: (String) -> Boolean): String {
+        val set = LocalResults(java.io.File(ctx.filesDir, "pictures"), allowImage = mayShow).build(args)
             ?: return "Give at least two items, each with a title."
         val title = set.title.ifEmpty { "Results" }
         event(
@@ -1394,6 +1408,8 @@ data class Work(
     val joinRound: String? = null,
     /** Set when the message came from Slack: where the answer goes back. */
     val slack: SlackTarget? = null,
+    /** Set when the bot that sent this message had read outside text. */
+    val untrusted: Boolean = false,
     val tries: Int = 0,
 ) {
     val priority: Int get() = when (kind) {

@@ -63,6 +63,7 @@ import dev.gbot.app.net.Message
 import dev.gbot.app.net.QueueItem
 import dev.gbot.app.net.s
 import dev.gbot.app.ui.Gbot
+import dev.gbot.app.ui.home
 import dev.gbot.app.ui.Icon
 import dev.gbot.app.ui.IconBtn
 import dev.gbot.app.ui.LocalG
@@ -130,9 +131,25 @@ fun ChatScreen(nav: NavHostController, key: ChatKey, prefill: String = "") {
     }
 
     if (bot == null && group == null) {
+        // The list can be older than the chat: a bot the main bot just
+        // hatched, or a link opened while the roster was still loading. Look
+        // again once; a chat that is really gone (deleted, or from the other
+        // mode) goes back to the roster instead of leaving a dead screen.
+        var gone by remember(key) { mutableStateOf(false) }
+        LaunchedEffect(key, s.loaded) {
+            if (!s.loaded) return@LaunchedEffect
+            runCatching { app.store.loadAll() }
+            val now = app.store.now
+            val found = if (isGroupKey(key)) now.groups.any { groupKey(it.id) == key } else now.bots.any { it.id == key }
+            if (!found) {
+                gone = true
+                app.toast("That chat isn't here anymore")
+                nav.home()
+            }
+        }
         Column(Modifier.fillMaxSize().background(g.bg)) {
-            TopBar("", { nav.popBackStack() })
-            Text(if (s.loaded) "This chat isn't available anymore." else "Loading…", style = T.body, color = g.ink2, modifier = Modifier.fillMaxWidth().padding(40.dp), textAlign = TextAlign.Center)
+            TopBar("", { if (!nav.popBackStack()) nav.home() })
+            Text(if (gone) "This chat isn't available anymore." else "Loading…", style = T.body, color = g.ink2, modifier = Modifier.fillMaxWidth().padding(40.dp), textAlign = TextAlign.Center)
         }
         return
     }

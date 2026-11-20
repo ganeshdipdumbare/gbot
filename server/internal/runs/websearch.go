@@ -167,6 +167,10 @@ func get(ctx context.Context, rawURL string, post url.Values) ([]byte, string, e
 		if next.URL.Scheme != "https" {
 			return errors.New("redirected away from https")
 		}
+		// A bot's site allowlist holds for every hop, not just the first.
+		if !hostAllowed(allowedHostsFrom(ctx), next.URL.String()) {
+			return errors.New("redirected to a site that isn't on this bot's allowlist")
+		}
 		return netguard.Endpoint(next.URL.String())
 	}
 	resp, err := client.Do(req)
@@ -206,6 +210,19 @@ func (r *Runtime) webSearch(ctx context.Context, in searchIn) (string, error) {
 		}
 	}
 	return sb.String(), nil
+}
+
+type hostsKey struct{}
+
+// withAllowedHosts carries a bot's site allowlist to the fetch, so redirect
+// hops are held to it too.
+func withAllowedHosts(ctx context.Context, hosts []string) context.Context {
+	return context.WithValue(ctx, hostsKey{}, hosts)
+}
+
+func allowedHostsFrom(ctx context.Context) []string {
+	h, _ := ctx.Value(hostsKey{}).([]string)
+	return h
 }
 
 // webFetch reads one page as text.

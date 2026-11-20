@@ -30,6 +30,9 @@ import java.util.concurrent.atomic.AtomicLong
  * nothing has to stay connected between messages.
  */
 class Mcp(private val ctx: Context) {
+    private companion object {
+        const val MAX_ANSWER_BYTES = 64L * 1024 * 1024
+    }
     private val prefs = ctx.getSharedPreferences("gbot", Context.MODE_PRIVATE)
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -37,6 +40,10 @@ class Mcp(private val ctx: Context) {
         // call is allowed to take a while.
         .readTimeout(3, TimeUnit.MINUTES)
         .callTimeout(3, TimeUnit.MINUTES)
+        // Integrations the person added may live on their LAN, so addresses
+        // aren't limited here; an https server can't send the call down to
+        // plain http, though, and one answer has a generous size cap.
+        .followSslRedirects(false)
         .build()
     private val ids = AtomicLong(1)
 
@@ -188,7 +195,7 @@ class Mcp(private val ctx: Context) {
                 // A signed-in app's token can die early: renew once and retry.
                 if (res.code == 401 && !renewed && oauth(server.id) != null) return request(body, expectResponse, renewed = true)
                 res.header("Mcp-Session-Id")?.let { sessionId = it }
-                val text = res.body.string()
+                val text = res.body.cappedString(MAX_ANSWER_BYTES)
                 if (!res.isSuccessful) throw IllegalStateException("${server.name} returned ${res.code} ${text.take(200)}")
                 if (!expectResponse || text.isBlank()) return null
                 val envelope = if (res.header("Content-Type")?.contains("text/event-stream") == true) {

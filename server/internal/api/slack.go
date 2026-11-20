@@ -194,8 +194,9 @@ func (s *Server) slackEvents(w http.ResponseWriter, r *http.Request) {
 		ok()
 		return
 	}
-	bot, err := s.Store.GetBotAnySpace(r.Context(), link.BotID)
-	if err != nil || bot.SpaceID != in.SpaceID {
+	// The run is the install owner's, so the bot must be one they can use.
+	bot, err := s.Store.GetBotFor(r.Context(), in.SpaceID, in.OwnerID, link.BotID)
+	if err != nil {
 		ok()
 		return
 	}
@@ -281,14 +282,39 @@ func (s *Server) connectSlack(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// The unique key is the workspace, so a clash means another
 		// space already connected it.
-		writeErr(w, 409, "that Slack workspace is already connected elsewhere")
+		writeErr(w, 409, "that Slack workspace is already connected, by another team or another person")
 		return
 	}
 	writeJSON(w, 201, slackView{SlackInstall: in, Links: []*store.SlackLink{}})
 }
 
+// slackInstallAs loads a workspace connection for a change. Its tokens are
+// sealed to the person who connected it and its runs are theirs, so only
+// they may change it; the team's owner may also disconnect it.
+func (s *Server) slackInstallAs(w http.ResponseWriter, r *http.Request, ownerMayRemove bool) (*store.SlackInstall, bool) {
+	u := userFrom(r)
+	in, err := s.Store.SlackInstallInSpace(r.Context(), u.SpaceID, r.PathValue("id"))
+	if err != nil {
+		writeErr(w, 404, "not found")
+		return nil, false
+	}
+	if in.OwnerID == u.ID {
+		return in, true
+	}
+	if ownerMayRemove {
+		if role, err := s.Store.SpaceRole(r.Context(), u.SpaceID, u.ID); err == nil && role == "owner" {
+			return in, true
+		}
+	}
+	writeErr(w, 403, "only the person who connected this workspace can change it")
+	return nil, false
+}
+
 func (s *Server) disconnectSlack(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
+	if _, ok := s.slackInstallAs(w, r, true); !ok {
+		return
+	}
 	if err := s.Store.DeleteSlackInstall(r.Context(), u.SpaceID, r.PathValue("id")); err != nil {
 		writeErr(w, 404, "not found")
 		return
@@ -300,9 +326,8 @@ func (s *Server) disconnectSlack(w http.ResponseWriter, r *http.Request) {
 // both the workspace and the bot.
 func (s *Server) linkSlack(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
-	in, err := s.Store.SlackInstallInSpace(r.Context(), u.SpaceID, r.PathValue("id"))
-	if err != nil {
-		writeErr(w, 404, "not found")
+	in, ok := s.slackInstallAs(w, r, false)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -331,10 +356,8 @@ func (s *Server) linkSlack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) unlinkSlack(w http.ResponseWriter, r *http.Request) {
-	u := userFrom(r)
-	in, err := s.Store.SlackInstallInSpace(r.Context(), u.SpaceID, r.PathValue("id"))
-	if err != nil {
-		writeErr(w, 404, "not found")
+	in, ok := s.slackInstallAs(w, r, true)
+	if !ok {
 		return
 	}
 	if err := s.Store.DeleteSlackLink(r.Context(), in.ID, r.PathValue("channel")); err != nil {

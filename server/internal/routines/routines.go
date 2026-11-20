@@ -82,6 +82,9 @@ func (s *Service) Create(ctx context.Context, botID, userID, name, prompt, kind,
 		return nil, "", errors.Join(ErrInvalid, errors.New("kind must be schedule or webhook"))
 	}
 	out, err := s.Store.CreateRoutine(ctx, r, hash)
+	if errors.Is(err, store.ErrTooManyRoutines) {
+		return nil, "", errors.Join(ErrInvalid, errors.New("you have too many routines; delete one before adding another"))
+	}
 	if err == nil {
 		s.Changed(botID, userID)
 	}
@@ -215,7 +218,9 @@ func Verify(r *store.Routine, body []byte, signature, timestamp, bearer string, 
 		}
 		// A signature is good once. Within the window it could otherwise be
 		// sent again, so each accepted one is remembered until it expires.
-		return replay.Accept(r.ID+"|"+signature, now, 2*webhookWindow)
+		// The key is the MAC itself, not the header text: hex decodes either
+		// case, so the same signature in other letters is the same signature.
+		return replay.Accept(r.ID+"|"+hex.EncodeToString(got), now, 2*webhookWindow)
 	}
 	if bearer != "" {
 		h := sha256.Sum256([]byte(bearer))
