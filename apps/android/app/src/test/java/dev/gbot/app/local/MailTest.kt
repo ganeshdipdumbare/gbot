@@ -55,13 +55,15 @@ class MailTest {
 
     @Test
     fun literalSizePatternsAvoidUnescapedClosingBrace() {
-        // ICU rejects a bare `}` (desktop JVM often does not). Escaped `\}` or a
-        // class `[}]` is fine; checking for `\{`/`\}` would miss `[{]\d+}` and
-        // wrongly fail a correct `\{\d+\}`.
+        // ICU rejects a bare `}` that does not close a quantifier. Escaped `\}`,
+        // a class `[}]`, quantifier `\d{1,10}`, nested classes, and `\Q}\E` are fine.
         assertTrue(hasUnescapedClosingBrace("\\{(\\d+)\\+?}$")) // pre-fix
         assertTrue(hasUnescapedClosingBrace("[{]\\d+}"))
         assertFalse(hasUnescapedClosingBrace("\\{\\d+\\}"))
         assertFalse(hasUnescapedClosingBrace("[{]\\d+[}]"))
+        assertFalse(hasUnescapedClosingBrace("\\d{1,10}"))
+        assertFalse(hasUnescapedClosingBrace("[a[b]}]"))
+        assertFalse(hasUnescapedClosingBrace("\\Q}\\E"))
         for (p in listOf(Imap.LITERAL_SIZE, Imap.LITERAL_SIZE_AT_END)) {
             assertFalse("unescaped } in $p", hasUnescapedClosingBrace(p))
             assertTrue(p, Regex(p).containsMatchIn("x{12}"))
@@ -71,22 +73,57 @@ class MailTest {
         assertFalse(Regex(Imap.LITERAL_SIZE_AT_END).containsMatchIn("x{12}y"))
     }
 
-    /** True when `}` appears neither escaped nor inside `[]`. */
+    /**
+     * True when `}` is neither escaped, inside `[]` (nested depth), inside `\Q…\E`,
+     * nor closing an open `{` quantifier — the cases ICU actually rejects.
+     */
     private fun hasUnescapedClosingBrace(pattern: String): Boolean {
         var i = 0
-        var inClass = false
+        var classDepth = 0
+        var quantDepth = 0
+        var quoted = false
         while (i < pattern.length) {
+            if (quoted) {
+                if (pattern.startsWith("\\E", i)) {
+                    quoted = false
+                    i += 2
+                } else {
+                    i++
+                }
+                continue
+            }
+            if (pattern[i] == '\\') {
+                if (pattern.startsWith("\\Q", i)) {
+                    quoted = true
+                    i += 2
+                } else {
+                    i += 2
+                }
+                continue
+            }
             when (pattern[i]) {
-                '\\' -> i += 2
                 '[' -> {
-                    if (!inClass) inClass = true
+                    classDepth++
                     i++
                 }
                 ']' -> {
-                    if (inClass) inClass = false
+                    if (classDepth > 0) classDepth--
                     i++
                 }
-                '}' -> if (!inClass) return true else i++
+                '{' -> {
+                    if (classDepth == 0) quantDepth++
+                    i++
+                }
+                '}' -> {
+                    when {
+                        classDepth > 0 -> i++
+                        quantDepth > 0 -> {
+                            quantDepth--
+                            i++
+                        }
+                        else -> return true
+                    }
+                }
                 else -> i++
             }
         }
