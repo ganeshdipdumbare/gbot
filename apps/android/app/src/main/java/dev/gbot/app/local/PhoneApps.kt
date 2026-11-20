@@ -495,7 +495,9 @@ object PhoneApps {
 
     private fun emailRead(ctx: Context, a: JsonObject): String {
         val acct = Mail.account(ctx) ?: return NOT_CONNECTED
-        val id = a.s("id").trim().removePrefix("[").removeSuffix("]")
+        // email_list shows ids as [INBOX:42]; take off those brackets only, so
+        // a Gmail folder like [Gmail]/Sent Mail:42 keeps its own.
+        val id = a.s("id").trim().let { if (it.startsWith("[") && it.endsWith("]")) it.substring(1, it.length - 1).trim() else it }
         if (id.isEmpty()) return "Give the message id from email_list."
         val m = try {
             Mail.read(acct, id) ?: return "No message $id any more; list the mailbox again."

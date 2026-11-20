@@ -202,10 +202,13 @@ internal class Imap private constructor(private val input: InputStream, private 
     companion object {
         /** Generous: a slow mobile network and a big mailbox can both take a while. */
         private const val TIMEOUT_MS = 120_000
+        /** Reaching the server at all; a wrong host or port shouldn't wait for the OS TCP timeout. */
+        private const val CONNECT_MS = 45_000
 
         fun open(a: Mail.Account): Imap {
-            val socket = SSLSocketFactory.getDefault().createSocket(a.host, a.port) as SSLSocket
+            val socket = SSLSocketFactory.getDefault().createSocket() as SSLSocket
             try {
+                socket.connect(java.net.InetSocketAddress(a.host, a.port), CONNECT_MS)
                 socket.soTimeout = TIMEOUT_MS
                 socket.startHandshake()
                 // A bare SSLSocket doesn't check the certificate is for this host; HTTPS does, so ask it.
@@ -432,6 +435,9 @@ internal object Mime {
 
     /** Where the headers end and the body starts. */
     private fun bodyStart(raw: ByteArray): Pair<Int, Int> {
+        // A part with no headers (text/plain by default) starts with its blank line.
+        if (raw.size >= 2 && raw[0] == '\r'.code.toByte() && raw[1] == '\n'.code.toByte()) return 0 to 2
+        if (raw.isNotEmpty() && raw[0] == '\n'.code.toByte()) return 0 to 1
         for (i in 0 until raw.size - 1) {
             if (raw[i] == '\n'.code.toByte() && raw[i + 1] == '\n'.code.toByte()) return i to i + 2
             if (i + 3 < raw.size && raw[i] == '\r'.code.toByte() && raw[i + 1] == '\n'.code.toByte() && raw[i + 2] == '\r'.code.toByte() && raw[i + 3] == '\n'.code.toByte()) return i to i + 4
@@ -538,8 +544,9 @@ internal object Mime {
         s = Regex("&(#x?[0-9a-fA-F]+|[a-zA-Z]+);").replace(s) { m ->
             val e = m.groupValues[1]
             when {
-                e.startsWith("#x", true) -> e.drop(2).toIntOrNull(16)?.let { String(Character.toChars(it)) } ?: m.value
-                e.startsWith("#") -> e.drop(1).toIntOrNull()?.let { String(Character.toChars(it)) } ?: entities[e] ?: m.value
+                // A malformed number (past U+10FFFF) stays as written rather than failing the whole message.
+                e.startsWith("#x", true) -> e.drop(2).toIntOrNull(16)?.takeIf(Character::isValidCodePoint)?.let { String(Character.toChars(it)) } ?: m.value
+                e.startsWith("#") -> e.drop(1).toIntOrNull()?.takeIf(Character::isValidCodePoint)?.let { String(Character.toChars(it)) } ?: entities[e] ?: m.value
                 else -> entities[e.lowercase()] ?: m.value
             }
         }

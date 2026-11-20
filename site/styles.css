@@ -631,11 +631,11 @@ footer nav a:hover { color: var(--ink); }
   .crew-row { min-height: 70px; gap: 8px; }
   .ask { padding: 8px 10px; gap: 8px; }
   .ask p { font-size: 12.5px; }
+  .logos { grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 8px; }
+  .logos li { border-radius: 15px; }
+  footer { flex-direction: column; align-items: flex-start; }
 }
 @media (max-width: 380px) {
   .vault-grid { grid-template-columns: minmax(0, 1fr); }
   .safe-note { min-height: 0; }
-  .logos { grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 8px; }
-  .logos li { border-radius: 15px; }
-  footer { flex-direction: column; align-items: flex-start; }
 }

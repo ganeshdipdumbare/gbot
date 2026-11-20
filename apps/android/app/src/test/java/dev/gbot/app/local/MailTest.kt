@@ -143,4 +143,27 @@ class MailTest {
         assertTrue(LocalTools.mailRule(emailOn = true, inbox = true).contains("email_list"))
         assertFalse(LocalTools.mailRule(emailOn = true, inbox = true).contains("can't read"))
     }
+
+    @Test
+    fun badEntitiesStayAsWritten() {
+        val text = Mime.htmlToText("<p>a &#99999999; b &#x110000; c &#233;</p>")
+        assertEquals("a &#99999999; b &#x110000; c é", text)
+    }
+
+    @Test
+    fun partWithoutHeadersKeepsItsFirstParagraph() {
+        val raw = crlf(
+            """
+            Content-Type: multipart/mixed; boundary=b
+
+            --b
+
+            First paragraph.
+
+            Second paragraph.
+            --b--
+            """,
+        )
+        assertEquals("First paragraph.\n\nSecond paragraph.", Mime.parse(raw).text)
+    }
 }

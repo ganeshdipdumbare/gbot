@@ -97,10 +97,17 @@ internal object Glow {
         )
         fun bevel(from: Color, to: Color, y0: Float, y1: Float) = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 14f
             shader = android.graphics.LinearGradient(0f, y0, 0f, y1, from.toArgb(), to.toArgb(), android.graphics.Shader.TileMode.CLAMP)
-            // In body units: the canvas scale carries it to pixels.
-            maskFilter = android.graphics.BlurMaskFilter(4.5f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                strokeWidth = 14f
+                // In body units: the canvas scale carries it to pixels.
+                maskFilter = android.graphics.BlurMaskFilter(4.5f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+            } else {
+                // Hardware canvases ignore mask filters before Android 9: a
+                // narrow, fainter band instead of a hard 14-unit ring.
+                strokeWidth = 5f
+                alpha = 150
+            }
         }
         val crown = bevel(Color.White.copy(alpha = if (dark) 0.42f else 0.38f), Color.Transparent, b.top, b.top + b.height * 0.6f)
         val under = bevel(Color.Transparent, Color.Black.copy(alpha = if (dark) 0.34f else 0.26f), b.bottom - b.height * 0.6f, b.bottom)
