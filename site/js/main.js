@@ -153,6 +153,10 @@ async function startStudio() {
 }
 
 if (heroEl) startHero();
+
+// ---------- the vault scene ----------
+const vaultEl = $("[data-vault]");
+if (vaultEl) import("./vault.js").then(({ mountVault }) => mountVault(vaultEl, { still })).catch((err) => console.warn("gbot: vault scene unavailable", err));
 if (studioEl) {
   // The second scene waits until it is nearly on screen. Browsers without
   // IntersectionObserver start it straight away, as the reveal code does.

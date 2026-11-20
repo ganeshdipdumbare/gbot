@@ -96,6 +96,9 @@ class GlowTest {
         }
     }
 
+    /** One hue per shape, as the website's crew wears them. */
+    private val crew = listOf("cobalt", "mint", "sky", "coral", "bubblegum", "grape", "sun", "cream")
+
     @Test
     fun sheet() {
         val shapes = bodies.keys.toList()
@@ -104,7 +107,7 @@ class GlowTest {
         canvas.drawColor(Color.Magenta.toArgb())
         shapes.forEachIndexed { i, shape ->
             for ((row, dark) in listOf(false, true).withIndex()) {
-                canvas.drawBitmap(render(shape, "cobalt", dark).asAndroidBitmap(), (i * cell).toFloat(), (row * cell).toFloat(), null)
+                canvas.drawBitmap(render(shape, crew[i % crew.size], dark).asAndroidBitmap(), (i * cell).toFloat(), (row * cell).toFloat(), null)
             }
         }
         val out = File("build/shots/shapes3d.png")

@@ -753,7 +753,7 @@ class LocalBrain(
         log("tool $name")
         tools.precheck(name, args)?.let { return it }
         val world = tools.needsApproval(name) || api.isMcpTool(name)
-        if (!ask(bot, group, name, tools.describe(name, args), args, touchesWorld = world, tainted = tools.taint.on)) {
+        if (!ask(bot, group, name, tools.describe(name, args), args, touchesWorld = world, tainted = tools.taint.taints(name))) {
             return "The person declined or blocked this step. Do not retry it; ask what they would like instead."
         }
         val out = runCatching {
@@ -765,7 +765,7 @@ class LocalBrain(
                 tools.run(name, args).take(4000)
             }
         }.getOrElse { "The tool failed: ${it.message}" }
-        if (name in RunTaint.SOURCES || api.isMcpTool(name)) tools.taint.mark()
+        if (name in RunTaint.SOURCES || api.isMcpTool(name)) tools.taint.mark(name)
         if (name != "show_results") tools.see(out)
         proof?.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
@@ -956,7 +956,7 @@ class LocalBrain(
             appendLine("- remember durable facts and preferences; forget when they correct you.")
             appendLine("- A message may carry an internal plan. Follow it, and never mention it. No plan and the task has several steps? call plan, one step per line.")
             appendLine("- You cannot run shell commands, open other apps, text or post through chat apps.")
-            appendLine("- " + LocalTools.mailRule(PhoneApps.on(ctx, "email")))
+            appendLine("- " + LocalTools.mailRule(PhoneApps.on(ctx, "email"), Mail.connected(ctx)))
             appendLine()
             appendLine("The person's details:")
             appendLine(profile)

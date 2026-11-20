@@ -333,7 +333,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
         // Mail goes through the mail app, which is already signed in. The
         // bot's own browser would mean a Gmail sign-in nobody asked for.
         name == "browser_open" && isWebmail(args.str("url")) ->
-            "Not opened: email doesn't go through the browser. " + mailRule(PhoneApps.on(ctx, "email"))
+            "Not opened: email doesn't go through the browser. " + mailRule(PhoneApps.on(ctx, "email"), Mail.connected(ctx))
         // A click or redirect can land on a mail site too. Leaving it is
         // allowed; acting on it is not.
         (name.startsWith("browser_") || name == "vault_type") && name !in LEAVE_PAGE && isWebmail(browser.url.value) ->
@@ -343,7 +343,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
 
     private fun onWebmail(): String =
         "The browser is on a mail site, and email doesn't go through the browser. Leave it with browser_back or browser_open another page. " +
-            mailRule(PhoneApps.on(ctx, "email"))
+            mailRule(PhoneApps.on(ctx, "email"), Mail.connected(ctx))
 
     fun describe(name: String, args: JsonObject): String = PhoneApps.describe(name, args) ?: when (name) {
         "browser_open" -> "Open ${args.str("url")}"
@@ -697,13 +697,18 @@ fun choiceLines(raw: String, max: Int): List<String> {
         private val SCHEME = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://")
 
         /** What the bot is told about email, depending on whether Email is on in Integrations. */
-        internal fun mailRule(emailOn: Boolean): String =
-            if (emailOn) {
+        internal fun mailRule(emailOn: Boolean, inbox: Boolean = false): String =
+            if (emailOn && inbox) {
+                "Their inbox is connected: use email_list to see or search mail and email_read to read one; nothing is marked read. " +
+                    "To send or reply use email_draft: it opens in their mail app and they press Send. " +
+                    "Never open Gmail or another mail site in the browser, and never sign in to one."
+            } else if (emailOn) {
                 "To send an email use email_draft: it opens in the person's mail app, already signed in, and they press Send. " +
-                    "You can't read their inbox; say so if they ask. Never open Gmail or another mail site in the browser, and never sign in to one."
+                    "Their inbox isn't connected yet, so you can't read mail: if they ask, say they can connect it in Settings → Integrations → Email → Connect inbox. " +
+                    "Never open Gmail or another mail site in the browser, and never sign in to one."
             } else {
                 "You can't read or send their email. Never open Gmail or another mail site in the browser, and never sign in to one. " +
-                    "If they want an email written, say they can turn on Email in Settings → Integrations so you can draft it in their mail app."
+                    "If they want mail read or written, say they can turn on Email in Settings → Integrations and connect their inbox."
             }
 
         internal fun params(vararg fields: Any, required: List<String> = emptyList()): JsonObject = buildJsonObject {
