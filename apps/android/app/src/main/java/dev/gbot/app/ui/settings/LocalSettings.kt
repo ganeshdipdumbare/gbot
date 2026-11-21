@@ -245,7 +245,7 @@ fun OnDeviceModels() {
                             GButton("Cancel", { discarding = e }, variant = Variant.Soft, small = true)
                         }
                     }
-                    else -> GButton("Download over Wi‑Fi", { startDownload(e) }, Modifier.fillMaxWidth(), small = true)
+                    else -> GButton("Download", { startDownload(e) }, Modifier.fillMaxWidth(), small = true)
                 }
             }
         }

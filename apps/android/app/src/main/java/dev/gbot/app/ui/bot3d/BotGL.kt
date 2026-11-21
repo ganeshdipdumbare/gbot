@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import dev.gbot.app.ui.Traits
 import dev.gbot.app.ui.hues
 import java.nio.ByteBuffer
@@ -50,6 +52,16 @@ internal object BotGL {
 
     /** Start setting up in the background, from app launch. */
     fun warm() { Thread({ ok }, "gbot-gl-warm").start() }
+
+    /**
+     * Set when the rig keeps failing even after rebuilds: every bot then
+     * falls back to the 2D painter, rather than staying blank. Compose
+     * state, so screens switch over as soon as it flips.
+     */
+    var gaveUp by androidx.compose.runtime.mutableStateOf(false)
+        private set
+    private const val TRIES = 3
+    private var failures = 0
 
     private fun start(): Boolean {
         if (Build.FINGERPRINT == "robolectric") return false
@@ -378,17 +390,38 @@ void main() {
      * Paint one bot at [px]×[px] into [out] (RGBA, premultiplied, top row
      * first). False when the GL work failed; the next paint rebuilds.
      */
-    fun paint(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean = try {
-        draw(look, f, px, out)
-    } catch (e: Throwable) {
-        Log.w(TAG, "paint failed; rebuilding the rig", e)
-        // Whatever broke, start the next paint from a fresh context.
+    fun paint(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
+        val ok = try {
+            draw(look, f, px, out)
+        } catch (e: Throwable) {
+            Log.w(TAG, "paint failed", e)
+            false
+        }
+        if (ok) { failures = 0; return true }
+        // Whatever broke — a throw or a GL error — start the next paint from a
+        // fresh context; if rebuilding doesn't help, hand over to the 2D bots.
         broken = true
-        false
+        if (++failures >= TRIES && !gaveUp) {
+            Log.w(TAG, "3D bots keep failing; using the 2D painter")
+            android.os.Handler(android.os.Looper.getMainLooper()).post { gaveUp = true }
+        }
+        return false
+    }
+
+    /** Every pending GL error, cleared; glGetError reports only one per call. */
+    private fun drainErrors(): Boolean {
+        var clean = true
+        while (true) {
+            val e = GLES30.glGetError()
+            if (e == GLES30.GL_NO_ERROR) return clean
+            Log.w(TAG, "GL error 0x" + Integer.toHexString(e))
+            clean = false
+        }
     }
 
     private fun draw(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
         if (!ensure()) return false
+        drainErrors() // left over from an earlier paint: not this one's fault
         val o = outlineOf(look.shape)
         framebuffers(px)
 
@@ -501,7 +534,7 @@ void main() {
         GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
         GLES30.glReadPixels(0, 0, px, px, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, out)
         out.rewind()
-        return GLES30.glGetError() == GLES30.GL_NO_ERROR
+        return drainErrors()
     }
 
     private fun srgb(argb: Long) = floatArrayOf(((argb shr 16) and 0xff) / 255f, ((argb shr 8) and 0xff) / 255f, (argb and 0xff) / 255f)

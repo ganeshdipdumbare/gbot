@@ -88,7 +88,7 @@ fun Gbot(
     sharedKey: String? = null,
 ) {
     // The real 3D rig, as on the web; the painted one only where a phone has no GL.
-    if (!BotGL.ok) return GbotFlat(look, seed, size, modifier, mood, live, lively, sharedKey)
+    if (!BotGL.ok || BotGL.gaveUp) return GbotFlat(look, seed, size, modifier, mood, live, lively, sharedKey)
     val t = remember(look, seed) { resolveLook(look, seed) }
     val g = LocalG.current
     val shared = LocalSharedScope.current

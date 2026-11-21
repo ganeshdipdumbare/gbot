@@ -572,7 +572,8 @@ class LocalBrain(
         val call = withContext(Dispatchers.Default) { Needle.route(ctx, prompt, safe) } ?: return ""
         log("needle ${call.name} confidence=${call.confidence}")
         val out = executeTool(tools, bot, group, call.name, call.arguments, stage)
-        tools.prefetched[prefetchKey(call.name, call.arguments)] = out
+        // A failed lookup isn't kept: the model's retry should really run.
+        if (!out.startsWith("The tool failed")) tools.prefetched[prefetchKey(call.name, call.arguments)] = out
         return needleBlock(call.name, call.arguments.toString(), out)
     }
 
@@ -778,8 +779,11 @@ class LocalBrain(
         val name = canonicalTool(called)
         val args = canonicalArgs(name, calledArgs)
         if (name != called) log("tool $called -> $name")
-        // Needle already ran this exact lookup for the run: same answer, no second trip.
-        tools.prefetched[name + " " + args]?.let { log("tool $name reused"); return it }
+        // Needle just ran this exact lookup: the model's first ask for it
+        // gets that answer instead of a second trip. Once only, and any
+        // other tool call drops it, since a write can change what it lists.
+        tools.prefetched.remove(name + " " + args)?.let { log("tool $name reused"); return it }
+        tools.prefetched.clear()
         val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch" || name == "web_search"
         val onComputer = usesComputer(name)
         if (onComputer) {
