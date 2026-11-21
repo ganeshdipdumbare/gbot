@@ -33,7 +33,9 @@ object Needle {
     private const val TAG = "gbot.needle"
     val entry = LocalModels.Entry(
         "Needle 3", "needle3.cact",
-        "https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact",
+        // Pinned to one revision: the size check below and libcactus 4.0.0 both
+        // expect exactly this file, and `main` can move under them.
+        "https://huggingface.co/Cactus-Compute/needle3/resolve/c95d25b4efa1e9601e785d92438e4ade0dbddbf8/needle3.cact",
         35_335_380, "Picks tools on the phone, fast and offline.",
     )
 
@@ -52,7 +54,13 @@ object Needle {
     suspend fun download(ctx: Context, progress: (Long, Long) -> Unit): File =
         LocalModels.downloadTo(dir(ctx), entry, progress)
 
-    fun unload() = synchronized(lock) { loaded = null; toolsKey = null }
+    /**
+     * Forgets the tool schema after the weights are removed. Cactus's C API
+     * has no unload call, so the model already in memory stays until the
+     * process ends; [loaded] is kept on purpose, so downloading the same
+     * pinned file again reuses that copy instead of loading a second one.
+     */
+    fun unload() = synchronized(lock) { toolsKey = null }
 
     /**
      * The tool Needle would call for [request], or null when it has no
@@ -65,18 +73,18 @@ object Needle {
                 val file = weights(ctx).absolutePath
                 if (loaded != file) {
                     val rc = nativeLoad(file)
-                    check(rc >= 0) { "load failed ($rc): ${nativeLastError()}" }
+                    check(rc >= 0) { "load failed ($rc): ${lastError()}" }
                     loaded = file
                     toolsKey = null
                 }
                 val schema = toolsJson(tools)
                 if (toolsKey != schema) {
-                    val rc = nativeInit("", schema)
-                    check(rc >= 0) { "init failed ($rc): ${nativeLastError()}" }
+                    val rc = nativeInit(utf8(""), utf8(schema))
+                    check(rc >= 0) { "init failed ($rc): ${lastError()}" }
                     toolsKey = schema
                 }
                 nativeReset()
-                val raw = nativeComplete(request.take(1000), 256) ?: error("complete failed: ${nativeLastError()}")
+                val raw = nativeComplete(utf8(request.take(1000)), 256)?.let(::text) ?: error("complete failed: ${lastError()}")
                 Log.d(TAG, "raw: ${raw.take(400)}")
                 parse(raw, tools.map { it.name }.toSet(), minConfidence)
             }
@@ -108,9 +116,15 @@ object Needle {
         return NeedleCall(name, args, confidence)
     }
 
+    // Text crosses JNI as standard UTF-8 bytes (see needle.cpp): emoji and a
+    // reply cut off mid-character decode safely, with U+FFFD at worst.
+    private fun utf8(s: String) = s.toByteArray(Charsets.UTF_8)
+    private fun text(b: ByteArray) = String(b, Charsets.UTF_8)
+    private fun lastError(): String = text(nativeLastError())
+
     private external fun nativeLoad(path: String): Int
-    private external fun nativeInit(system: String, tools: String): Int
-    private external fun nativeComplete(input: String, maxTokens: Int): String?
+    private external fun nativeInit(system: ByteArray, tools: ByteArray): Int
+    private external fun nativeComplete(input: ByteArray, maxTokens: Int): ByteArray?
     private external fun nativeReset()
-    private external fun nativeLastError(): String
+    private external fun nativeLastError(): ByteArray
 }
