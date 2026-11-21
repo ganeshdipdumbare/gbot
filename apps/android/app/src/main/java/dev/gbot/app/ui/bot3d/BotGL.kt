@@ -406,8 +406,12 @@ void main() {
 
     /**
      * Paint one bot at [px]×[px] into [out] (RGBA, premultiplied, top row
-     * first). False when the GL work failed. Only a throw or a lost context
-     * rebuilds the rig for the next paint; a plain GL error just fails this one.
+     * first). [Painted.OK] when drawn. [Painted.FAILED] when this paint's GL
+     * work failed: the caller counts it against the bot. Only a throw or a
+     * lost context rebuilds the rig for the next paint; a plain GL error
+     * just fails this one. [Painted.WAIT] when the shared rig is down (a
+     * rebuild just failed, or [ensure] couldn't build it): not the bot's
+     * fault, so the caller backs off a second without counting it.
      */
     fun paint(look: Traits, f: Frame, px: Int, out: ByteBuffer): Painted {
         rigDown = false

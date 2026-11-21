@@ -51,11 +51,6 @@ private class BotView(lively: Boolean) {
     fun retry() { fails = 0; retryAt = 0L; flat.value = false }
 
     /**
-     * A failed paint backs off before the next try, so a broken bot doesn't
-     * keep the shared rig busy every frame; after [TRIES] in a row this bot
-     * alone drops to the 2D painter. Other bots succeeding doesn't hide it.
-     */
-    /**
      * What a paint's result means for this bot. Only its own failures count
      * toward the 2D fallback; while the shared rig is down it just waits a
      * second and tries again, so one rebuild hiccup can't flatten a screen.
@@ -68,6 +63,11 @@ private class BotView(lively: Boolean) {
         }
     }
 
+    /**
+     * A failed paint backs off before the next try, so a broken bot doesn't
+     * keep the shared rig busy every frame; after [TRIES] in a row this bot
+     * alone drops to the 2D painter. Other bots succeeding doesn't hide it.
+     */
     private fun failed(now: Long) {
         fails++
         if (fails >= TRIES) flat.value = true
