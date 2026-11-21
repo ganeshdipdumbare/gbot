@@ -11,8 +11,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import dev.gbot.app.ui.Traits
 import dev.gbot.app.ui.hues
 import java.nio.ByteBuffer
@@ -52,17 +50,6 @@ internal object BotGL {
 
     /** Start setting up in the background, from app launch. */
     fun warm() { Thread({ ok }, "gbot-gl-warm").start() }
-
-    /**
-     * Set when the GL rig can't be built at all, [TRIES] times in a row:
-     * every bot then falls back to the 2D painter, rather than staying blank.
-     * One bot's failed paints never set it; that bot falls back alone. Compose
-     * state, so screens switch over as soon as it flips.
-     */
-    var gaveUp by androidx.compose.runtime.mutableStateOf(false)
-        private set
-    private const val TRIES = 3
-    private var failures = 0
 
     private fun start(): Boolean {
         if (Build.FINGERPRINT == "robolectric") return false
@@ -400,20 +387,8 @@ void main() {
         }
         if (ok) return true
         // Whatever broke — a throw or a GL error — start the next paint from
-        // a fresh context. Whether that one bot then falls back to 2D is its
-        // own call (see BotView); only a rig that can't be built at all turns
-        // 3D off for every bot.
+        // a fresh context; the bot backs off and tries again (see BotView).
         broken = true
-        return false
-    }
-
-    /** The rig came up, or couldn't: [TRIES] failed builds in a row turn 3D off app-wide. */
-    private fun built(ok: Boolean): Boolean {
-        if (ok) { failures = 0; return true }
-        if (++failures >= TRIES && !gaveUp) {
-            Log.w(TAG, "the 3D rig can't be built; using the 2D painter")
-            android.os.Handler(android.os.Looper.getMainLooper()).post { gaveUp = true }
-        }
         return false
     }
 
@@ -429,7 +404,7 @@ void main() {
     }
 
     private fun draw(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
-        if (!built(try { ensure() } catch (e: Throwable) { Log.w(TAG, "rebuild failed", e); false })) return false
+        if (!(try { ensure() } catch (e: Throwable) { Log.w(TAG, "rebuild failed", e); false })) return false
         drainErrors() // left over from an earlier paint: not this one's fault
         val o = outlineOf(look.shape)
         framebuffers(px)

@@ -44,21 +44,19 @@ private class BotView(lively: Boolean) {
     /** Paints that failed in a row for this bot, and when it may try again. */
     private var fails = 0
     private var retryAt = 0L
-    /** This bot gave up on 3D (its paints keep failing): it is drawn in 2D. */
-    val flat = androidx.compose.runtime.mutableStateOf(false)
+
+    /** A new size or look may paint fine: try again straight away. */
+    fun retry() { fails = 0; retryAt = 0L }
 
     /**
-     * A failed paint backs off before the next try, so a broken bot doesn't
-     * rebuild the shared rig every frame; after [TRIES] in a row this bot
-     * alone drops to the 2D painter. Other bots succeeding doesn't hide it.
+     * A failed paint backs off before the next try (250 ms, doubling up to
+     * 4 s), so a broken bot doesn't rebuild the shared rig every frame. It
+     * keeps trying in 3D: there is no 2D bot to fall back to.
      */
-    /** A new size or look may paint fine: give 3D another go. */
-    fun retry() { fails = 0; retryAt = 0L; flat.value = false }
-
     private fun failed(now: Long) {
         fails++
-        if (fails >= TRIES) flat.value = true
-        else { retryAt = now + 250_000_000L * fails; dirty = true }
+        retryAt = now + 250_000_000L * (1L shl (fails - 1).coerceAtMost(4))
+        dirty = true
     }
     private var gone = false
     private var pixels: ByteBuffer? = null
@@ -117,7 +115,7 @@ private class BotView(lively: Boolean) {
     }
 
     fun step(now: Long) {
-        if (busy || gone || flat.value || now < retryAt) return
+        if (busy || gone || now < retryAt) return
         val look = look ?: return
         val interval = when {
             still -> Long.MAX_VALUE
@@ -164,14 +162,11 @@ private object Budget {
 }
 
 private const val TAU = (PI * 2).toFloat()
-private const val TRIES = 3
 
 @Composable
 internal fun Gbot3D(
     t: Traits, size: Int, modifier: Modifier, mood: String, live: Boolean, lively: Boolean,
     bg: Color, liveColor: Color,
-    /** The 2D bot, drawn instead if this one's 3D paints keep failing. */
-    fallback: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current.density
@@ -185,11 +180,10 @@ internal fun Gbot3D(
     val prev = view.look
     if (prev != null && prev != t) view.anim.pop()
     if (prev != t || view.mood != m || view.px != px) view.dirty = true
-    // A fallback holds only for what caused it: a new size or look tries 3D again.
-    if (view.flat.value && prev != null && (prev != t || view.px != px)) view.retry()
+    // A bot backing off after a failure tries again at once on a new size or look.
+    if (prev != null && (prev != t || view.px != px)) view.retry()
     view.look = t; view.mood = m; view.lively = lively; view.size = size; view.px = px; view.still = still
     remember(view) { view.paintNow(); true }
-    if (view.flat.value) return fallback()
 
     LaunchedEffect(view) {
         while (true) withFrameNanos { view.step(it) }
