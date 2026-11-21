@@ -78,15 +78,22 @@ private class BotView(lively: Boolean) {
         version.intValue++
     }
 
-    /** The first paint waits for the rig, so a bot never flashes in empty. */
+    /**
+     * The first paint waits for the rig, so a bot never flashes in empty —
+     * but only while this frame's [Budget] lasts; past it, bots paint on the
+     * next frame instead of holding up the UI.
+     */
     fun paintNow() {
         val look = look ?: return
-        if (!Budget.take()) return
+        if (!Budget.open()) return
+        val start = SystemClock.uptimeMillis()
         advance(System.nanoTime())
         val p = px; val b = buffer()
-        BotGL.now { BotGL.paint(look, frame, p, b) }
-        show(p, b)
-        painted = System.nanoTime(); dirty = false
+        var ok = false
+        BotGL.now { ok = BotGL.paint(look, frame, p, b) }
+        Budget.spend(SystemClock.uptimeMillis() - start)
+        if (ok) show(p, b)
+        painted = System.nanoTime(); dirty = !ok
     }
 
     fun step(now: Long) {
@@ -103,10 +110,13 @@ private class BotView(lively: Boolean) {
         busy = true
         val p = px; val b = buffer()
         BotGL.post {
-            BotGL.paint(look, frame, p, b)
+            // paint() never throws; a failed paint just isn't shown, and the
+            // bot tries again next frame.
+            val ok = BotGL.paint(look, frame, p, b)
             main.post {
                 busy = false
-                if (!gone) show(p, b)
+                if (!ok) dirty = true
+                else if (!gone) show(p, b)
             }
         }
         painted = now
@@ -122,13 +132,15 @@ private class BotView(lively: Boolean) {
 
 /** How long first paints may hold up one frame, so a full screen of bots opens smoothly. */
 private object Budget {
+    private const val MS = 6L
     private var frame = 0L
-    private var used = 0
-    fun take(): Boolean {
+    private var used = 0L
+    fun open(): Boolean {
         val now = SystemClock.uptimeMillis() / 16
         if (now != frame) { frame = now; used = 0 }
-        return used++ < 12
+        return used < MS
     }
+    fun spend(ms: Long) { used += ms }
 }
 
 private const val TAU = (PI * 2).toFloat()

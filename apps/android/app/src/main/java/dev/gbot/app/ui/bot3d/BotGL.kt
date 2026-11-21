@@ -42,8 +42,14 @@ internal object BotGL {
 
     private lateinit var handler: Handler
 
-    /** True when this phone can draw the bots in three dimensions. */
+    /**
+     * True when this phone can draw the bots in three dimensions. Set up on
+     * first use; [warm] starts that at launch, so the UI rarely waits.
+     */
     val ok: Boolean by lazy { start() }
+
+    /** Start setting up in the background, from app launch. */
+    fun warm() { Thread({ ok }, "gbot-gl-warm").start() }
 
     private fun start(): Boolean {
         if (Build.FINGERPRINT == "robolectric") return false
@@ -106,22 +112,25 @@ internal object BotGL {
         surface = EGL14.eglCreatePbufferSurface(display, config, intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
         if (surface == EGL14.EGL_NO_SURFACE) return false
         if (!EGL14.eglMakeCurrent(display, surface, surface, context)) return false
-        fbSize = 0; msFbo = 0; outFbo = 0
+        fbSize = 0; msFbo = 0; outFbo = 0; rb.fill(0)
         programs()
         meshes.clear(); flats.clear()
         return true
     }
 
     /** A lost context takes the whole rig with it: build a fresh one. */
+    private var broken = false
+
     private fun ensure(): Boolean {
-        if (EGL14.eglGetCurrentContext() == context && EGL14.eglGetError() != 0x300E /* EGL_CONTEXT_LOST */) return true
-        Log.w(TAG, "GL context lost; rebuilding")
+        if (!broken && EGL14.eglGetCurrentContext() == context && EGL14.eglGetError() != 0x300E /* EGL_CONTEXT_LOST */) return true
+        Log.w(TAG, "GL context lost or failed; rebuilding")
+        broken = true
         try {
             EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
             EGL14.eglDestroySurface(display, surface)
             EGL14.eglDestroyContext(display, context)
         } catch (_: Throwable) {}
-        return makeContext()
+        return makeContext().also { broken = !it }
     }
 
     // ---------- shaders: MeshStandardMaterial as three.js 0.187 builds it ----------
@@ -311,14 +320,17 @@ void main() {
     private var fbSize = 0
     private var msFbo = 0
     private var outFbo = 0
+    private val rb = IntArray(3)
 
     private fun framebuffers(px: Int) {
         if (px <= fbSize) return
         val size = max(px, 256)
         if (msFbo != 0) {
+            // The renderbuffers go with their framebuffers, or each bigger size leaks the last.
             GLES30.glDeleteFramebuffers(2, intArrayOf(msFbo, outFbo), 0)
+            GLES30.glDeleteRenderbuffers(3, rb, 0)
         }
-        val fb = IntArray(2); val rb = IntArray(3)
+        val fb = IntArray(2)
         GLES30.glGenFramebuffers(2, fb, 0)
         GLES30.glGenRenderbuffers(3, rb, 0)
         val maxS = IntArray(1)
@@ -362,9 +374,21 @@ void main() {
         return norm(o4[0], o4[1], o4[2])
     }
 
-    /** Paint one bot at [px]×[px] into [out] (RGBA, premultiplied, top row first). */
-    fun paint(look: Traits, f: Frame, px: Int, out: ByteBuffer) {
-        if (!ensure()) return
+    /**
+     * Paint one bot at [px]×[px] into [out] (RGBA, premultiplied, top row
+     * first). False when the GL work failed; the next paint rebuilds.
+     */
+    fun paint(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean = try {
+        draw(look, f, px, out)
+    } catch (e: Throwable) {
+        Log.w(TAG, "paint failed; rebuilding the rig", e)
+        // Whatever broke, start the next paint from a fresh context.
+        broken = true
+        false
+    }
+
+    private fun draw(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
+        if (!ensure()) return false
         val o = outlineOf(look.shape)
         framebuffers(px)
 
@@ -477,6 +501,7 @@ void main() {
         GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
         GLES30.glReadPixels(0, 0, px, px, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, out)
         out.rewind()
+        return GLES30.glGetError() == GLES30.GL_NO_ERROR
     }
 
     private fun srgb(argb: Long) = floatArrayOf(((argb shr 16) and 0xff) / 255f, ((argb shr 8) and 0xff) / 255f, (argb and 0xff) / 255f)

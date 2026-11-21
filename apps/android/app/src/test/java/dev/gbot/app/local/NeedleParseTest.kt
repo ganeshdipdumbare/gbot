@@ -33,4 +33,18 @@ class NeedleParseTest {
         assertEquals(1, Regex("</lookup>").findAll(block).count())
         assertTrue(block.trimEnd().endsWith("</lookup>"))
     }
+
+    @Test fun dropsCallsWithBadOrMissingArguments() {
+        val need = mapOf("web_search" to setOf("query"))
+        assertNull(Needle.parse(raw("""[{"name":"web_search","arguments":{}}]""", 0.9), known, 0.4, need))
+        assertNull(Needle.parse(raw("""[{"name":"web_search","arguments":{"query":" "}}]""", 0.9), known, 0.4, need))
+        assertNull(Needle.parse(raw("""[{"name":"web_search","arguments":"pune"}]""", 0.9), known, 0.4, need))
+        assertEquals("web_search", Needle.parse(raw("""[{"name":"web_search","arguments":{"query":"pune"}}]""", 0.9), known, 0.4, need)?.name)
+        assertEquals("routine_list", Needle.parse(raw("""[{"name":"routine_list"}]""", 0.9), known, 0.4, need)?.name)
+    }
+
+    @Test fun readsRequiredFromSchema() {
+        val schema = kotlinx.serialization.json.Json.parseToJsonElement("""{"type":"object","required":["query"]}""")
+        assertEquals(setOf("query"), Needle.required(schema))
+    }
 }

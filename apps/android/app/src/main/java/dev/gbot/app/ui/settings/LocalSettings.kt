@@ -355,7 +355,7 @@ private fun NeedleCard() {
                 LinearProgressIndicator(progress = { progress ?: 0f }, modifier = Modifier.fillMaxWidth())
                 Text("${((progress ?: 0f) * 100).toInt()}%", style = T.tiny, color = g.ink2)
             }
-            else -> GButton("Download over Wi‑Fi", {
+            else -> GButton("Download", {
                 error = ""; progress = 0f
                 scope.launch {
                     runCatching {

@@ -85,8 +85,8 @@ object Needle {
                 }
                 nativeReset()
                 val raw = nativeComplete(utf8(request.take(1000)), 256)?.let(::text) ?: error("complete failed: ${lastError()}")
-                Log.d(TAG, "raw: ${raw.take(400)}")
-                parse(raw, tools.map { it.name }.toSet(), minConfidence)
+                // The raw output holds arguments taken from the person's words: never logged.
+                parse(raw, tools.map { it.name }.toSet(), minConfidence, tools.associate { it.name to required(it.parameters) })
             }
         }.onFailure { Log.w(TAG, "route failed", it) }.getOrNull()
     }
@@ -102,8 +102,20 @@ object Needle {
         }
     }).toString()
 
-    /** Reads the engine's JSON: `function_calls` plus a `confidence`. */
-    internal fun parse(raw: String, known: Set<String>, minConfidence: Double): NeedleCall? {
+    /** The argument names a tool's JSON schema marks as required. */
+    internal fun required(parameters: JsonElement?): Set<String> =
+        ((parameters as? JsonObject)?.get("required") as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }?.toSet().orEmpty()
+
+    /**
+     * Reads the engine's JSON: `function_calls` plus a `confidence`. A call
+     * with malformed arguments, or without one its tool requires, is dropped
+     * rather than run as a broader lookup than anyone asked for.
+     */
+    internal fun parse(
+        raw: String, known: Set<String>, minConfidence: Double,
+        required: Map<String, Set<String>> = emptyMap(),
+    ): NeedleCall? {
         val root = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return null
         val confidence = (root["confidence"] as? JsonPrimitive)?.doubleOrNull ?: return null
         if (confidence < minConfidence) return null
@@ -112,7 +124,13 @@ object Needle {
         val call = calls.singleOrNull()?.jsonObject ?: return null
         val name = (call["name"] as? JsonPrimitive)?.contentOrNull ?: return null
         if (name !in known) return null
-        val args = (call["arguments"] as? JsonObject) ?: JsonObject(emptyMap())
+        val args = when (val a = call["arguments"]) {
+            null -> JsonObject(emptyMap())
+            is JsonObject -> a
+            else -> return null
+        }
+        val need = required[name].orEmpty()
+        if (need.any { key -> args[key].let { it == null || (it is JsonPrimitive && it.contentOrNull.isNullOrBlank()) } }) return null
         return NeedleCall(name, args, confidence)
     }
 

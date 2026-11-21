@@ -450,7 +450,15 @@ class LocalBrain(
             // bot's ask is already scoped by the bot that sent it, and a
             // round's answers only need finishing, so those skip it: on a
             // phone every model call waits in the same line.
-            val plan = if (!w.plans || !worthPlanning(prompt)) "" else {
+            // Needle, if it is on this phone, reads a short request first and
+            // runs the one read-only tool it is sure of, so the model starts
+            // with the result instead of spending a step choosing the tool.
+            // Only when a model will read it, and within the run's time limit;
+            // a request it already looked up needs no plan either.
+            val lookup = if (model == null) "" else {
+                withTimeoutOrNull(RUN_TIMEOUT_MS) { needleHead(bot, group, w, prompt, tools, model is BrainModel.Remote, ::stage) }.orEmpty()
+            }
+            val plan = if (!w.plans || !worthPlanning(prompt) || lookup.isNotEmpty()) "" else {
                 stage("Planning")
                 book.call(w.root)
                 withTimeoutOrNull(PLAN_TIMEOUT_MS) {
@@ -467,11 +475,7 @@ class LocalBrain(
 
             book.call(w.root)
             val text = withTimeoutOrNull(RUN_TIMEOUT_MS) {
-                // Needle, if it is on this phone, reads a short request first and
-                // runs the one read-only tool it is sure of, so the model starts
-                // with the result instead of spending a step choosing the tool.
-                // Inside the run's time limit, and only when a model will read it.
-                val asked = if (model == null) prompt else prompt + needleHead(bot, group, w, prompt, tools, ::stage)
+                val asked = prompt + lookup
                 when (model) {
                     is BrainModel.Local -> {
                         log("local ${model.file.name} history=${history.size} tools=${tools.schemas.size + mcpTools.size}")
@@ -552,17 +556,30 @@ class LocalBrain(
      *
      * The result can hold a web page's or an email sender's words, so it is
      * fenced off as outside text, never run into the person's own message.
+     * With a provider's model, a guess must not send the person's mail,
+     * contacts, calendar or files off the phone unasked, so only lookups of
+     * nothing private are made; the model can still ask for the rest itself.
+     * The result is kept for the run, so the model asking again reuses it.
      */
     private suspend fun needleHead(
         bot: Bot, group: Group?, w: Work, prompt: String,
-        tools: LocalTools, stage: (String) -> Unit,
+        tools: LocalTools, remote: Boolean, stage: (String) -> Unit,
     ): String {
         if (w.kind != "person" || w.from != null || prompt.length > NEEDLE_MAX_CHARS || !Needle.ready(ctx)) return ""
-        val safe = (tools.schemas).filter { it.name in NEEDLE_TOOLS && !tools.needsApproval(it.name) }
+        val safe = tools.schemas.filter {
+            it.name in NEEDLE_TOOLS && !tools.needsApproval(it.name) && !(remote && it.name in NEEDLE_PRIVATE)
+        }
         val call = withContext(Dispatchers.Default) { Needle.route(ctx, prompt, safe) } ?: return ""
         log("needle ${call.name} confidence=${call.confidence}")
         val out = executeTool(tools, bot, group, call.name, call.arguments, stage)
+        tools.prefetched[prefetchKey(call.name, call.arguments)] = out
         return needleBlock(call.name, call.arguments.toString(), out)
+    }
+
+    /** One lookup's identity within a run, after the usual name and argument fixes. */
+    private fun prefetchKey(called: String, args: JsonObject): String {
+        val name = canonicalTool(called)
+        return name + " " + canonicalArgs(name, args)
     }
 
     /** Wake teammates this reply @mentions, like the server's group handoff. */
@@ -761,6 +778,8 @@ class LocalBrain(
         val name = canonicalTool(called)
         val args = canonicalArgs(name, calledArgs)
         if (name != called) log("tool $called -> $name")
+        // Needle already ran this exact lookup for the run: same answer, no second trip.
+        tools.prefetched[name + " " + args]?.let { log("tool $name reused"); return it }
         val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch" || name == "web_search"
         val onComputer = usesComputer(name)
         if (onComputer) {
@@ -1260,6 +1279,8 @@ class LocalBrain(
     internal companion object {
         const val NEEDLE_MAX_CHARS = 300
         val NEEDLE_TOOLS = setOf("web_search", "routine_list", "file_list", "calendar_list", "contact_search", "email_list", "bot_list", "profile")
+        /** Lookups that read the person's own data: never guessed for a provider's model. */
+        val NEEDLE_PRIVATE = setOf("file_list", "calendar_list", "contact_search", "email_list", "profile")
 
         /**
          * Needle's lookup as the model sees it: after the person's message,
