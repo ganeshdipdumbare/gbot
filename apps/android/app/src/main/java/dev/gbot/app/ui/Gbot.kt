@@ -98,7 +98,9 @@ fun Gbot(
     } else {
         modifier
     }
-    Gbot3D(t, size, shaped.size(size.dp).semantics { contentDescription = "bot" }, mood, live, lively, g.bg, g.live)
+    Gbot3D(t, size, shaped.size(size.dp).semantics { contentDescription = "bot" }, mood, live, lively, g.bg, g.live) {
+        GbotFlat(look, seed, size, modifier, mood, live, lively, sharedKey)
+    }
 }
 
 /** The bot painted in 2D, for phones that cannot run the 3D rig. */

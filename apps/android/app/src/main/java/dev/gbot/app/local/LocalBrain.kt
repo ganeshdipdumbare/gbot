@@ -559,7 +559,8 @@ class LocalBrain(
      * With a provider's model, a guess must not send the person's mail,
      * contacts, calendar or files off the phone unasked, so only lookups of
      * nothing private are made; the model can still ask for the rest itself.
-     * The result is kept for the run, so the model asking again reuses it.
+     * The result answers the model's first identical call only, and is
+     * dropped once any other tool runs; a failed lookup isn't kept at all.
      */
     private suspend fun needleHead(
         bot: Bot, group: Group?, w: Work, prompt: String,
