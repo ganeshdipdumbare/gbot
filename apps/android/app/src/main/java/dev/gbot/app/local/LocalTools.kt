@@ -92,6 +92,12 @@ fun choiceLines(raw: String, max: Int): List<String> {
     /** Links the person wrote in their message: web_fetch may read these. */
     knownUrls: Set<String> = emptySet(),
 ) {
+    /**
+     * Needle's lookup for this request, by tool and arguments: handed to the
+     * model's first identical call, and dropped once any other tool runs.
+     */
+    val prefetched = HashMap<String, String>()
+
     /** Pages web_fetch may read: search results and the person's own links. Nothing else, since it asks no approval. */
     private val fetchable = java.util.concurrent.ConcurrentHashMap.newKeySet<String>().apply { addAll(knownUrls.map(WebLookup::key)) }
 

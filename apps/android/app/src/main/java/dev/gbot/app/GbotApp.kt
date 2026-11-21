@@ -78,6 +78,8 @@ class GbotApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Set up the 3D bot rig off the main thread, so the first screen with a bot doesn't wait for it.
+        dev.gbot.app.ui.bot3d.BotGL.warm()
         http = Http(this)
         remote = RemoteApi(http)
         api = remote
