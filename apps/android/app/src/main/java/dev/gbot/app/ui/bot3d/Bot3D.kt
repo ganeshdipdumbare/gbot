@@ -52,6 +52,9 @@ private class BotView(lively: Boolean) {
      * rebuild the shared rig every frame; after [TRIES] in a row this bot
      * alone drops to the 2D painter. Other bots succeeding doesn't hide it.
      */
+    /** A new size or look may paint fine: give 3D another go. */
+    fun retry() { fails = 0; retryAt = 0L; flat.value = false }
+
     private fun failed(now: Long) {
         fails++
         if (fails >= TRIES) flat.value = true
@@ -182,6 +185,8 @@ internal fun Gbot3D(
     val prev = view.look
     if (prev != null && prev != t) view.anim.pop()
     if (prev != t || view.mood != m || view.px != px) view.dirty = true
+    // A fallback holds only for what caused it: a new size or look tries 3D again.
+    if (view.flat.value && prev != null && (prev != t || view.px != px)) view.retry()
     view.look = t; view.mood = m; view.lively = lively; view.size = size; view.px = px; view.still = still
     remember(view) { view.paintNow(); true }
     if (view.flat.value) return fallback()

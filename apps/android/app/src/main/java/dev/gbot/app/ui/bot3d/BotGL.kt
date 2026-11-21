@@ -54,8 +54,9 @@ internal object BotGL {
     fun warm() { Thread({ ok }, "gbot-gl-warm").start() }
 
     /**
-     * Set when the rig keeps failing even after rebuilds: every bot then
-     * falls back to the 2D painter, rather than staying blank. Compose
+     * Set when the GL rig can't be built at all, [TRIES] times in a row:
+     * every bot then falls back to the 2D painter, rather than staying blank.
+     * One bot's failed paints never set it; that bot falls back alone. Compose
      * state, so screens switch over as soon as it flips.
      */
     var gaveUp by androidx.compose.runtime.mutableStateOf(false)
@@ -397,12 +398,20 @@ void main() {
             Log.w(TAG, "paint failed", e)
             false
         }
-        if (ok) { failures = 0; return true }
-        // Whatever broke — a throw or a GL error — start the next paint from a
-        // fresh context; if rebuilding doesn't help, hand over to the 2D bots.
+        if (ok) return true
+        // Whatever broke — a throw or a GL error — start the next paint from
+        // a fresh context. Whether that one bot then falls back to 2D is its
+        // own call (see BotView); only a rig that can't be built at all turns
+        // 3D off for every bot.
         broken = true
+        return false
+    }
+
+    /** The rig came up, or couldn't: [TRIES] failed builds in a row turn 3D off app-wide. */
+    private fun built(ok: Boolean): Boolean {
+        if (ok) { failures = 0; return true }
         if (++failures >= TRIES && !gaveUp) {
-            Log.w(TAG, "3D bots keep failing; using the 2D painter")
+            Log.w(TAG, "the 3D rig can't be built; using the 2D painter")
             android.os.Handler(android.os.Looper.getMainLooper()).post { gaveUp = true }
         }
         return false
@@ -420,7 +429,7 @@ void main() {
     }
 
     private fun draw(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
-        if (!ensure()) return false
+        if (!built(try { ensure() } catch (e: Throwable) { Log.w(TAG, "rebuild failed", e); false })) return false
         drainErrors() // left over from an earlier paint: not this one's fault
         val o = outlineOf(look.shape)
         framebuffers(px)
