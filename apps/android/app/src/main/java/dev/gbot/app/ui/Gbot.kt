@@ -45,6 +45,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.gbot.app.net.Look
+import dev.gbot.app.ui.bot3d.BotGL
+import dev.gbot.app.ui.bot3d.Gbot3D
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.abs
@@ -68,19 +70,41 @@ private fun keys(p: Float, vararg k: Pair<Float, Float>): Float {
     return k.last().second
 }
 
-/**
- * A gbot: one of eight geometric bodies, a bold colour and two eyes, lit the
- * way the web rig lights its 3D pillow — thickness under the front face, a
- * key light on the top bevel, a rim down the right, and the under-edge in
- * shade. Looking around turns the body in perspective rather than sliding a
- * face across a flat disc.
- */
 val LocalSharedScope = compositionLocalOf<SharedTransitionScope?> { null }
 val LocalAnimScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
+
+/**
+ * A gbot: one of eight geometric bodies, a bold colour and two eyes. Drawn by
+ * the same 3D rig as the website (bot3d/), so it looks and moves the same on
+ * both: a bevelled pillow under three.js's lights, breathing, blinking,
+ * looking around and hopping when its work is done.
+ */
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun Gbot(
+    look: Look?, seed: String, size: Int, modifier: Modifier = Modifier,
+    mood: String = "idle", live: Boolean = false, lively: Boolean = false,
+    sharedKey: String? = null,
+) {
+    // The real 3D rig, as on the web; the painted one only where a phone has no GL.
+    if (!BotGL.ok) return GbotFlat(look, seed, size, modifier, mood, live, lively, sharedKey)
+    val t = remember(look, seed) { resolveLook(look, seed) }
+    val g = LocalG.current
+    val shared = LocalSharedScope.current
+    val anim = LocalAnimScope.current
+    val shaped = if (sharedKey != null && shared != null && anim != null) {
+        with(shared) { modifier.sharedElement(rememberSharedContentState(sharedKey), anim, boundsTransform = Motion.avatarFly) }
+    } else {
+        modifier
+    }
+    Gbot3D(t, size, shaped.size(size.dp).semantics { contentDescription = "bot" }, mood, live, lively, g.bg, g.live)
+}
+
+/** The bot painted in 2D, for phones that cannot run the 3D rig. */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+internal fun GbotFlat(
     look: Look?, seed: String, size: Int, modifier: Modifier = Modifier,
     mood: String = "idle", live: Boolean = false, lively: Boolean = false,
     sharedKey: String? = null,
