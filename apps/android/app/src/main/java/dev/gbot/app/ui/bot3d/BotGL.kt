@@ -335,8 +335,13 @@ void main() {
     private var outFbo = 0
     private val rb = IntArray(3)
 
-    private fun framebuffers(px: Int) {
-        if (px <= fbSize) return
+    /**
+     * Offscreen buffers at least [px] across. False if the driver couldn't
+     * make them (out of memory at a big size, say): they're dropped, so the
+     * next, smaller paint allocates afresh instead of using broken ones.
+     */
+    private fun framebuffers(px: Int): Boolean {
+        if (px <= fbSize) return true
         val size = max(px, 256)
         if (msFbo != 0) {
             // The renderbuffers go with their framebuffers, or each bigger size leaks the last.
@@ -361,7 +366,18 @@ void main() {
         GLES30.glRenderbufferStorage(GLES30.GL_RENDERBUFFER, GLES30.GL_RGBA8, size, size)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, outFbo)
         GLES30.glFramebufferRenderbuffer(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_RENDERBUFFER, rb[2])
+        val outOk = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, msFbo)
+        val msOk = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE
+        if (!outOk || !msOk || !drainErrors()) {
+            Log.w(TAG, "offscreen buffers failed at ${size}px")
+            GLES30.glDeleteFramebuffers(2, intArrayOf(msFbo, outFbo), 0)
+            GLES30.glDeleteRenderbuffers(3, rb, 0)
+            msFbo = 0; outFbo = 0; rb.fill(0); fbSize = 0
+            return false
+        }
         fbSize = size
+        return true
     }
 
     // ---------- one paint ----------
@@ -396,14 +412,15 @@ void main() {
             draw(look, f, px, out)
         } catch (e: Throwable) {
             Log.w(TAG, "paint failed", e)
+            broken = true
             false
         }
         if (ok) return true
-        // Whatever broke — a throw or a GL error — start the next paint from
-        // a fresh context. Whether that one bot then falls back to 2D is its
-        // own call (see BotView); only a rig that can't be built at all turns
-        // 3D off for every bot.
-        broken = true
+        // Whether that one bot then falls back to 2D is its own call (see
+        // BotView); only a rig that can't be built at all turns 3D off for
+        // every bot. A plain GL error (say, out of memory at one bot's size)
+        // fails only that paint; a throw, or a lost context (see ensure),
+        // starts the next paint from a fresh context.
         return false
     }
 
@@ -432,7 +449,7 @@ void main() {
         if (!built(try { ensure() } catch (e: Throwable) { Log.w(TAG, "rebuild failed", e); false })) return false
         drainErrors() // left over from an earlier paint: not this one's fault
         val o = outlineOf(look.shape)
-        framebuffers(px)
+        if (!framebuffers(px)) return false
 
         // Fit the camera so the body fills the square, seen a little from above.
         val tall = o.height * cos(LIFT) + (2 * HALF + BEVEL) * sin(LIFT)

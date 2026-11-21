@@ -47,14 +47,14 @@ private class BotView(lively: Boolean) {
     /** This bot gave up on 3D (its paints keep failing): it is drawn in 2D. */
     val flat = androidx.compose.runtime.mutableStateOf(false)
 
-    /**
-     * A failed paint backs off before the next try, so a broken bot doesn't
-     * rebuild the shared rig every frame; after [TRIES] in a row this bot
-     * alone drops to the 2D painter. Other bots succeeding doesn't hide it.
-     */
     /** A new size or look may paint fine: give 3D another go. */
     fun retry() { fails = 0; retryAt = 0L; flat.value = false }
 
+    /**
+     * A failed paint backs off before the next try, so a broken bot doesn't
+     * keep the shared rig busy every frame; after [TRIES] in a row this bot
+     * alone drops to the 2D painter. Other bots succeeding doesn't hide it.
+     */
     private fun failed(now: Long) {
         fails++
         if (fails >= TRIES) flat.value = true
@@ -145,6 +145,13 @@ private class BotView(lively: Boolean) {
 
     fun dispose() { gone = true }
 
+    /**
+     * Back on screen in 3D, e.g. after a 2D fallback and a [retry]: the
+     * frame loop runs again, and the next frame paints at the current size
+     * and look rather than showing a stale one.
+     */
+    fun revive() { gone = false; dirty = true }
+
     companion object {
         val main = android.os.Handler(android.os.Looper.getMainLooper())
     }
@@ -194,7 +201,7 @@ internal fun Gbot3D(
     LaunchedEffect(view) {
         while (true) withFrameNanos { view.step(it) }
     }
-    DisposableEffect(view) { onDispose { view.dispose() } }
+    DisposableEffect(view) { view.revive(); onDispose { view.dispose() } }
 
     Canvas(modifier) {
         view.version.intValue
