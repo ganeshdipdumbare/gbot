@@ -409,7 +409,8 @@ void main() {
      * first). False when the GL work failed. Only a throw or a lost context
      * rebuilds the rig for the next paint; a plain GL error just fails this one.
      */
-    fun paint(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
+    fun paint(look: Traits, f: Frame, px: Int, out: ByteBuffer): Painted {
+        rigDown = false
         val ok = try {
             draw(look, f, px, out)
         } catch (e: Throwable) {
@@ -417,14 +418,23 @@ void main() {
             broken = true
             false
         }
-        if (ok) return true
+        if (ok) return Painted.OK
+        // The shared rig is down (being rebuilt, or just failed to be): not
+        // this bot's fault, so it waits rather than counting toward its 2D fallback.
+        if (rigDown) return Painted.WAIT
         // Whether that one bot then falls back to 2D is its own call (see
         // BotView); only a rig that can't be built at all turns 3D off for
         // every bot. A plain GL error (say, out of memory at one bot's size)
         // fails only that paint; a throw, or a lost context (see ensure),
         // starts the next paint from a fresh context.
-        return false
+        return Painted.FAILED
     }
+
+    /** How a paint went: drawn, failed for this bot, or the shared rig is down. */
+    enum class Painted { OK, FAILED, WAIT }
+
+    /** Set by [draw] when it couldn't start because the rig itself is down. */
+    private var rigDown = false
 
     /**
      * The rig came up, or couldn't. Failures count once a second at most:
@@ -457,8 +467,8 @@ void main() {
     private fun draw(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
         // A rebuild that just failed isn't retried within the second: the
         // rest of this burst of paints waits rather than hammering EGL.
-        if (broken && android.os.SystemClock.uptimeMillis() - lastBuildFail < 1000) return false
-        if (!built(try { ensure() } catch (e: Throwable) { Log.w(TAG, "rebuild failed", e); false })) return false
+        if (broken && android.os.SystemClock.uptimeMillis() - lastBuildFail < 1000) { rigDown = true; return false }
+        if (!built(try { ensure() } catch (e: Throwable) { Log.w(TAG, "rebuild failed", e); false })) { rigDown = true; return false }
         drainErrors() // left over from an earlier paint: not this one's fault
         val o = outlineOf(look.shape)
         if (!framebuffers(px)) return false

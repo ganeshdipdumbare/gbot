@@ -55,6 +55,19 @@ private class BotView(lively: Boolean) {
      * keep the shared rig busy every frame; after [TRIES] in a row this bot
      * alone drops to the 2D painter. Other bots succeeding doesn't hide it.
      */
+    /**
+     * What a paint's result means for this bot. Only its own failures count
+     * toward the 2D fallback; while the shared rig is down it just waits a
+     * second and tries again, so one rebuild hiccup can't flatten a screen.
+     */
+    private fun settle(result: BotGL.Painted, p: Int, b: ByteBuffer, now: Long) {
+        when (result) {
+            BotGL.Painted.OK -> { fails = 0; if (!gone) show(p, b) }
+            BotGL.Painted.FAILED -> failed(now)
+            BotGL.Painted.WAIT -> { retryAt = now + 1_000_000_000L; dirty = true }
+        }
+    }
+
     private fun failed(now: Long) {
         fails++
         if (fails >= TRIES) flat.value = true
@@ -108,12 +121,11 @@ private class BotView(lively: Boolean) {
         val start = SystemClock.uptimeMillis()
         advance(System.nanoTime())
         val p = px; val b = buffer()
-        var ok = false
-        BotGL.now { ok = BotGL.paint(look, frame, p, b) }
+        var result = BotGL.Painted.FAILED
+        BotGL.now { result = BotGL.paint(look, frame, p, b) }
         Budget.spend(SystemClock.uptimeMillis() - start)
-        if (ok) show(p, b)
         painted = System.nanoTime(); dirty = false
-        if (ok) fails = 0 else failed(painted)
+        settle(result, p, b, painted)
     }
 
     fun step(now: Long) {
@@ -130,13 +142,11 @@ private class BotView(lively: Boolean) {
         busy = true
         val p = px; val b = buffer()
         BotGL.post {
-            // paint() never throws; a failed paint just isn't shown, and the
-            // bot tries again next frame.
-            val ok = BotGL.paint(look, frame, p, b)
+            // paint() never throws; settle() decides when this bot tries again.
+            val result = BotGL.paint(look, frame, p, b)
             main.post {
                 busy = false
-                if (!ok) failed(System.nanoTime())
-                else { fails = 0; if (!gone) show(p, b) }
+                settle(result, p, b, System.nanoTime())
             }
         }
         painted = now
