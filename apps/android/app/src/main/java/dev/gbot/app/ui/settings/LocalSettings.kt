@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import dev.gbot.app.GbotApp
 import dev.gbot.app.local.LocalApi
 import dev.gbot.app.local.LocalModels
+import dev.gbot.app.local.Needle
 import dev.gbot.app.local.ModelMemory
 import dev.gbot.app.ui.Chip
 import dev.gbot.app.ui.Confirm
@@ -248,6 +249,7 @@ fun OnDeviceModels() {
                 }
             }
         }
+        if (Needle.available) NeedleCard()
         ErrorText(error)
         if (notice.isNotEmpty()) Text(notice, style = T.small, color = g.success)
         Text(
@@ -325,5 +327,45 @@ fun ProfileTab(back: () -> Unit) {
             Label("About"); Field(about, { about = it }, placeholder = "A short summary of your work and experience")
         }
         GButton("Save", ::save, Modifier.fillMaxWidth())
+    }
+}
+
+/** Needle: a 35 MB helper that picks read-only tools before the chat model starts. */
+@Composable
+private fun NeedleCard() {
+    val g = LocalG.current
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var ready by remember { mutableStateOf(Needle.ready(ctx)) }
+    var progress by remember { mutableStateOf<Float?>(null) }
+    var error by remember { mutableStateOf("") }
+    Panel {
+        Text("Needle · quick tool picker", style = T.body.copy(fontWeight = FontWeight.SemiBold), color = g.ink)
+        Text(
+            "A tiny model that reads short requests and runs the right lookup (search, routines, calendar, contacts) before your model starts. " +
+                "Runs only on this phone, no account.",
+            style = T.small, color = g.ink2,
+        )
+        Text("${Needle.entry.bytes / (1024 * 1024)} MB", style = T.tiny, color = g.ink3)
+        when {
+            ready -> GButton("Remove", {
+                Needle.unload(); Needle.weights(ctx).delete(); ready = false
+            }, small = true, variant = Variant.Soft)
+            progress != null -> {
+                LinearProgressIndicator(progress = { progress ?: 0f }, modifier = Modifier.fillMaxWidth())
+                Text("${((progress ?: 0f) * 100).toInt()}%", style = T.tiny, color = g.ink2)
+            }
+            else -> GButton("Download over Wi‑Fi", {
+                error = ""; progress = 0f
+                scope.launch {
+                    runCatching {
+                        Needle.download(ctx) { done, total -> progress = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f }
+                    }.onFailure { error = it.message ?: "Download failed" }
+                    progress = null
+                    ready = Needle.ready(ctx)
+                }
+            }, Modifier.fillMaxWidth(), small = true)
+        }
+        ErrorText(error)
     }
 }

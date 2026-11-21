@@ -465,18 +465,23 @@ class LocalBrain(
 
             val system = systemPrompt(bot, group, peers) + planBlock(plan)
 
+            // Needle, if it is on this phone, reads a short request first and
+            // runs the one read-only tool it is sure of, so the model starts
+            // with the result instead of spending a step choosing the tool.
+            val asked = prompt + needleHead(bot, group, w, prompt, tools, mcpTools, ::stage)
+
             book.call(w.root)
             val text = withTimeoutOrNull(RUN_TIMEOUT_MS) {
                 when (model) {
                     is BrainModel.Local -> {
                         log("local ${model.file.name} history=${history.size} tools=${tools.schemas.size + mcpTools.size}")
-                        runLocal(model.file, system, history, prompt, tools, mcpTools, bot, group, ::stage)
+                        runLocal(model.file, system, history, asked, tools, mcpTools, bot, group, ::stage)
                     }
                     is BrainModel.Remote -> {
                         log("provider ${model.provider.name} ${model.name}")
                         withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                             api.providers.run(
-                                model.provider, model.name, system, groupHistory(history, group, bot), prompt, tools.schemas + mcpTools,
+                                model.provider, model.name, system, groupHistory(history, group, bot), asked, tools.schemas + mcpTools,
                                 onText = {},
                                 execute = { call -> executeTool(tools, bot, group, call.name, call.arguments.toJson(), ::stage) },
                             )
@@ -537,6 +542,24 @@ class LocalBrain(
             // nothing else to show for it, so settle through "done".
             if (landed && group == null) settleDone(bot) else emitPresence(bot.id, group, "idle")
         }
+    }
+
+    /**
+     * What Needle's first pass adds to the request: the result of one
+     * read-only tool call it was confident about, or nothing. Only the
+     * person's own short messages are routed, and only tools that change
+     * nothing and need no approval, so a wrong guess costs a wasted lookup.
+     */
+    private suspend fun needleHead(
+        bot: Bot, group: Group?, w: Work, prompt: String,
+        tools: LocalTools, mcpTools: List<ToolSchema>, stage: (String) -> Unit,
+    ): String {
+        if (w.kind != "person" || w.from != null || prompt.length > NEEDLE_MAX_CHARS || !Needle.ready(ctx)) return ""
+        val safe = (tools.schemas).filter { it.name in NEEDLE_TOOLS && !tools.needsApproval(it.name) }
+        val call = withContext(Dispatchers.Default) { Needle.route(ctx, prompt, safe) } ?: return ""
+        log("needle ${call.name} confidence=${call.confidence}")
+        val out = executeTool(tools, bot, group, call.name, call.arguments, stage)
+        return "\n\n[Already looked up for this request: ${call.name} ${call.arguments}\nResult:\n${out.take(3000)}]"
     }
 
     /** Wake teammates this reply @mentions, like the server's group handoff. */
@@ -1232,6 +1255,8 @@ class LocalBrain(
     }
 
     internal companion object {
+        const val NEEDLE_MAX_CHARS = 300
+        val NEEDLE_TOOLS = setOf("web_search", "routine_list", "file_list", "calendar_list", "contact_search", "email_list", "bot_list", "profile")
         const val TAG = "gbot-local"
 
         /**
