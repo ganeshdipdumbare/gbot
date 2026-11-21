@@ -119,7 +119,6 @@ internal fun GbotFlat(
     val g = LocalG.current
     val happy = mood == "done" || mood == "happy"
     val small = size < 48
-    val simple = size < 56
     // Below this the avatar is a dot in a list: one flat layer, no perspective.
     val flat = size < 30
 
@@ -255,7 +254,7 @@ internal fun GbotFlat(
                 translate(0f, ty * bounds.height)
                 scale(sx, sy, Offset(bounds.center.x, bounds.bottom))
             }) {
-                drawBody(path, bounds, paint, simple, flat, px, py)
+                drawBody(path, bounds, paint, flat, px, py)
                 withTransform({
                     translate(px + scan, py)
                     scale(1f, blinkY, Offset(meta.faceX, meta.faceY))
@@ -334,7 +333,7 @@ internal fun DrawScope.drawGround(paint: BotPaint, lift: Float, sx: Float) {
 }
 
 internal fun DrawScope.drawBody(
-    path: Path, b: Rect, paint: BotPaint, simple: Boolean, flat: Boolean, px: Float, py: Float,
+    path: Path, b: Rect, paint: BotPaint, flat: Boolean, px: Float, py: Float,
 ) {
     // The body's thickness: the outline stepped down, far edge first, so the
     // side shades smoothly into the face like the web rig's extrusion.

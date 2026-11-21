@@ -147,10 +147,16 @@ private class BotView(lively: Boolean) {
 
     /**
      * Back on screen in 3D, e.g. after a 2D fallback and a [retry]: the
-     * frame loop runs again, and the next frame paints at the current size
-     * and look rather than showing a stale one.
+     * frame loop runs again, and the bot repaints at once at its current
+     * size and look (as a first paint does) instead of showing the frame
+     * it had before falling back.
      */
-    fun revive() { gone = false; dirty = true }
+    fun revive() {
+        if (!gone) return
+        gone = false; dirty = true
+        image = null
+        paintNow()
+    }
 
     companion object {
         val main = android.os.Handler(android.os.Looper.getMainLooper())

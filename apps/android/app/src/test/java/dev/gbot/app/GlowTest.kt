@@ -51,7 +51,7 @@ class GlowTest {
             drawRect(g.bg)
             box {
                 drawGround(paint, lift = 0f, sx = 1f)
-                drawBody(path, bounds, paint, simple = false, flat = false, px = 0f, py = 0f)
+                drawBody(path, bounds, paint, flat = false, px = 0f, py = 0f)
             }
         }
         return image

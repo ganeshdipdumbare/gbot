@@ -63,6 +63,7 @@ internal object BotGL {
         private set
     private const val TRIES = 3
     private var failures = 0
+    private var lastBuildFail = -10_000L
 
     private fun start(): Boolean {
         if (Build.FINGERPRINT == "robolectric") return false
@@ -405,7 +406,8 @@ void main() {
 
     /**
      * Paint one bot at [px]×[px] into [out] (RGBA, premultiplied, top row
-     * first). False when the GL work failed; the next paint rebuilds.
+     * first). False when the GL work failed. Only a throw or a lost context
+     * rebuilds the rig for the next paint; a plain GL error just fails this one.
      */
     fun paint(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
         val ok = try {
@@ -424,9 +426,16 @@ void main() {
         return false
     }
 
-    /** The rig came up, or couldn't: [TRIES] failed builds in a row turn 3D off app-wide. */
+    /**
+     * The rig came up, or couldn't. Failures count once a second at most:
+     * a screen of bots queued in one frame shares a single failed attempt,
+     * so 3D turns off app-wide only after [TRIES] separate attempts fail.
+     */
     private fun built(ok: Boolean): Boolean {
         if (ok) { failures = 0; return true }
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastBuildFail < 1000) return false
+        lastBuildFail = now
         if (++failures >= TRIES && !gaveUp) {
             Log.w(TAG, "the 3D rig can't be built; using the 2D painter")
             android.os.Handler(android.os.Looper.getMainLooper()).post { gaveUp = true }
@@ -446,6 +455,9 @@ void main() {
     }
 
     private fun draw(look: Traits, f: Frame, px: Int, out: ByteBuffer): Boolean {
+        // A rebuild that just failed isn't retried within the second: the
+        // rest of this burst of paints waits rather than hammering EGL.
+        if (broken && android.os.SystemClock.uptimeMillis() - lastBuildFail < 1000) return false
         if (!built(try { ensure() } catch (e: Throwable) { Log.w(TAG, "rebuild failed", e); false })) return false
         drainErrors() // left over from an earlier paint: not this one's fault
         val o = outlineOf(look.shape)
