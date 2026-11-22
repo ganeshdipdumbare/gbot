@@ -435,6 +435,12 @@ private object PButton : A2uiBasicCatalogV1.Button {
         // A link works on any surface; an answer only while the card waits.
         val answers = action.containsKey("event")
         val enabled = checks.all { it.condition } && (!answers || LocalLive.current)
+        // A link always looks like a link and names its site, so it can't
+        // pass for a button that answers the bot.
+        val linkHost = if (answers) null else
+            (((action["functionCall"] as? Map<*, *>)?.get("args") as? Map<*, *>)?.get("url") as? String)
+                ?.let { runCatching { java.net.URI(it).host?.removePrefix("www.") }.getOrNull() }.orEmpty()
+        val variant = if (answers) variant else A2uiBasicCatalogV1.Button.Variant.Borderless
         val (bg, fg) = when (variant) {
             A2uiBasicCatalogV1.Button.Variant.Primary -> g.emphasis to g.onEmphasis
             A2uiBasicCatalogV1.Button.Variant.Borderless -> Color.Transparent to g.accent
@@ -452,7 +458,10 @@ private object PButton : A2uiBasicCatalogV1.Button {
             CompositionLocalProvider(LocalInk provides if (enabled) fg else fg.copy(alpha = 0.4f)) {
                 Child(A2uiComponentReference(childId))
             }
-            if (variant == A2uiBasicCatalogV1.Button.Variant.Borderless && !answers) Text(" ›", style = T.body, color = fg)
+            if (linkHost != null) {
+                Text(" ›", style = T.body, color = fg)
+                if (linkHost.isNotEmpty()) Text("  $linkHost", style = T.tiny, color = g.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         checks.firstOrNull { !it.condition }?.let { Text(it.message, style = T.tiny, color = g.ink3) }
     }

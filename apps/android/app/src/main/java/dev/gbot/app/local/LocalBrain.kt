@@ -1165,7 +1165,7 @@ class LocalBrain(
      * ask_user. Returns the line the model reads back.
      */
     private suspend fun showUi(bot: Bot, group: Group?, args: JsonObject, mayShow: (String) -> Boolean): String {
-        val results = LocalResults(File(ctx.filesDir, "pictures"), allowImage = mayShow)
+        val results = LocalResults(File(ctx.filesDir, "pictures"), allowImage = mayShow, allowLink = mayShow)
         val surface = try {
             withContext(Dispatchers.IO) {
                 if (args["components"] == null || args["components"] is JsonNull) {
@@ -1173,7 +1173,7 @@ class LocalBrain(
                         ?: throw Surfaces.Rejected("Give at least two items, each with a title, or build it from components.")
                     Surfaces.Surface(set.title, Surfaces.fromItems(set.items.mapNotNull { it as? JsonObject }), interactive = false, dropped = 0)
                 } else {
-                    Surfaces.build(args) { results.keep(it) }
+                    Surfaces.build(args, allowLink = mayShow) { results.keep(it) }
                 }
             }
         } catch (e: Surfaces.Rejected) {

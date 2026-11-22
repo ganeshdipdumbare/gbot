@@ -28,8 +28,14 @@ else is refused, and the reason goes back to the bot so it can fix the surface.
   person wrote. The phone fetches it once, keeps it, and the surface names the
   kept file (`gbot-file:`). A picture from anywhere else is left out.
 - A Button either sends an `event` back to the bot or opens a written-out https
-  link with `openUrl`. No other part may call `openUrl`. Only pure functions
+  link with `openUrl`. The link must be an address a tool gave or the person
+  wrote, the same rule as pictures, and a link button is always drawn as a link
+  that names its site. No other part may call `openUrl`. Only pure functions
   such as `formatString` and `required` may appear in values.
+- Pictures are fetched only after the whole surface passes, side by side, so a
+  rejected surface leaves no files and one slow host can't hold the run.
+- What the person answers stays out of the verifier's evidence, as with
+  `ask_user`.
 
 ## Answers
 

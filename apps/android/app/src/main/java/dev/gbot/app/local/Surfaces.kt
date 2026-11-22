@@ -1,5 +1,9 @@
 package dev.gbot.app.local
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -24,7 +28,8 @@ import kotlinx.serialization.json.put
  *   once and kept on the phone; the surface then names the kept file, never
  *   the site, so drawing it later reaches nothing;
  * - a button either sends the person's tap back to the bot (an event) or
- *   opens an https link; no other local function can be called.
+ *   opens an https link a tool gave or the person wrote, always drawn as a
+ *   link; no other local function can be called.
  *
  * The result is stored on the chat message as `surface`, and turned into
  * A2UI v0.9 messages for the renderer by [messages].
@@ -75,8 +80,13 @@ object Surfaces {
     /**
      * Checks a show_ui call. [keep] fetches an allowed https picture and
      * returns the kept file's path, or null when it may not be shown.
+     * [allowLink] says whether a button may open an address: only one a tool
+     * gave or the person wrote, so a link can't carry what the bot read.
+     * Pictures are fetched only once the whole surface has passed, and side
+     * by side, so a rejected surface leaves no files and one slow host can't
+     * hold the run.
      */
-    fun build(args: JsonObject, keep: (String) -> String?): Surface {
+    fun build(args: JsonObject, allowLink: (String) -> Boolean = { true }, keep: (String) -> String?): Surface {
         val title = LocalResults.text(args, "title")?.let { clipTo(it, 80) }.orEmpty()
         val list = LocalResults.array(args["components"])
             ?: throw Rejected("Give components: a list of parts, each with an id and a component type; one has the id \"root\".")
@@ -109,38 +119,25 @@ object Surfaces {
         }
         walk(ROOT, emptySet())
 
-        var dropped = 0
-        var pictures = 0
+        // Every check first; nothing is fetched until the surface passes.
         var interactive = false
-        val files = LinkedHashSet<String>()
-        val out = buildJsonArray {
-            for (id in reached) {
-                var p = parts.getValue(id)
-                when (p.str("component")) {
-                    "Image" -> {
-                        val url = (p["url"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
-                            ?: throw Rejected("Image \"$id\" needs url as an https address written out, not a data path.")
-                        val kept = if (pictures < MAX_PICTURES && LocalResults.isHttps(url)) keep(url) else null
-                        pictures++
-                        if (kept == null) {
-                            // Not shown: a picture from somewhere no tool named.
-                            dropped++
-                            p = JsonObject(mapOf("id" to JsonPrimitive(id), "component" to JsonPrimitive("Column"), "children" to JsonArray(emptyList())))
-                        } else {
-                            files.add(kept)
-                            p = JsonObject(p + ("url" to JsonPrimitive(FILE_SCHEME + kept)))
-                        }
-                    }
-                    "Button" -> {
-                        p["child"] ?: throw Rejected("Button \"$id\" needs child: the id of a Text with its label.")
-                        if (checkAction(id, p["action"])) interactive = true
-                    }
+        val pictures = LinkedHashMap<String, String>() // part id -> its https address
+        for (id in reached) {
+            val p = parts.getValue(id)
+            when (p.str("component")) {
+                "Image" -> {
+                    val url = (p["url"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
+                        ?: throw Rejected("Image \"$id\" needs url as an https address written out, not a data path.")
+                    pictures[id] = url
                 }
-                // A function in a value runs when the part is drawn, so only
-                // the plain ones may appear; a link opens from a tap alone.
-                for ((k, v) in p) if (!(k == "action" && p.str("component") == "Button")) checkCalls(id, v)
-                add(p)
+                "Button" -> {
+                    p["child"] ?: throw Rejected("Button \"$id\" needs child: the id of a Text with its label.")
+                    if (checkAction(id, p["action"], allowLink)) interactive = true
+                }
             }
+            // A function in a value runs when the part is drawn, so only
+            // the plain ones may appear; a link opens from a tap alone.
+            for ((k, v) in p) if (!(k == "action" && p.str("component") == "Button")) checkCalls(id, v)
         }
 
         val data = args["data"]?.takeUnless { it is JsonNull }?.let { d ->
@@ -152,6 +149,31 @@ object Surfaces {
             } ?: throw Rejected("data is an object of starting values, e.g. {\"name\": \"\"}.")
             if (o.toString().length > MAX_DATA) throw Rejected("data is too big; keep it under ${MAX_DATA / 1000} kB.")
             o
+        }
+
+        // The surface passed: fetch its pictures side by side.
+        val wanted = pictures.entries.take(MAX_PICTURES).filter { LocalResults.isHttps(it.value) }
+        val kept: Map<String, String?> = runBlocking {
+            wanted.map { (id, url) -> async(Dispatchers.IO) { id to runCatching { keep(url) }.getOrNull() } }.awaitAll().toMap()
+        }
+        var dropped = 0
+        val files = LinkedHashSet<String>()
+        val out = buildJsonArray {
+            for (id in reached) {
+                var p = parts.getValue(id)
+                if (id in pictures) {
+                    val file = kept[id]
+                    if (file == null) {
+                        // Not shown: a picture from somewhere no tool named.
+                        dropped++
+                        p = JsonObject(mapOf("id" to JsonPrimitive(id), "component" to JsonPrimitive("Column"), "children" to JsonArray(emptyList())))
+                    } else {
+                        files.add(file)
+                        p = JsonObject(p + ("url" to JsonPrimitive(FILE_SCHEME + file)))
+                    }
+                }
+                add(p)
+            }
         }
 
         val spec = buildJsonObject {
@@ -268,7 +290,7 @@ object Surfaces {
     }
 
     /** True for a button that answers the bot; throws for anything but an event or an https link. */
-    private fun checkAction(id: String, action: JsonElement?): Boolean {
+    private fun checkAction(id: String, action: JsonElement?, allowLink: (String) -> Boolean): Boolean {
         val a = action as? JsonObject ?: throw Rejected("Button \"$id\" needs an action: {\"event\": {\"name\": …}} or an openUrl link.")
         (a["event"] as? JsonObject)?.let { e ->
             val name = e.str("name")?.trim().orEmpty()
@@ -282,6 +304,7 @@ object Surfaces {
         if (call.str("call") != "openUrl") throw Rejected("Buttons can only call openUrl; send an event to get the person's answer.")
         val url = ((call["args"] as? JsonObject)?.get("url") as? JsonPrimitive)?.takeIf { it.isString }?.content
         if (url == null || !LocalResults.isHttps(url)) throw Rejected("Button \"$id\" opens only an https address, written out.")
+        if (!allowLink(url)) throw Rejected("Button \"$id\" links to an address no tool gave and the person didn't write; link only to pages you have read.")
         return false
     }
 

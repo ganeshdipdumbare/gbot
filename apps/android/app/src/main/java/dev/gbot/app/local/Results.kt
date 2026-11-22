@@ -47,6 +47,8 @@ class LocalResults(
      * address that carries what it knows.
      */
     private val allowImage: (String) -> Boolean = { true },
+    /** Whether a card may link to an address: the same rule, so a link can't carry what the bot knows. */
+    private val allowLink: (String) -> Boolean = { true },
 ) {
     /** A set of cards, ready for the chat. */
     data class ResultSet(val title: String, val items: JsonArray)
@@ -67,7 +69,7 @@ class LocalResults(
     internal fun card(item: JsonObject): JsonObject? {
         val title = text(item, "title")?.let { clip(it) } ?: return null
         val subtitle = text(item, "subtitle")?.let { clip(it) }
-        val link = text(item, "link")?.takeIf { isHttps(it) }
+        val link = text(item, "link")?.takeIf { isHttps(it) && allowLink(it) }
         val kept = text(item, "image")?.takeIf { isHttps(it) && allowImage(it) }?.let { keepImage(it) }
         val fields = array(item["fields"]).orEmpty().mapNotNull { f ->
             val o = f as? JsonObject ?: return@mapNotNull null
