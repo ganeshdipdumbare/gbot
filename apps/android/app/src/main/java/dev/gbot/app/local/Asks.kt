@@ -302,14 +302,16 @@ class Leased<T : Any>(
 
     /**
      * The head of the line, if it fits. A head waiting for another model
-     * while nobody is working on the open one, only runs standing aside for
-     * the person, can't go until they come back; meanwhile runs on the open
-     * model go past it rather than idle behind it.
+     * can't go while any run stands aside for the person, since that run's
+     * conversation keeps the open model; until they all come back, runs on
+     * the open model fill its places past the head rather than idle behind
+     * it. Once nobody stands aside, the head waits only on runs that will
+     * finish, and nobody passes it.
      */
     private fun next(): Waiter? {
         val head = waiting.peek() ?: return null
         if (fits(head)) return head
-        if (head.back != null || head.key == key || holders > 0 || aside == 0) return null
+        if (head.back != null || head.key == key || aside == 0) return null
         return waiting.sortedWith(order).firstOrNull { it.key == key && fits(it) }
     }
 

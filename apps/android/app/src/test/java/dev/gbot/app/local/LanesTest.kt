@@ -223,4 +223,22 @@ class LanesTest {
         withTimeout(5000) { a.join(); big.join() }
         assertEquals(listOf("person", "a", "big"), order.toList())
     }
+
+    @Test
+    fun `runs past a stuck head fill every place on the open model`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 2)
+        val answer = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val a = launch(Dispatchers.Default) { model.hold("small") { model.aside { answer.await() } } }
+        delay(50)
+        val big = launch(Dispatchers.Default) { model.hold("big") { } }
+        delay(50)
+        // p goes past the head and keeps working; q still finds the second place.
+        val p = launch(Dispatchers.Default) { model.hold("small", Priority.PERSON) { gate.await() } }
+        delay(50)
+        withTimeout(1000) { model.hold("small", Priority.PERSON) { } }
+        gate.complete(Unit)
+        answer.complete(Unit)
+        withTimeout(5000) { a.join(); p.join(); big.join() }
+    }
 }
