@@ -174,4 +174,53 @@ class LanesTest {
         withTimeout(5000) { a.join(); b.join(); c.join() }
         assertEquals(listOf("b", "a", "c"), order.toList())
     }
+
+    @Test
+    fun `a run stopped while it waits on the person lets go at once`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 1)
+        val busy = CompletableDeferred<Unit>()
+        val a = launch(Dispatchers.Default) { model.hold("small") { model.aside { CompletableDeferred<Unit>().await() } } }
+        delay(50)
+        // b takes the only place while a waits on the person.
+        val b = launch(Dispatchers.Default) { model.hold("small") { busy.await() } }
+        delay(50)
+        a.cancel()
+        // a doesn't queue to come back behind b: it ends now.
+        withTimeout(1000) { a.join() }
+        busy.complete(Unit)
+        withTimeout(5000) { b.join() }
+        assertTrue("nothing is left counted", model.closeIfFree())
+    }
+
+    @Test
+    fun `a run served the moment it joins the line shows no wait`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 2)
+        val gate = CompletableDeferred<Unit>()
+        val a = launch(Dispatchers.Default) { model.hold("small") { gate.await() } }
+        delay(50)
+        val big = launch(Dispatchers.Default) { model.hold("big", Priority.BOTS) { } }
+        delay(50)
+        var waited = false
+        // The person outranks the head, and small has a free place.
+        withTimeout(1000) { model.hold("small", Priority.PERSON, onWait = { waited = true }) { } }
+        assertFalse(waited)
+        gate.complete(Unit)
+        withTimeout(5000) { a.join(); big.join() }
+    }
+
+    @Test
+    fun `runs go past another model that waits only on a bot waiting for the person`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 2)
+        val answer = CompletableDeferred<Unit>()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val a = launch(Dispatchers.Default) { model.hold("small") { model.aside { answer.await() }; order.add("a") } }
+        delay(50)
+        val big = launch(Dispatchers.Default) { model.hold("big") { order.add("big") } }
+        delay(50)
+        // Nobody is working on small, only a waiting on the person: this one goes ahead.
+        withTimeout(1000) { model.hold("small", Priority.PERSON) { order.add("person") } }
+        answer.complete(Unit)
+        withTimeout(5000) { a.join(); big.join() }
+        assertEquals(listOf("person", "a", "big"), order.toList())
+    }
 }

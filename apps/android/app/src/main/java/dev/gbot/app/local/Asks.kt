@@ -183,10 +183,14 @@ class Leased<T : Any>(
     private val close: (T) -> Unit,
     private val limit: Int = Int.MAX_VALUE,
 ) {
-    private class Waiter(val key: String, val priority: Int, val seq: Long, val back: Boolean = false, val go: CompletableDeferred<Unit> = CompletableDeferred())
+    private class Waiter(val key: String, val priority: Int, val seq: Long, val back: Held? = null, val go: CompletableDeferred<Unit> = CompletableDeferred())
     private class Held(val owner: Leased<*>, val heldKey: String) : AbstractCoroutineContextElement(Held) {
         companion object : CoroutineContext.Key<Held>
+
+        // Standing aside: counted in [aside], not [holders].
+        @Volatile var away = false
     }
+    private val order = compareBy<Waiter>({ it.priority }, { it.seq })
 
     private val lock = Mutex()
     private var value: T? = null
@@ -196,7 +200,7 @@ class Leased<T : Any>(
     // Holders standing aside: they keep the key open but take no place.
     private var aside = 0
     private var seq = 0L
-    private val waiting = PriorityQueue<Waiter>(compareBy<Waiter>({ it.priority }, { it.seq }))
+    private val waiting = PriorityQueue(order)
 
     val isOpen: Boolean get() = key != null
 
@@ -205,10 +209,16 @@ class Leased<T : Any>(
             if (h.owner === this && h.heldKey == k) return block(lock.withLock { value!! })
         }
         val v = acquire(k, priority, onWait)
+        val h = Held(this, k)
         try {
-            return withContext(Held(this, k)) { block(v) }
+            return withContext(h) { block(v) }
         } finally {
-            withContext(NonCancellable) { lock.withLock { holders--; dispatch() } }
+            withContext(NonCancellable) {
+                lock.withLock {
+                    if (h.away) aside-- else holders--
+                    dispatch()
+                }
+            }
         }
     }
 
@@ -217,31 +227,49 @@ class Leased<T : Any>(
      * hold; the key stays open meanwhile. Outside a hold it just runs.
      */
     suspend fun <R> aside(block: suspend () -> R): R {
-        val h = coroutineContext[Held]?.takeIf { it.owner === this } ?: return block()
+        val h = coroutineContext[Held]?.takeIf { it.owner === this && !it.away } ?: return block()
         lock.withLock {
             holders--
             aside++
+            h.away = true
             dispatch()
         }
-        try {
-            return block()
-        } finally {
-            withContext(NonCancellable) { comeBack(h.heldKey) }
+        val r = try {
+            block()
+        } catch (e: CancellationException) {
+            // Stopped while waiting: no coming back for a place. The run lets
+            // go of the key as it unwinds, so it holds up nobody.
+            throw e
+        } catch (e: Throwable) {
+            comeBack(h)
+            throw e
         }
+        comeBack(h)
+        return r
     }
 
-    private suspend fun comeBack(k: String) {
+    private suspend fun comeBack(h: Held) {
         val w = lock.withLock {
-            if (waiting.isEmpty() && holders < limit) {
+            if (holders < limit) {
                 aside--
                 holders++
+                h.away = false
                 null
             } else {
-                // First in line; served now if a place is free.
-                Waiter(k, Int.MIN_VALUE, seq++, back = true).also { waiting.add(it); dispatch() }
+                // First in line; served as soon as a place is free.
+                Waiter(h.heldKey, Int.MIN_VALUE, seq++, back = h).also { waiting.add(it); dispatch() }
             }
         }
-        w?.go?.await()
+        if (w == null) return
+        try {
+            w.go.await()
+        } catch (e: CancellationException) {
+            // Stopped on the way back: leave the line. Whether or not the
+            // place was already handed over, [Held.away] says which count
+            // the hold gives back as it unwinds.
+            withContext(NonCancellable) { lock.withLock { waiting.remove(w); dispatch() } }
+            throw e
+        }
     }
 
     /** Close it if nobody holds it or waits for it. True when nothing is open afterwards. */
@@ -251,24 +279,38 @@ class Leased<T : Any>(
         true
     }
 
-    private fun fits(w: Waiter) = if (w.back) holders < limit else fits(w.key)
+    private fun fits(w: Waiter) = if (w.back != null) holders < limit else fits(w.key)
 
     private fun fits(k: String) = (holders == 0 && aside == 0) || (key == k && holders < limit)
 
     /** Hand the open key to whoever is next, in order, as far as it fits. */
     private fun dispatch() {
         while (true) {
-            val w = waiting.peek() ?: return
-            if (!fits(w)) return
-            waiting.poll()
-            if (w.back) {
+            val w = next() ?: return
+            waiting.remove(w)
+            val back = w.back
+            if (back != null) {
                 aside--
                 holders++
+                back.away = false
             } else {
                 grant(w.key)
             }
             w.go.complete(Unit)
         }
+    }
+
+    /**
+     * The head of the line, if it fits. A head waiting for another model
+     * while nobody is working on the open one, only runs standing aside for
+     * the person, can't go until they come back; meanwhile runs on the open
+     * model go past it rather than idle behind it.
+     */
+    private fun next(): Waiter? {
+        val head = waiting.peek() ?: return null
+        if (fits(head)) return head
+        if (head.back != null || head.key == key || holders > 0 || aside == 0) return null
+        return waiting.sortedWith(order).firstOrNull { it.key == key && fits(it) }
     }
 
     private fun grant(k: String) {
@@ -290,7 +332,8 @@ class Leased<T : Any>(
             }
         }
         if (w != null) {
-            onWait()
+            // Served at once if it went ahead of a head that doesn't fit.
+            if (!w.go.isCompleted) onWait()
             try {
                 w.go.await()
             } catch (e: CancellationException) {
