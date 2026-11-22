@@ -807,8 +807,8 @@ class LocalBrain(
             return "The person declined or blocked this step. Do not retry it; ask what they would like instead."
         }
         val out = runCatching {
-            if (name == "show_results") {
-                showResults(bot, group, args, tools::mayShow)
+            if (name == "show_ui") {
+                showUi(bot, group, args, tools::mayShow)
             } else if (api.isMcpTool(name)) {
                 api.callMcp(name, args) { bytes, mime, from -> keepPicture(bot, group, bytes, mime, from) }.take(4000)
             } else {
@@ -816,7 +816,7 @@ class LocalBrain(
             }
         }.getOrElse { "The tool failed: ${it.message}" }
         if (name in RunTaint.SOURCES || api.isMcpTool(name)) tools.taint.mark(name)
-        if (name != "show_results") tools.see(out)
+        if (name != "show_ui") tools.see(out)
         proof?.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
         // the bot is and what they could be watching.
@@ -995,7 +995,7 @@ class LocalBrain(
             appendLine("- calendar_* and contact_search: if the phone has several accounts the answer lists them; ask the person which with ask_user (give the accounts as options), then call again with account. They are remembered after that.")
             appendLine("- ask_user for any question or choice — a card, not plain text. notify, remember, forget, recall, profile, use_skill, file_*, routine_*.")
             appendLine("- task_contract then task_verify for a multi-step deliverable they will check; a quick answer needs neither. Never claim success against a failed check.")
-            appendLine("- show_results for a list of 2+ things to compare (hotels, products, places) after you have read them from a tool: they appear as cards, one per item, with its picture (a page's Image line), price and rating as fields, and its link. Then say what matters in prose; don't repeat every row.")
+            appendLine("- show_ui draws a small screen in the chat. For a list of 2+ things to compare (hotels, products, places) you have read from a tool, give items: cards, one per item, with its picture (a page's Image line), price and rating as fields, and its link; then say what matters in prose, don't repeat every row. For a choice with details, a short form or a confirmation, build it from components with a button that sends an event: you get the person's tap and what they filled in. Plain questions stay with ask_user.")
             if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots; asks come back together.")
             if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot can't be archived.")
             if (api.localMcp().any { it.enabled && it.status == "connected" }) appendLine("- Tools starting with mc… come from connected integrations.")
@@ -1158,22 +1158,50 @@ class LocalBrain(
     }
 
     /**
-     * The bot's list to compare, as cards in the chat: the phone's copy of
-     * the server's show_results. Returns the line the model reads back.
+     * A small screen the bot built (show_ui), drawn in the chat with A2UI.
+     * A list of items becomes cards, the phone's copy of the server's
+     * show_results; components are checked by [Surfaces]. A surface with a
+     * button that sends an event is a card: the run waits for the tap, like
+     * ask_user. Returns the line the model reads back.
      */
-    private fun showResults(bot: Bot, group: Group?, args: JsonObject, mayShow: (String) -> Boolean): String {
-        val set = LocalResults(java.io.File(ctx.filesDir, "pictures"), allowImage = mayShow).build(args)
-            ?: return "Give at least two items, each with a title."
-        val title = set.title.ifEmpty { "Results" }
-        event(
-            bot, group, title,
-            buildJsonObject {
-                put("kind", "results")
-                put("title", title)
-                put("items", set.items)
+    private suspend fun showUi(bot: Bot, group: Group?, args: JsonObject, mayShow: (String) -> Boolean): String {
+        val results = LocalResults(File(ctx.filesDir, "pictures"), allowImage = mayShow)
+        val surface = try {
+            withContext(Dispatchers.IO) {
+                if (args["components"] == null || args["components"] is JsonNull) {
+                    val set = results.build(args)
+                        ?: throw Surfaces.Rejected("Give at least two items, each with a title, or build it from components.")
+                    Surfaces.Surface(set.title, Surfaces.fromItems(set.items.mapNotNull { it as? JsonObject }), interactive = false, dropped = 0)
+                } else {
+                    Surfaces.build(args) { results.keep(it) }
+                }
+            }
+        } catch (e: Surfaces.Rejected) {
+            return "Nothing was shown: ${e.reason} Fix it and call show_ui again."
+        }
+        val note = if (surface.dropped > 0) " ${surface.dropped} picture(s) were left out: only https addresses a tool gave you can be shown." else ""
+        if (!surface.interactive) {
+            val title = surface.title.ifEmpty { "Results" }
+            event(bot, group, title, buildJsonObject { put("kind", "ui"); put("title", title); put("surface", surface.spec) })
+            return "Shown in the chat where you are answering. The person can see it. Say what matters; don't repeat every item.$note"
+        }
+        val id = "c_" + UUID.randomUUID().toString().take(8)
+        val card = GMessage(
+            id = id, botId = bot.id, groupId = group?.id, role = "card", content = surface.title.ifEmpty { "Something to choose" }, createdAt = now(),
+            data = buildJsonObject {
+                put("kind", "ui")
+                put("status", "pending")
+                put("title", surface.title)
+                put("surface", surface.spec)
             },
         )
-        return "Shown ${set.items.size} results as cards in the chat, where you are answering. The person can see them. Summarize what matters; don't list every row again."
+        db.putMessage(card)
+        emit("message", bot.id, json.encodeToJsonElement(card), group?.id)
+        emitPresence(bot.id, group, "waiting", "Waiting for you")
+        api.awaitAnswer(id)
+        emitPresence(bot.id, group, "thinking")
+        val m = db.message(id)
+        return Surfaces.answerLine(m?.str("answer").takeIf { m?.str("status") == "answered" }) + note
     }
 
     private fun event(bot: Bot, group: Group?, content: String, data: JsonObject? = null): GMessage {
@@ -1307,7 +1335,7 @@ class LocalBrain(
          * A tool argument as JSON, keeping its shape. A provider's arguments
          * are already JSON and pass through as they are; the on-device
          * engine's are plain lists and maps. Turning either into its text
-         * would hand a tool "[{…}]" where it needs a list, so show_results
+         * would hand a tool "[{…}]" where it needs a list, so show_ui
          * would never see its items and every string would gain quotes.
          */
         fun jsonOf(v: Any?): JsonElement = when (v) {

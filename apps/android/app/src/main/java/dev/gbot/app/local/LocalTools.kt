@@ -224,10 +224,17 @@ fun choiceLines(raw: String, max: Int): List<String> {
             ),
         ),
         ToolSchema(
-            "show_results",
-            "Show a list of 2 to 12 things to compare as cards in the chat, e.g. hotels, products or places. Use it when the person would scan the list better than read it. " +
-                "Each item comes from a tool answer you have read; links and pictures must be https addresses from that answer. Then reply in prose about what matters.",
-            resultsParams(),
+            "show_ui",
+            "Show the person a small screen in the chat, drawn natively from A2UI parts. For a list of 2 to 12 things to compare (hotels, products, places) " +
+                "just give items. For anything else (a choice, a short form, a confirmation, a summary card) give components: a flat list where each has an id, " +
+                "a component type and its properties, containers name their children by id, and one has the id \"root\". Parts: " +
+                "Text{text, variant: h1-h5|body|caption}; Image{url}; Row, Column, List{children:[ids]}; Card{child}; Divider; " +
+                "Button{child: a Text's id, variant: primary|default|borderless, action}; TextField{label, value}; CheckBox{label, value}; " +
+                "ChoicePicker{label, options:[{label, value}], value, variant: mutuallyExclusive|multipleSelection}; Slider{label, min, max, value}. " +
+                "Put starting values in data and bind inputs to them with {\"path\": \"/name\"}. A button's action is {\"event\": {\"name\": \"book\", \"context\": {\"name\": {\"path\": \"/name\"}}}} " +
+                "to get the person's tap and the values back (you wait for it), or {\"functionCall\": {\"call\": \"openUrl\", \"args\": {\"url\": \"https://…\"}}} to open a page. " +
+                "Links and pictures must be https addresses exactly as a tool gave them. After a list, reply in prose about what matters; don't repeat every row.",
+            uiParams(),
         ),
         ToolSchema("file_list", "List the files in your own folder on this phone.", params()),
         ToolSchema(
@@ -732,14 +739,30 @@ fun choiceLines(raw: String, max: Int): List<String> {
             put("required", kotlinx.serialization.json.JsonArray(required.map { JsonPrimitive(it) }))
         }
 
-        /** The show_results input: a title and a list of records, each with a title. */
-        private fun resultsParams(): JsonObject = buildJsonObject {
+        /**
+         * The show_ui input: a title, and either items (a list of records,
+         * each with a title) or A2UI components with their data.
+         */
+        private fun uiParams(): JsonObject = buildJsonObject {
             put("type", "object")
             put("properties", buildJsonObject {
-                put("title", buildJsonObject { put("type", "string"); put("description", "A short heading for the list") })
+                put("title", buildJsonObject { put("type", "string"); put("description", "A short heading") })
+                put("components", buildJsonObject {
+                    put("type", "array")
+                    put("description", "The A2UI parts, flat, one with the id \"root\"; leave out when giving items")
+                    put("items", buildJsonObject {
+                        put("type", "object")
+                        put("properties", buildJsonObject {
+                            put("id", buildJsonObject { put("type", "string") })
+                            put("component", buildJsonObject { put("type", "string"); put("description", "Text, Image, Row, Column, List, Card, Divider, Button, TextField, CheckBox, ChoicePicker or Slider") })
+                        })
+                        put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("id"), JsonPrimitive("component"))))
+                    })
+                })
+                put("data", buildJsonObject { put("type", "object"); put("description", "Starting values the parts bind to with {\"path\": \"/key\"}") })
                 put("items", buildJsonObject {
                     put("type", "array")
-                    put("description", "2 to 12 records, each taken from a tool answer you have read")
+                    put("description", "For a list to compare: 2 to 12 records, each taken from a tool answer you have read")
                     put("items", buildJsonObject {
                         put("type", "object")
                         put("properties", buildJsonObject {
@@ -763,7 +786,6 @@ fun choiceLines(raw: String, max: Int): List<String> {
                     })
                 })
             })
-            put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("items"))))
         }
     }
 }

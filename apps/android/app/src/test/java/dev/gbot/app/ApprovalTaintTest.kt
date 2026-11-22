@@ -20,7 +20,7 @@ class ApprovalTaintTest {
             assertEquals(tool, Approval.Choice.Run, Approval.decide("never", null, false, tool, tainted = true))
         }
         // Research stays card-free: what web_fetch and card pictures may reach is limited instead.
-        for (tool in listOf("web_search", "web_fetch", "show_results")) {
+        for (tool in listOf("web_search", "web_fetch", "show_ui")) {
             assertEquals(tool, Approval.Choice.Run, Approval.decide("auto", null, false, tool, tainted = true))
         }
     }

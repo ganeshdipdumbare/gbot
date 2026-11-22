@@ -6,7 +6,10 @@ plugins {
 
 android {
     namespace "dev.gbot.app"
-    compileSdk 37
+    // 37.1: A2UI Compose is built against Android 17's first minor release.
+    compileSdk {
+        version = release(37) { minorApiLevel = 1 }
+    }
 
     defaultConfig {
         // Same id and key as the earlier apps, so this installs over them.
@@ -97,6 +100,9 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0"
     // Runs the model on the phone; Kotlin API, GPU/CPU backends.
     implementation "com.google.ai.edge.litertlm:litertlm-android:0.19.1"
+    // A2UI: the bot builds a small screen (cards, buttons, choices, fields) from
+    // our own catalog of parts, and the chat draws it natively.
+    implementation "androidx.a2ui.compose:compose-ui:1.0.0-alpha02"
     implementation "org.commonmark:commonmark:0.32.0"
     implementation "org.commonmark:commonmark-ext-gfm-tables:0.32.0"
     implementation "org.commonmark:commonmark-ext-gfm-strikethrough:0.32.0"

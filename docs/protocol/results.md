@@ -61,9 +61,11 @@ A chat row with `role: "event"` and `data.kind: "results"`:
 - Server: `show_results` in `server/internal/runs/tools.go`, built in
   `server/internal/runs/results.go`.
 - Web: `results` rows render as `ResultCard` in `apps/web/src/components/Chat.tsx`.
-- Android: `ResultsRow` in `apps/android/app/src/main/java/dev/gbot/app/ui/chat/Results.kt`.
-- Phone without the server: the same tool in `LocalTools.kt` and `LocalBrain.kt`,
-  with the card rules in `apps/android/app/src/main/java/dev/gbot/app/local/Results.kt`.
+- Android: `results` rows are drawn as A2UI cards by `SurfaceRow` in
+  `apps/android/app/src/main/java/dev/gbot/app/ui/chat/Surface.kt`.
+- Phone without the server: `show_results` became `show_ui` (see
+  [ui-surfaces.md](ui-surfaces.md)); its `items` follow the card rules in
+  `apps/android/app/src/main/java/dev/gbot/app/local/Results.kt`.
 
 A client that does not know `results` shows nothing extra; the bot's text
 answer is still there.
