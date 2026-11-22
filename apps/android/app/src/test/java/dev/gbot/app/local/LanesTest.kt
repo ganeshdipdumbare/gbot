@@ -129,4 +129,49 @@ class LanesTest {
         assertEquals(0, runs.down("pip"))
         assertEquals(0, runs.of("pip"))
     }
+
+    @Test
+    fun `a holder waiting on the person frees its place but keeps the model open`(): Unit = runBlocking {
+        val closed = Collections.synchronizedList(mutableListOf<String>())
+        val model = Leased<String>(open = { it }, close = { closed.add(it) }, limit = 1)
+        val answer = CompletableDeferred<Unit>()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val a = launch(Dispatchers.Default) {
+            model.hold("small") {
+                model.aside { answer.await() }
+                order.add("a back")
+            }
+        }
+        delay(50)
+        // Another run on the same model gets the place while a waits on the person.
+        withTimeout(1000) { model.hold("small") { order.add("b") } }
+        // A different model can't swap it out from under a's open conversation.
+        val big = launch(Dispatchers.Default) { model.hold("big") { order.add("big") } }
+        delay(100)
+        assertFalse(model.closeIfFree())
+        assertTrue(closed.isEmpty())
+        answer.complete(Unit)
+        withTimeout(5000) { a.join(); big.join() }
+        assertEquals(listOf("b", "a back", "big"), order.toList())
+        assertEquals(listOf("small"), closed.toList())
+    }
+
+    @Test
+    fun `coming back from a wait goes ahead of the line`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 1)
+        val answer = CompletableDeferred<Unit>()
+        val busy = CompletableDeferred<Unit>()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val a = launch(Dispatchers.Default) { model.hold("small") { model.aside { answer.await() }; order.add("a") } }
+        delay(50)
+        val b = launch(Dispatchers.Default) { model.hold("small") { busy.await(); order.add("b") } }
+        delay(50)
+        val c = launch(Dispatchers.Default) { model.hold("small", Priority.PERSON) { order.add("c") } }
+        delay(50)
+        answer.complete(Unit)
+        delay(50)
+        busy.complete(Unit)
+        withTimeout(5000) { a.join(); b.join(); c.join() }
+        assertEquals(listOf("b", "a", "c"), order.toList())
+    }
 }

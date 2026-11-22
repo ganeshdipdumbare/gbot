@@ -123,7 +123,8 @@ class SurfacesTest {
 
     @Test
     fun aPictureIsKeptOnThePhoneAndNamedByItsFile() {
-        val asked = mutableListOf<String>()
+        // Pictures are fetched in parallel, so the list must take two writers.
+        val asked = java.util.Collections.synchronizedList(mutableListOf<String>())
         val sf = Surfaces.build(args("""{"components":[
             {"id":"root","component":"Column","children":["a","b"]},
             {"id":"a","component":"Image","url":"https://cdn.example.com/a.jpg"},

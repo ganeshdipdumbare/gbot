@@ -139,9 +139,13 @@ class LocalBrain(
     private val queues = ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<QueueItem>>()
     private val paused = ConcurrentHashMap.newKeySet<String>()
     private val stopped = ConcurrentHashMap.newKeySet<String>()
-    // A bot can now run in its own chat and in a group at once, so what it
-    // shows (working, browsing) clears only when its last run ends.
-    private val botRuns = Counts()
+    // A bot can now run in its own chat and in a group at once (one run per
+    // chat, so a chat names a run). What it shows is kept per chat, so when
+    // one run ends the other's state (above all "waiting" on the person)
+    // comes back instead of being overwritten; browsing clears with its last run.
+    private class Shown(val group: Group?, val state: String, val detail: String?, val seq: Long)
+    private val shown = ConcurrentHashMap<String, ConcurrentHashMap<String, Shown>>()
+    private val shownSeq = java.util.concurrent.atomic.AtomicLong()
     private val browsing = Counts()
     @Volatile private var warnedCpu = false
 
@@ -406,7 +410,6 @@ class LocalBrain(
         // A Slack message is outside text from the start, and so is a
         // message from a bot whose own run had read some.
         val taint = RunTaint(w.untrusted || w.kind == "slack")
-        botRuns.up(bot.id)
         emitPresence(bot.id, group, "thinking")
         try {
             fun stage(detail: String) = emitPresence(bot.id, group, "working", detail)
@@ -475,46 +478,50 @@ class LocalBrain(
             val lookup = if (model == null) "" else {
                 withTimeoutOrNull(RUN_TIMEOUT_MS) { needleHead(bot, group, w, rs, prompt, tools, model is BrainModel.Remote, ::stage) }.orEmpty()
             }
-            val plan = if (!w.plans || !worthPlanning(prompt) || lookup.isNotEmpty()) "" else {
-                stage("Planning")
+            // A run on the phone's model takes its place before it plans, so
+            // the plan's time limit counts planning, not waiting.
+            val text = holdModel(model, w.priority, ::stage) {
+                val plan = if (!w.plans || !worthPlanning(prompt) || lookup.isNotEmpty()) "" else {
+                    stage("Planning")
+                    book.call(w.root)
+                    withTimeoutOrNull(PLAN_TIMEOUT_MS) {
+                        when (model) {
+                            is BrainModel.Local -> planLocal(model.file, w.priority, bot, group, prompt, history)
+                            is BrainModel.Remote -> planRemote(model, bot, group, prompt, history)
+                            null -> null
+                        }
+                    }.let { cleanPlan(it.orEmpty()) }
+                }
+                if (plan.isNotEmpty()) log("plan ${plan.length} chars")
+
+                val system = systemPrompt(bot, group, peers) + planBlock(plan)
+
                 book.call(w.root)
-                withTimeoutOrNull(PLAN_TIMEOUT_MS) {
+                withTimeoutOrNull(RUN_TIMEOUT_MS) {
+                    val asked = prompt + lookup
                     when (model) {
-                        is BrainModel.Local -> planLocal(model.file, w.priority, bot, group, prompt, history)
-                        is BrainModel.Remote -> planRemote(model, bot, group, prompt, history)
-                        null -> null
-                    }
-                }.let { cleanPlan(it.orEmpty()) }
-            }
-            if (plan.isNotEmpty()) log("plan ${plan.length} chars")
-
-            val system = systemPrompt(bot, group, peers) + planBlock(plan)
-
-            book.call(w.root)
-            val text = withTimeoutOrNull(RUN_TIMEOUT_MS) {
-                val asked = prompt + lookup
-                when (model) {
-                    is BrainModel.Local -> {
-                        log("local ${model.file.name} history=${history.size} tools=${tools.schemas.size + mcpTools.size}")
-                        runLocal(model.file, rs, system, history, asked, tools, mcpTools, bot, group, ::stage)
-                    }
-                    is BrainModel.Remote -> {
-                        log("provider ${model.provider.name} ${model.name}")
-                        withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
-                            api.providers.run(
-                                model.provider, model.name, system, groupHistory(history, group, bot), asked, tools.schemas + mcpTools,
-                                onText = {},
-                                execute = { call -> executeTool(tools, rs, bot, group, call.name, call.arguments.toJson(), ::stage) },
+                        is BrainModel.Local -> {
+                            log("local ${model.file.name} history=${history.size} tools=${tools.schemas.size + mcpTools.size}")
+                            runLocal(model.file, rs, system, history, asked, tools, mcpTools, bot, group, ::stage)
+                        }
+                        is BrainModel.Remote -> {
+                            log("provider ${model.provider.name} ${model.name}")
+                            withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
+                                api.providers.run(
+                                    model.provider, model.name, system, groupHistory(history, group, bot), asked, tools.schemas + mcpTools,
+                                    onText = {},
+                                    execute = { call -> executeTool(tools, rs, bot, group, call.name, call.arguments.toJson(), ::stage) },
+                                )
+                            } ?: throw IllegalStateException(
+                                "${model.provider.name} was still going after ${PROVIDER_TIMEOUT_MS / 60000} minutes, so I stopped. " +
+                                    "Check the endpoint and key in Settings → Models.",
                             )
-                        } ?: throw IllegalStateException(
-                            "${model.provider.name} was still going after ${PROVIDER_TIMEOUT_MS / 60000} minutes, so I stopped. " +
-                                "Check the endpoint and key in Settings → Models.",
-                        )
-                    }
-                    null -> if (api.providers.list().isNotEmpty()) {
-                        "Your provider isn't offering any models yet. Open Settings → Models → Providers and press refresh on it."
-                    } else {
-                        "There is no model on this phone yet. Open Settings → Models and download one, or connect a provider."
+                        }
+                        null -> if (api.providers.list().isNotEmpty()) {
+                            "Your provider isn't offering any models yet. Open Settings → Models → Providers and press refresh on it."
+                        } else {
+                            "There is no model on this phone yet. Open Settings → Models and download one, or connect a provider."
+                        }
                     }
                 }
             }
@@ -560,7 +567,6 @@ class LocalBrain(
                 rs.hasBrowser = false
                 browserLock.unlock()
             }
-            val others = botRuns.down(bot.id)
             if (rs.onComputer && browsing.down(bot.id) == 0) emitComputer(bot.id, false)
             try {
                 if (exchange.isNotEmpty()) settle(exchange, status, outcome)
@@ -568,9 +574,9 @@ class LocalBrain(
             } finally {
                 // In a group the reply itself is the alert; its own chat has
                 // nothing else to show for it, so settle through "done".
-                // Another run of this bot still going keeps it working.
-                if (landed && group == null) settleDone(bot)
-                else emitPresence(bot.id, group, if (others > 0) "thinking" else "idle")
+                // Another run of this bot still going shows its own state again.
+                shown[bot.id]?.remove(group?.id.orEmpty())
+                if (landed && group == null) settleDone(bot) else showRest(bot.id)
             }
         }
     }
@@ -830,7 +836,7 @@ class LocalBrain(
         if (!rs.hasBrowser && usesBrowserWindow(name)) {
             if (!browserLock.tryLock()) {
                 stage("Waiting for the browser")
-                browserLock.lock()
+                engine.aside { browserLock.lock() }
             }
             rs.hasBrowser = true
         }
@@ -906,7 +912,7 @@ class LocalBrain(
         db.putMessage(card)
         emit("message", bot.id, json.encodeToJsonElement(card), group?.id)
         emitPresence(bot.id, group, "waiting", "Has a question")
-        api.awaitAnswer(id)
+        engine.aside { api.awaitAnswer(id) }
         emitPresence(bot.id, group, "thinking")
         val m = db.message(id)
         val answer = m?.str("answer").orEmpty()
@@ -960,7 +966,7 @@ class LocalBrain(
         db.putMessage(card)
         emit("message", bot.id, json.encodeToJsonElement(card), group?.id)
         emitPresence(bot.id, group, "waiting")
-        val ok = api.awaitAnswer(id)
+        val ok = engine.aside { api.awaitAnswer(id) }
         emitPresence(bot.id, group, "thinking")
         return ok
     }
@@ -982,6 +988,10 @@ class LocalBrain(
         if (group != null && list.lastOrNull()?.role == "user" && list.last().content == prompt) list = list.dropLast(1)
         return list.takeLast(if (group == null) 8 else 12)
     }
+
+    /** For a run on the phone's model, hold it for all of [block]; any other model just runs. */
+    private suspend fun <T> holdModel(model: BrainModel?, priority: Int, stage: (String) -> Unit, block: suspend () -> T): T =
+        if (model is BrainModel.Local) withEngine(model.file, priority, onWait = { stage("Waiting for the model") }) { block() } else block()
 
     /** Hold the phone's model, loaded from [file], while [block] runs. */
     private suspend fun <T> withEngine(file: File, priority: Int, onWait: () -> Unit = {}, block: suspend (Engine) -> T): T =
@@ -1253,7 +1263,7 @@ class LocalBrain(
         db.putMessage(card)
         emit("message", bot.id, json.encodeToJsonElement(card), group?.id)
         emitPresence(bot.id, group, "waiting", "Waiting for you")
-        api.awaitAnswer(id)
+        engine.aside { api.awaitAnswer(id) }
         emitPresence(bot.id, group, "thinking")
         val m = db.message(id)
         return Surfaces.answerLine(m?.str("answer").takeIf { m?.str("status") == "answered" }) + note
@@ -1320,11 +1330,20 @@ class LocalBrain(
         emitPresence(bot.id, null, "done")
         scope.launch {
             delay(2500)
-            if (presence[bot.id]?.state == "done") emitPresence(bot.id, null, if (botRuns.of(bot.id) > 0) "thinking" else "idle")
+            if (presence[bot.id]?.state == "done") showRest(bot.id)
         }
     }
 
+    /** Idle, or what another running run of the bot last showed; one waiting on the person first. */
+    private fun showRest(botId: String) {
+        val next = shown[botId]?.values?.maxWithOrNull(compareBy<Shown>({ it.state == "waiting" }, { it.seq }))
+        if (next == null) emitPresence(botId, null, "idle") else emitPresence(botId, next.group, next.state, next.detail)
+    }
+
     private fun emitPresence(botId: String, group: Group?, state: String, detail: String? = null) {
+        if (state in RUN_STATES) {
+            shown.getOrPut(botId) { ConcurrentHashMap() }[group?.id.orEmpty()] = Shown(group, state, detail, shownSeq.incrementAndGet())
+        }
         val p = Presence(state = state, detail = detail)
         if (state == "idle") presence.remove(botId) else presence[botId] = p
         emit("presence", botId, json.encodeToJsonElement(p), group?.id)
@@ -1461,9 +1480,13 @@ const val NO_REPLY = "NO_REPLY"
  * How many runs may keep a conversation open on the phone's own model at
  * once. Each holds its own context cache (up to 8192 tokens) in memory, on
  * top of the model itself; a third waits rather than risk the phone killing
- * gbot for memory. Waiting runs are not stopped or timed out.
+ * gbot for memory. Waiting runs are not stopped or timed out, and a run
+ * waiting on the person or on the browser steps aside, so it holds no place.
  */
 const val MODEL_RUNS = 2
+
+/** What a run shows while it is going, kept per chat. */
+private val RUN_STATES = setOf("thinking", "working", "waiting")
 
 /**
  * Whether a message is worth a planning pass. On the phone's own model

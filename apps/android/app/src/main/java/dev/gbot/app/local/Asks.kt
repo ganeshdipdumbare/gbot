@@ -172,13 +172,18 @@ class Counts {
  * model isn't starved by a stream of runs on the current one, and the
  * person's messages go first. A hold taken inside a hold of the same key
  * (task_verify within a run) joins it at once and counts for nothing.
+ *
+ * A holder that has to wait on something slow and outside its control (the
+ * person's answer, another bot's browser) steps [aside]: it gives up its
+ * place under [limit] but keeps the key open, and comes back ahead of
+ * everyone waiting once a place is free.
  */
 class Leased<T : Any>(
     private val open: suspend (String) -> T,
     private val close: (T) -> Unit,
     private val limit: Int = Int.MAX_VALUE,
 ) {
-    private class Waiter(val key: String, val priority: Int, val seq: Long, val go: CompletableDeferred<Unit> = CompletableDeferred())
+    private class Waiter(val key: String, val priority: Int, val seq: Long, val back: Boolean = false, val go: CompletableDeferred<Unit> = CompletableDeferred())
     private class Held(val owner: Leased<*>, val heldKey: String) : AbstractCoroutineContextElement(Held) {
         companion object : CoroutineContext.Key<Held>
     }
@@ -188,6 +193,8 @@ class Leased<T : Any>(
     @Volatile var key: String? = null
         private set
     private var holders = 0
+    // Holders standing aside: they keep the key open but take no place.
+    private var aside = 0
     private var seq = 0L
     private val waiting = PriorityQueue<Waiter>(compareBy<Waiter>({ it.priority }, { it.seq }))
 
@@ -205,22 +212,61 @@ class Leased<T : Any>(
         }
     }
 
+    /**
+     * Run [block], a wait, without taking a place, when called inside a
+     * hold; the key stays open meanwhile. Outside a hold it just runs.
+     */
+    suspend fun <R> aside(block: suspend () -> R): R {
+        val h = coroutineContext[Held]?.takeIf { it.owner === this } ?: return block()
+        lock.withLock {
+            holders--
+            aside++
+            dispatch()
+        }
+        try {
+            return block()
+        } finally {
+            withContext(NonCancellable) { comeBack(h.heldKey) }
+        }
+    }
+
+    private suspend fun comeBack(k: String) {
+        val w = lock.withLock {
+            if (waiting.isEmpty() && holders < limit) {
+                aside--
+                holders++
+                null
+            } else {
+                // First in line; served now if a place is free.
+                Waiter(k, Int.MIN_VALUE, seq++, back = true).also { waiting.add(it); dispatch() }
+            }
+        }
+        w?.go?.await()
+    }
+
     /** Close it if nobody holds it or waits for it. True when nothing is open afterwards. */
     suspend fun closeIfFree(): Boolean = lock.withLock {
-        if (holders > 0) return@withLock false
+        if (holders > 0 || aside > 0) return@withLock false
         shut()
         true
     }
 
-    private fun fits(k: String) = holders == 0 || (key == k && holders < limit)
+    private fun fits(w: Waiter) = if (w.back) holders < limit else fits(w.key)
+
+    private fun fits(k: String) = (holders == 0 && aside == 0) || (key == k && holders < limit)
 
     /** Hand the open key to whoever is next, in order, as far as it fits. */
     private fun dispatch() {
         while (true) {
             val w = waiting.peek() ?: return
-            if (!fits(w.key)) return
+            if (!fits(w)) return
             waiting.poll()
-            grant(w.key)
+            if (w.back) {
+                aside--
+                holders++
+            } else {
+                grant(w.key)
+            }
             w.go.complete(Unit)
         }
     }
@@ -239,7 +285,8 @@ class Leased<T : Any>(
                 grant(k)
                 null
             } else {
-                Waiter(k, priority, seq++).also { waiting.add(it) }
+                // It may go ahead of a head that doesn't fit, and fit itself.
+                Waiter(k, priority, seq++).also { waiting.add(it); dispatch() }
             }
         }
         if (w != null) {
