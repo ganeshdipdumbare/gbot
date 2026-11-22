@@ -266,4 +266,24 @@ class LanesTest {
         withTimeout(5000) { b.join(); big.join(); c.join() }
         assertEquals(listOf("b", "big", "c"), order.toList())
     }
+
+    @Test
+    fun `a head stuck behind working runs is passed once they step aside`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 2)
+        val step = CompletableDeferred<Unit>()
+        val answer = CompletableDeferred<Unit>()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        // Both places are taken by runs that are working, then wait on the person.
+        val runs = List(2) { launch(Dispatchers.Default) { model.hold("small") { step.await(); model.aside { answer.await() } } } }
+        delay(50)
+        val big = launch(Dispatchers.Default) { model.hold("big") { order.add("big") } }
+        delay(50)
+        step.complete(Unit)
+        delay(50)
+        // Every place is free and big can't go: the person's message gets in.
+        withTimeout(1000) { model.hold("small", Priority.PERSON) { order.add("person") } }
+        answer.complete(Unit)
+        withTimeout(5000) { runs.forEach { it.join() }; big.join() }
+        assertEquals(listOf("person", "big"), order.toList())
+    }
 }

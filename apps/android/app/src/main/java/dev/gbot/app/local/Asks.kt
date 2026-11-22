@@ -172,7 +172,9 @@ class Counts {
  * model isn't starved by a stream of runs on the current one, and the
  * person's messages go first. The one exception is bounded: while the runs
  * that stood [aside] when the head got stuck are still away, runs on the
- * open model may use its places past the head, since it couldn't go anyway. A hold taken inside a hold of the same key
+ * open model may use its places past the head, since it couldn't go anyway.
+ * "When it got stuck" is the first moment asides held it up: a head that
+ * waits behind working runs notes the ones that later step aside. A hold taken inside a hold of the same key
  * (task_verify within a run) joins it at once and counts for nothing.
  *
  * A holder that has to wait on something slow and outside its control (the
@@ -186,7 +188,7 @@ class Leased<T : Any>(
     private val limit: Int = Int.MAX_VALUE,
 ) {
     private class Waiter(val key: String, val priority: Int, val seq: Long, val back: Held? = null, val go: CompletableDeferred<Unit> = CompletableDeferred()) {
-        // For a head stuck behind another key: who stood aside when it got stuck.
+        // For a head stuck behind another key: who stood aside when asides first held it up.
         var stuckBehind: Set<Held>? = null
     }
     private class Held(val owner: Leased<*>, val heldKey: String) : AbstractCoroutineContextElement(Held) {
@@ -317,7 +319,10 @@ class Leased<T : Any>(
         val head = waiting.peek() ?: return null
         if (fits(head)) return head
         if (head.back != null || head.key == key) return null
-        val stuck = head.stuckBehind ?: standing.toSet().also { head.stuckBehind = it }
+        // Noted the first time asides are what hold it up: a head stuck
+        // behind working runs notes nobody yet, and does once they step aside.
+        if (head.stuckBehind.isNullOrEmpty() && standing.isNotEmpty()) head.stuckBehind = standing.toSet()
+        val stuck = head.stuckBehind ?: return null
         if (stuck.none { it in standing }) return null
         return waiting.sortedWith(order).firstOrNull { it.key == key && fits(it) }
     }
