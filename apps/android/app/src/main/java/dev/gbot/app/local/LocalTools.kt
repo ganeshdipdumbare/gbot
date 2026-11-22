@@ -26,6 +26,18 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
+/**
+ * A show_ui call for an answer taken in at a glance, given to the model as
+ * the shape to copy. SurfacesTest checks it still passes Surfaces.build.
+ */
+internal const val GLANCE_EXAMPLE =
+    """{"title":"Weather","components":[""" +
+        """{"id":"root","component":"Card","child":"c"},""" +
+        """{"id":"c","component":"Column","children":["where","now","more"]},""" +
+        """{"id":"where","component":"Text","text":"Berlin, today","variant":"h4"},""" +
+        """{"id":"now","component":"Text","text":"14°C, light rain","variant":"h1"},""" +
+        """{"id":"more","component":"Text","text":"High 16° · Low 9° · Rain 70% · Wind 12 km/h","variant":"caption"}]}"""
+
 /** Models sometimes wrap a value in quotes; keep the words, not the quotes. */
 internal fun unquote(s: String): String = plainText(s).removeSurrounding("'").trim()
 
@@ -225,15 +237,18 @@ fun choiceLines(raw: String, max: Int): List<String> {
         ),
         ToolSchema(
             "show_ui",
-            "Show the person a small screen in the chat, drawn natively from A2UI parts. For a list of 2 to 12 things to compare (hotels, products, places) " +
-                "just give items. For anything else (a choice, a short form, a confirmation, a summary card) give components: a flat list where each has an id, " +
+            "Show the person a small screen in the chat, drawn natively from A2UI parts. Use it whenever a card reads better than text: any answer taken in " +
+                "at a glance (weather, a flight, parcel or train status, a score, a route or travel time, an event, a contact, a price, a few key numbers), " +
+                "a list to compare, a choice or a short form. For a list of 2 to 12 things to compare (hotels, products, places) " +
+                "just give items. For anything else (a glance card, a choice, a short form, a confirmation) give components: a flat list where each has an id, " +
                 "a component type and its properties, containers name their children by id, and one has the id \"root\". Parts: " +
                 "Text{text, variant: h1-h5|body|caption}; Image{url}; Row, Column, List{children:[ids]}; Card{child}; Divider; " +
                 "Button{child: a Text's id, variant: primary|default|borderless, action}; TextField{label, value}; CheckBox{label, value}; " +
                 "ChoicePicker{label, options:[{label, value}], value, variant: mutuallyExclusive|multipleSelection}; Slider{label, min, max, value}. " +
                 "Put starting values in data and bind inputs to them with {\"path\": \"/name\"}. A button's action is {\"event\": {\"name\": \"book\", \"context\": {\"name\": {\"path\": \"/name\"}}}} " +
                 "to get the person's tap and the values back (you wait for it), or {\"functionCall\": {\"call\": \"openUrl\", \"args\": {\"url\": \"https://…\"}}} to open a page. " +
-                "Links and pictures must be https addresses exactly as a tool gave them. After a list, reply in prose about what matters; don't repeat every row.",
+                "Links and pictures must be https addresses exactly as a tool gave them. After a card or list, reply in a line or two of prose about what matters; don't repeat every row. " +
+                "A glance card, e.g. weather: $GLANCE_EXAMPLE",
             uiParams(),
         ),
         ToolSchema("file_list", "List the files in your own folder on this phone.", params()),

@@ -2,7 +2,12 @@ package dev.gbot.app.local
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.PriorityQueue
+import java.util.concurrent.ConcurrentHashMap
 
 /*
  * Bots asking bots: the rules shared with the server. See
@@ -74,9 +79,24 @@ fun askPrompt(from: String, message: String, expect: String): String =
     }
 
 /**
- * One model runs at a time on a phone. Whoever waits takes the next turn by
- * priority (lower first), then in arrival order: the person's messages go
- * ahead of a round's answers, which go ahead of bots' asks.
+ * One queue per chat, like the server's per-conversation workers: a chat's
+ * messages run in order, and different chats run side by side. A lane is a
+ * fair mutex, so waiters go in arrival order.
+ */
+class Lanes {
+    private val lanes = ConcurrentHashMap<String, Mutex>()
+
+    suspend fun <T> run(chat: String, block: suspend () -> T): T =
+        lanes.getOrPut(chat) { Mutex() }.withLock { block() }
+}
+
+/**
+ * The phone's own model generates for one run at a time; runs on a
+ * provider's model never wait here. A run takes the turn only while the
+ * model is working, not while its tools run or it waits on the person.
+ * Whoever waits takes the next turn by priority (lower first), then in
+ * arrival order: the person's messages go ahead of a round's answers,
+ * which go ahead of bots' asks.
  */
 class Turns {
     private class Waiter(val priority: Int, val seq: Long, val go: CompletableDeferred<Unit> = CompletableDeferred())
@@ -123,6 +143,78 @@ class Turns {
             if (handed) release()
             throw e
         }
+    }
+}
+
+/**
+ * One heavy thing opened for a key, such as the model loaded from one file.
+ * Users of the open key share it; a different key waits until nobody holds
+ * the open one, then closes it and opens its own. A holder may take it again
+ * for the same key while it holds it.
+ */
+class Leased<T : Any>(
+    private val open: suspend (String) -> T,
+    private val close: (T) -> Unit,
+) {
+    private val lock = Mutex()
+    private var value: T? = null
+    @Volatile var key: String? = null
+        private set
+    private var holders = 0
+    private var free = CompletableDeferred<Unit>()
+
+    val isOpen: Boolean get() = key != null
+
+    suspend fun <R> hold(k: String, block: suspend (T) -> R): R {
+        val v = acquire(k)
+        try {
+            return block(v)
+        } finally {
+            withContext(NonCancellable) { release() }
+        }
+    }
+
+    /** Close it if nobody holds it. True when nothing is open afterwards. */
+    suspend fun closeIfFree(): Boolean = lock.withLock {
+        if (holders > 0) return@withLock false
+        shut()
+        true
+    }
+
+    private suspend fun acquire(k: String): T {
+        while (true) {
+            val wait = lock.withLock {
+                val cur = value
+                if (cur != null && key == k) {
+                    holders++
+                    return cur
+                }
+                if (holders == 0) {
+                    shut()
+                    val v = open(k)
+                    value = v
+                    key = k
+                    holders++
+                    return v
+                }
+                free
+            }
+            wait.await()
+        }
+    }
+
+    private suspend fun release() = lock.withLock {
+        holders--
+        if (holders == 0) {
+            free.complete(Unit)
+            free = CompletableDeferred()
+        }
+    }
+
+    private fun shut() {
+        value?.let { runCatching { close(it) } }
+        value = null
+        key = null
     }
 }
 
