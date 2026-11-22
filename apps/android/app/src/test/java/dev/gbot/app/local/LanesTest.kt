@@ -241,4 +241,29 @@ class LanesTest {
         answer.complete(Unit)
         withTimeout(5000) { a.join(); p.join(); big.join() }
     }
+
+    @Test
+    fun `runs that step aside after passing don't keep the stuck head waiting`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 2)
+        val first = CompletableDeferred<Unit>()
+        val second = CompletableDeferred<Unit>()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val a = launch(Dispatchers.Default) { model.hold("small") { model.aside { first.await() } } }
+        delay(50)
+        val big = launch(Dispatchers.Default) { model.hold("big") { order.add("big") } }
+        delay(50)
+        // b goes past the head while a is away, then goes aside itself.
+        val b = launch(Dispatchers.Default) { model.hold("small") { model.aside { second.await() }; order.add("b") } }
+        delay(50)
+        // a comes back and finishes: the gate closes, though b is still away.
+        first.complete(Unit)
+        withTimeout(1000) { a.join() }
+        var waited = false
+        val c = launch(Dispatchers.Default) { model.hold("small", onWait = { waited = true }) { order.add("c") } }
+        delay(100)
+        assertTrue("c waits behind the head now", waited)
+        second.complete(Unit)
+        withTimeout(5000) { b.join(); big.join(); c.join() }
+        assertEquals(listOf("b", "big", "c"), order.toList())
+    }
 }

@@ -168,9 +168,11 @@ class Counts {
  * until nobody holds the open one, then closes it and opens its own.
  *
  * Waiters are served strictly by priority (lower first), then in arrival
- * order, and nobody passes the one at the head: a run waiting for another
+ * order, and the one at the head isn't passed: a run waiting for another
  * model isn't starved by a stream of runs on the current one, and the
- * person's messages go first. A hold taken inside a hold of the same key
+ * person's messages go first. The one exception is bounded: while the runs
+ * that stood [aside] when the head got stuck are still away, runs on the
+ * open model may use its places past the head, since it couldn't go anyway. A hold taken inside a hold of the same key
  * (task_verify within a run) joins it at once and counts for nothing.
  *
  * A holder that has to wait on something slow and outside its control (the
@@ -183,7 +185,10 @@ class Leased<T : Any>(
     private val close: (T) -> Unit,
     private val limit: Int = Int.MAX_VALUE,
 ) {
-    private class Waiter(val key: String, val priority: Int, val seq: Long, val back: Held? = null, val go: CompletableDeferred<Unit> = CompletableDeferred())
+    private class Waiter(val key: String, val priority: Int, val seq: Long, val back: Held? = null, val go: CompletableDeferred<Unit> = CompletableDeferred()) {
+        // For a head stuck behind another key: who stood aside when it got stuck.
+        var stuckBehind: Set<Held>? = null
+    }
     private class Held(val owner: Leased<*>, val heldKey: String) : AbstractCoroutineContextElement(Held) {
         companion object : CoroutineContext.Key<Held>
 
@@ -198,7 +203,7 @@ class Leased<T : Any>(
         private set
     private var holders = 0
     // Holders standing aside: they keep the key open but take no place.
-    private var aside = 0
+    private val standing = HashSet<Held>()
     private var seq = 0L
     private val waiting = PriorityQueue(order)
 
@@ -215,7 +220,7 @@ class Leased<T : Any>(
         } finally {
             withContext(NonCancellable) {
                 lock.withLock {
-                    if (h.away) aside-- else holders--
+                    if (h.away) standing.remove(h) else holders--
                     dispatch()
                 }
             }
@@ -230,7 +235,7 @@ class Leased<T : Any>(
         val h = coroutineContext[Held]?.takeIf { it.owner === this && !it.away } ?: return block()
         lock.withLock {
             holders--
-            aside++
+            standing.add(h)
             h.away = true
             dispatch()
         }
@@ -251,7 +256,7 @@ class Leased<T : Any>(
     private suspend fun comeBack(h: Held) {
         val w = lock.withLock {
             if (holders < limit) {
-                aside--
+                standing.remove(h)
                 holders++
                 h.away = false
                 null
@@ -274,14 +279,14 @@ class Leased<T : Any>(
 
     /** Close it if nobody holds it or waits for it. True when nothing is open afterwards. */
     suspend fun closeIfFree(): Boolean = lock.withLock {
-        if (holders > 0 || aside > 0) return@withLock false
+        if (holders > 0 || standing.isNotEmpty()) return@withLock false
         shut()
         true
     }
 
     private fun fits(w: Waiter) = if (w.back != null) holders < limit else fits(w.key)
 
-    private fun fits(k: String) = (holders == 0 && aside == 0) || (key == k && holders < limit)
+    private fun fits(k: String) = (holders == 0 && standing.isEmpty()) || (key == k && holders < limit)
 
     /** Hand the open key to whoever is next, in order, as far as it fits. */
     private fun dispatch() {
@@ -290,7 +295,7 @@ class Leased<T : Any>(
             waiting.remove(w)
             val back = w.back
             if (back != null) {
-                aside--
+                standing.remove(back)
                 holders++
                 back.away = false
             } else {
@@ -302,16 +307,18 @@ class Leased<T : Any>(
 
     /**
      * The head of the line, if it fits. A head waiting for another model
-     * can't go while any run stands aside for the person, since that run's
-     * conversation keeps the open model; until they all come back, runs on
-     * the open model fill its places past the head rather than idle behind
-     * it. Once nobody stands aside, the head waits only on runs that will
-     * finish, and nobody passes it.
+     * can't go while a run stands aside for the person, since that run's
+     * conversation keeps the open model. Runs on the open model may fill its
+     * places past the head only while the runs that stood aside when it got
+     * stuck are still away; runs that go aside later don't keep that open,
+     * so a stream of overlapping asides can't hold the head off for good.
      */
     private fun next(): Waiter? {
         val head = waiting.peek() ?: return null
         if (fits(head)) return head
-        if (head.back != null || head.key == key || aside == 0) return null
+        if (head.back != null || head.key == key) return null
+        val stuck = head.stuckBehind ?: standing.toSet().also { head.stuckBehind = it }
+        if (stuck.none { it in standing }) return null
         return waiting.sortedWith(order).firstOrNull { it.key == key && fits(it) }
     }
 
