@@ -286,4 +286,28 @@ class LanesTest {
         withTimeout(5000) { runs.forEach { it.join() }; big.join() }
         assertEquals(listOf("person", "big"), order.toList())
     }
+
+    @Test
+    fun `a head that arrives with one run aside and one working is passed once the second steps aside`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 2)
+        val aBack = CompletableDeferred<Unit>()
+        val bStep = CompletableDeferred<Unit>()
+        val bBack = CompletableDeferred<Unit>()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val a = launch(Dispatchers.Default) { model.hold("small") { model.aside { aBack.await() } } }
+        delay(50)
+        val b = launch(Dispatchers.Default) { model.hold("small") { bStep.await(); model.aside { bBack.await() } } }
+        delay(50)
+        val big = launch(Dispatchers.Default) { model.hold("big") { order.add("big") } }
+        delay(50)
+        // a comes back and ends; then b, admitted before big, steps aside.
+        aBack.complete(Unit)
+        withTimeout(1000) { a.join() }
+        bStep.complete(Unit)
+        delay(50)
+        withTimeout(1000) { model.hold("small", Priority.PERSON) { order.add("person") } }
+        bBack.complete(Unit)
+        withTimeout(5000) { b.join(); big.join() }
+        assertEquals(listOf("person", "big"), order.toList())
+    }
 }

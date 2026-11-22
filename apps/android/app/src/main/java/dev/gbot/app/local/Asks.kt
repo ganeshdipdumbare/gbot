@@ -170,35 +170,45 @@ class Counts {
  * Waiters are served strictly by priority (lower first), then in arrival
  * order, and the one at the head isn't passed: a run waiting for another
  * model isn't starved by a stream of runs on the current one, and the
- * person's messages go first. The one exception is bounded: while the runs
- * that stood [aside] when the head got stuck are still away, runs on the
- * open model may use its places past the head, since it couldn't go anyway.
- * "When it got stuck" is the first moment asides held it up: a head that
- * waits behind working runs notes the ones that later step aside. A hold taken inside a hold of the same key
+ * person's messages go first. A hold taken inside a hold of the same key
  * (task_verify within a run) joins it at once and counts for nothing.
  *
  * A holder that has to wait on something slow and outside its control (the
  * person's answer, another bot's browser) steps [aside]: it gives up its
  * place under [limit] but keeps the key open, and comes back ahead of
  * everyone waiting once a place is free.
+ *
+ * The one exception to not passing the head is bounded. While a run that was
+ * admitted before the head arrived stands aside, the head can't go anyway
+ * (that run's conversation keeps the open model), so runs on the open model
+ * may use its places past it. Runs that went past never keep that open
+ * themselves, so overlapping asides can't hold the head off for good.
  */
 class Leased<T : Any>(
     private val open: suspend (String) -> T,
     private val close: (T) -> Unit,
     private val limit: Int = Int.MAX_VALUE,
 ) {
-    private class Waiter(val key: String, val priority: Int, val seq: Long, val back: Held? = null, val go: CompletableDeferred<Unit> = CompletableDeferred()) {
-        // For a head stuck behind another key: who stood aside when asides first held it up.
-        var stuckBehind: Set<Held>? = null
+    private class Waiter(
+        val key: String,
+        val priority: Int,
+        val seq: Long,
+        // Admissions so far when it joined: holders with a lower ticket came first.
+        val arrived: Long,
+        val back: Held? = null,
+        val go: CompletableDeferred<Unit> = CompletableDeferred(),
+    ) {
+        var ticket = -1L
     }
-    private class Held(val owner: Leased<*>, val heldKey: String) : AbstractCoroutineContextElement(Held) {
+
+    private class Held(val owner: Leased<*>, val heldKey: String, val ticket: Long) : AbstractCoroutineContextElement(Held) {
         companion object : CoroutineContext.Key<Held>
 
-        // Standing aside: counted in [aside], not [holders].
+        // Standing aside: in [standing], not counted in [holders].
         @Volatile var away = false
     }
-    private val order = compareBy<Waiter>({ it.priority }, { it.seq })
 
+    private val order = compareBy<Waiter>({ it.priority }, { it.seq })
     private val lock = Mutex()
     private var value: T? = null
     @Volatile var key: String? = null
@@ -207,6 +217,8 @@ class Leased<T : Any>(
     // Holders standing aside: they keep the key open but take no place.
     private val standing = HashSet<Held>()
     private var seq = 0L
+    // Counts admissions; a holder's ticket is its place in that order.
+    private var admitted = 0L
     private val waiting = PriorityQueue(order)
 
     val isOpen: Boolean get() = key != null
@@ -215,8 +227,8 @@ class Leased<T : Any>(
         coroutineContext[Held]?.let { h ->
             if (h.owner === this && h.heldKey == k) return block(lock.withLock { value!! })
         }
-        val v = acquire(k, priority, onWait)
-        val h = Held(this, k)
+        val (v, ticket) = acquire(k, priority, onWait)
+        val h = Held(this, k, ticket)
         try {
             return withContext(h) { block(v) }
         } finally {
@@ -264,7 +276,7 @@ class Leased<T : Any>(
                 null
             } else {
                 // First in line; served as soon as a place is free.
-                Waiter(h.heldKey, Int.MIN_VALUE, seq++, back = h).also { waiting.add(it); dispatch() }
+                Waiter(h.heldKey, Int.MIN_VALUE, seq++, admitted, back = h).also { waiting.add(it); dispatch() }
             }
         }
         if (w == null) return
@@ -301,48 +313,46 @@ class Leased<T : Any>(
                 holders++
                 back.away = false
             } else {
-                grant(w.key)
+                w.ticket = grant(w.key)
             }
             w.go.complete(Unit)
         }
     }
 
     /**
-     * The head of the line, if it fits. A head waiting for another model
-     * can't go while a run stands aside for the person, since that run's
-     * conversation keeps the open model. Runs on the open model may fill its
-     * places past the head only while the runs that stood aside when it got
-     * stuck are still away; runs that go aside later don't keep that open,
-     * so a stream of overlapping asides can't hold the head off for good.
+     * The head of the line, if it fits. Otherwise, for a head waiting for
+     * another model while a run admitted before it stands aside, the first
+     * run on the open model that fits, since the head can't go until that
+     * run comes back. Runs admitted after the head don't count, so the ones
+     * that went past can't keep it waiting by stepping aside in turn.
      */
     private fun next(): Waiter? {
         val head = waiting.peek() ?: return null
         if (fits(head)) return head
         if (head.back != null || head.key == key) return null
-        // Noted the first time asides are what hold it up: a head stuck
-        // behind working runs notes nobody yet, and does once they step aside.
-        if (head.stuckBehind.isNullOrEmpty() && standing.isNotEmpty()) head.stuckBehind = standing.toSet()
-        val stuck = head.stuckBehind ?: return null
-        if (stuck.none { it in standing }) return null
+        if (standing.none { it.ticket < head.arrived }) return null
         return waiting.sortedWith(order).firstOrNull { it.key == key && fits(it) }
     }
 
-    private fun grant(k: String) {
+    /** A place on [k], opening it if needed; returns the holder's ticket. */
+    private fun grant(k: String): Long {
         if (key != k) {
             shut()
             key = k
         }
         holders++
+        return admitted++
     }
 
-    private suspend fun acquire(k: String, priority: Int, onWait: () -> Unit): T {
+    private suspend fun acquire(k: String, priority: Int, onWait: () -> Unit): Pair<T, Long> {
+        var ticket = -1L
         val w = lock.withLock {
             if (waiting.isEmpty() && fits(k)) {
-                grant(k)
+                ticket = grant(k)
                 null
             } else {
                 // It may go ahead of a head that doesn't fit, and fit itself.
-                Waiter(k, priority, seq++).also { waiting.add(it); dispatch() }
+                Waiter(k, priority, seq++, admitted).also { waiting.add(it); dispatch() }
             }
         }
         if (w != null) {
@@ -361,9 +371,10 @@ class Leased<T : Any>(
                 }
                 throw e
             }
+            ticket = w.ticket
         }
         // The first holder of a newly granted key opens it; the rest find it open.
-        return try {
+        val v = try {
             lock.withLock { value ?: open(k).also { value = it } }
         } catch (e: Throwable) {
             withContext(NonCancellable) {
@@ -375,6 +386,7 @@ class Leased<T : Any>(
             }
             throw e
         }
+        return v to ticket
     }
 
     private fun shut() {
