@@ -6,6 +6,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 import java.util.PriorityQueue
 import java.util.concurrent.ConcurrentHashMap
 
@@ -146,68 +149,127 @@ class Turns {
     }
 }
 
+/** How many of something each key has going, such as a bot's runs. */
+class Counts {
+    private val n = ConcurrentHashMap<String, Int>()
+
+    /** One more for [k]; the new count. */
+    fun up(k: String): Int = n.merge(k, 1, Int::plus) ?: 1
+
+    /** One fewer for [k]; what is left. */
+    fun down(k: String): Int = n.computeIfPresent(k) { _, v -> if (v <= 1) null else v - 1 } ?: 0
+
+    fun of(k: String): Int = n[k] ?: 0
+}
+
 /**
  * One heavy thing opened for a key, such as the model loaded from one file.
- * Users of the open key share it; a different key waits until nobody holds
- * the open one, then closes it and opens its own. A holder may take it again
- * for the same key while it holds it.
+ * Up to [limit] holders share the open key at once; a different key waits
+ * until nobody holds the open one, then closes it and opens its own.
+ *
+ * Waiters are served strictly by priority (lower first), then in arrival
+ * order, and nobody passes the one at the head: a run waiting for another
+ * model isn't starved by a stream of runs on the current one, and the
+ * person's messages go first. A hold taken inside a hold of the same key
+ * (task_verify within a run) joins it at once and counts for nothing.
  */
 class Leased<T : Any>(
     private val open: suspend (String) -> T,
     private val close: (T) -> Unit,
+    private val limit: Int = Int.MAX_VALUE,
 ) {
+    private class Waiter(val key: String, val priority: Int, val seq: Long, val go: CompletableDeferred<Unit> = CompletableDeferred())
+    private class Held(val owner: Leased<*>, val heldKey: String) : AbstractCoroutineContextElement(Held) {
+        companion object : CoroutineContext.Key<Held>
+    }
+
     private val lock = Mutex()
     private var value: T? = null
     @Volatile var key: String? = null
         private set
     private var holders = 0
-    private var free = CompletableDeferred<Unit>()
+    private var seq = 0L
+    private val waiting = PriorityQueue<Waiter>(compareBy<Waiter>({ it.priority }, { it.seq }))
 
     val isOpen: Boolean get() = key != null
 
-    suspend fun <R> hold(k: String, block: suspend (T) -> R): R {
-        val v = acquire(k)
+    suspend fun <R> hold(k: String, priority: Int = 0, onWait: () -> Unit = {}, block: suspend (T) -> R): R {
+        coroutineContext[Held]?.let { h ->
+            if (h.owner === this && h.heldKey == k) return block(lock.withLock { value!! })
+        }
+        val v = acquire(k, priority, onWait)
         try {
-            return block(v)
+            return withContext(Held(this, k)) { block(v) }
         } finally {
-            withContext(NonCancellable) { release() }
+            withContext(NonCancellable) { lock.withLock { holders--; dispatch() } }
         }
     }
 
-    /** Close it if nobody holds it. True when nothing is open afterwards. */
+    /** Close it if nobody holds it or waits for it. True when nothing is open afterwards. */
     suspend fun closeIfFree(): Boolean = lock.withLock {
         if (holders > 0) return@withLock false
         shut()
         true
     }
 
-    private suspend fun acquire(k: String): T {
+    private fun fits(k: String) = holders == 0 || (key == k && holders < limit)
+
+    /** Hand the open key to whoever is next, in order, as far as it fits. */
+    private fun dispatch() {
         while (true) {
-            val wait = lock.withLock {
-                val cur = value
-                if (cur != null && key == k) {
-                    holders++
-                    return cur
-                }
-                if (holders == 0) {
-                    shut()
-                    val v = open(k)
-                    value = v
-                    key = k
-                    holders++
-                    return v
-                }
-                free
-            }
-            wait.await()
+            val w = waiting.peek() ?: return
+            if (!fits(w.key)) return
+            waiting.poll()
+            grant(w.key)
+            w.go.complete(Unit)
         }
     }
 
-    private suspend fun release() = lock.withLock {
-        holders--
-        if (holders == 0) {
-            free.complete(Unit)
-            free = CompletableDeferred()
+    private fun grant(k: String) {
+        if (key != k) {
+            shut()
+            key = k
+        }
+        holders++
+    }
+
+    private suspend fun acquire(k: String, priority: Int, onWait: () -> Unit): T {
+        val w = lock.withLock {
+            if (waiting.isEmpty() && fits(k)) {
+                grant(k)
+                null
+            } else {
+                Waiter(k, priority, seq++).also { waiting.add(it) }
+            }
+        }
+        if (w != null) {
+            onWait()
+            try {
+                w.go.await()
+            } catch (e: CancellationException) {
+                // Cancelled while waiting: leave the line, or give back
+                // what was already handed over.
+                withContext(NonCancellable) {
+                    lock.withLock {
+                        if (!waiting.remove(w)) holders--
+                        dispatch()
+                    }
+                }
+                throw e
+            }
+        }
+        // The first holder of a newly granted key opens it; the rest find it open.
+        return try {
+            lock.withLock { value ?: open(k).also { value = it } }
+        } catch (e: Throwable) {
+            withContext(NonCancellable) {
+                lock.withLock {
+                    holders--
+                    if (holders == 0 && value == null) key = null
+                    dispatch()
+                }
+            }
+            throw e
         }
     }
 

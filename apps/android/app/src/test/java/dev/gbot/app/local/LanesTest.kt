@@ -59,4 +59,74 @@ class LanesTest {
         assertFalse(model.isOpen)
         assertEquals(listOf("small", "big"), closed.toList())
     }
+
+    @Test
+    fun `a run waiting for another model is not passed by runs on the open one`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {})
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val gate = CompletableDeferred<Unit>()
+        val a = launch(Dispatchers.Default) { model.hold("small") { gate.await() } }
+        delay(50)
+        val big = launch(Dispatchers.Default) { model.hold("big") { order.add("big") } }
+        delay(50)
+        // small is open, but big is first in line, so this one waits behind it.
+        val small = launch(Dispatchers.Default) { model.hold("small") { order.add("small") } }
+        delay(100)
+        assertTrue(order.isEmpty())
+        gate.complete(Unit)
+        withTimeout(5000) { a.join(); big.join(); small.join() }
+        assertEquals(listOf("big", "small"), order.toList())
+    }
+
+    @Test
+    fun `past the limit the person goes first, and a nested hold never waits`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 1)
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val gate = CompletableDeferred<Unit>()
+        var waited = 0
+        val a = launch(Dispatchers.Default) {
+            model.hold("small") {
+                gate.await()
+                // task_verify inside the run: same model, no second slot.
+                withTimeout(1000) { model.hold("small") { order.add("verify") } }
+            }
+        }
+        delay(50)
+        val bots = launch(Dispatchers.Default) { model.hold("small", Priority.BOTS, onWait = { waited++ }) { order.add("bots") } }
+        delay(30)
+        val person = launch(Dispatchers.Default) { model.hold("small", Priority.PERSON, onWait = { waited++ }) { order.add("person") } }
+        delay(50)
+        assertEquals(2, waited)
+        gate.complete(Unit)
+        withTimeout(5000) { a.join(); bots.join(); person.join() }
+        assertEquals(listOf("verify", "person", "bots"), order.toList())
+    }
+
+    @Test
+    fun `a run cancelled while waiting for the model gives up its place`(): Unit = runBlocking {
+        val model = Leased<String>(open = { it }, close = {}, limit = 1)
+        val gate = CompletableDeferred<Unit>()
+        val a = launch(Dispatchers.Default) { model.hold("small") { gate.await() } }
+        delay(50)
+        val waiting = launch(Dispatchers.Default) { model.hold("big") { error("should not run") } }
+        delay(50)
+        waiting.cancel()
+        waiting.join()
+        gate.complete(Unit)
+        withTimeout(5000) { a.join() }
+        withTimeout(1000) { model.hold("small") { assertEquals("small", it) } }
+        assertTrue(model.closeIfFree())
+    }
+
+    @Test
+    fun `a bot's runs are counted so the last one to end clears it`() {
+        val runs = Counts()
+        assertEquals(1, runs.up("pip"))
+        assertEquals(2, runs.up("pip"))
+        assertEquals(1, runs.down("pip"))
+        assertEquals(1, runs.of("pip"))
+        assertEquals(0, runs.down("pip"))
+        assertEquals(0, runs.down("pip"))
+        assertEquals(0, runs.of("pip"))
+    }
 }

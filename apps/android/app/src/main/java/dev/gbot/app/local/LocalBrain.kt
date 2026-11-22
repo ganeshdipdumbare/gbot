@@ -117,9 +117,12 @@ class LocalBrain(
     // The phone's own model, loaded from one file at a time. Every run on it
     // holds it while its conversation is open, so it is never closed or
     // swapped under one; a run on another model waits until it is free.
+    // Each open conversation keeps its own context cache in memory, so only
+    // MODEL_RUNS runs keep one open at once; the rest wait their turn, the
+    // person's messages first.
     // Typed as AutoCloseable so building the brain doesn't load the engine's
     // classes; only running a model on the phone does.
-    private val engine = Leased<AutoCloseable>(open = { loadEngine(it) }, close = { it.close() })
+    private val engine = Leased<AutoCloseable>(open = { loadEngine(it) }, close = { it.close() }, limit = MODEL_RUNS)
 
     // Each chat is its own queue, so bots answer side by side, as on the
     // server. What the phone has only one of is shared more narrowly: the
@@ -136,7 +139,10 @@ class LocalBrain(
     private val queues = ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<QueueItem>>()
     private val paused = ConcurrentHashMap.newKeySet<String>()
     private val stopped = ConcurrentHashMap.newKeySet<String>()
-    private val browsing = ConcurrentHashMap.newKeySet<String>()
+    // A bot can now run in its own chat and in a group at once, so what it
+    // shows (working, browsing) clears only when its last run ends.
+    private val botRuns = Counts()
+    private val browsing = Counts()
     @Volatile private var warnedCpu = false
 
     /** What one run holds and has done, now that runs overlap. */
@@ -144,6 +150,7 @@ class LocalBrain(
         // What the run agreed and did, for task_verify.
         val proof = RunBook()
         @Volatile var hasBrowser = false
+        @Volatile var onComputer = false
     }
 
     fun launch(bot: Bot, prompt: String) = start(Work(bot.id, prompt))
@@ -314,7 +321,7 @@ class LocalBrain(
         })
     }
 
-    fun isBrowsing(botId: String): Boolean = botId in browsing
+    fun isBrowsing(botId: String): Boolean = browsing.of(botId) > 0
 
     /** What is held in memory right now, as a model id, or null. */
     fun loadedModelId(): String? = engine.key?.let { LocalModels.id(File(it)) }
@@ -399,6 +406,7 @@ class LocalBrain(
         // A Slack message is outside text from the start, and so is a
         // message from a bot whose own run had read some.
         val taint = RunTaint(w.untrusted || w.kind == "slack")
+        botRuns.up(bot.id)
         emitPresence(bot.id, group, "thinking")
         try {
             fun stage(detail: String) = emitPresence(bot.id, group, "working", detail)
@@ -546,17 +554,24 @@ class LocalBrain(
             }
             throw e
         } finally {
-            if (exchange.isNotEmpty()) settle(exchange, status, outcome)
-            round.id?.let(::closeRound)
+            // The browser window goes back first: nothing below may keep it
+            // from every other bot if it throws.
             if (rs.hasBrowser) {
                 rs.hasBrowser = false
                 browserLock.unlock()
             }
-            browsing.remove(bot.id)
-            emitComputer(bot.id, false)
-            // In a group the reply itself is the alert; its own chat has
-            // nothing else to show for it, so settle through "done".
-            if (landed && group == null) settleDone(bot) else emitPresence(bot.id, group, "idle")
+            val others = botRuns.down(bot.id)
+            if (rs.onComputer && browsing.down(bot.id) == 0) emitComputer(bot.id, false)
+            try {
+                if (exchange.isNotEmpty()) settle(exchange, status, outcome)
+                round.id?.let(::closeRound)
+            } finally {
+                // In a group the reply itself is the alert; its own chat has
+                // nothing else to show for it, so settle through "done".
+                // Another run of this bot still going keeps it working.
+                if (landed && group == null) settleDone(bot)
+                else emitPresence(bot.id, group, if (others > 0) "thinking" else "idle")
+            }
         }
     }
 
@@ -665,7 +680,7 @@ class LocalBrain(
             samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.3, seed = 0),
             maxOutputToken = 160,
         )
-        withEngine(file) { e ->
+        withEngine(file, priority) { e ->
             turns.take(priority) {
                 e.createConversation(config).use { conv ->
                     val sb = StringBuilder()
@@ -734,7 +749,7 @@ class LocalBrain(
         // The conversation stays open for the whole run, but the model is
         // only this run's while it reads and writes: other runs on it
         // generate while this one's tools run or it waits on the person.
-        withEngine(file) { e -> turns.take(rs.priority) { e.createConversation(config) }.use { conv ->
+        withEngine(file, rs.priority, onWait = { onStage("Waiting for the model") }) { e -> turns.take(rs.priority) { e.createConversation(config) }.use { conv ->
             var next: Message = Message.user(prompt.take(4000))
             var answer = ""
             var rescues = 0
@@ -819,8 +834,9 @@ class LocalBrain(
             }
             rs.hasBrowser = true
         }
-        if (onComputer) {
-            browsing.add(bot.id)
+        if (onComputer && !rs.onComputer) {
+            rs.onComputer = true
+            browsing.up(bot.id)
             emitComputer(bot.id, true)
         }
         stage(
@@ -909,7 +925,7 @@ class LocalBrain(
             )
             // Called from a tool, between the run's own model calls, so the
             // run holds the model (same file) but not the turn.
-            withEngine(model.file) { e ->
+            withEngine(model.file, priority) { e ->
                 turns.take(priority) {
                     e.createConversation(config).use { conv ->
                         val sb = StringBuilder()
@@ -968,7 +984,8 @@ class LocalBrain(
     }
 
     /** Hold the phone's model, loaded from [file], while [block] runs. */
-    private suspend fun <T> withEngine(file: File, block: suspend (Engine) -> T): T = engine.hold(file.absolutePath) { block(it as Engine) }
+    private suspend fun <T> withEngine(file: File, priority: Int, onWait: () -> Unit = {}, block: suspend (Engine) -> T): T =
+        engine.hold(file.absolutePath, priority, onWait) { block(it as Engine) }
 
     /** Called by [engine] with nobody holding the last model, which it has closed. */
     private fun loadEngine(path: String): Engine {
@@ -1303,7 +1320,7 @@ class LocalBrain(
         emitPresence(bot.id, null, "done")
         scope.launch {
             delay(2500)
-            if (presence[bot.id]?.state == "done") emitPresence(bot.id, null, "idle")
+            if (presence[bot.id]?.state == "done") emitPresence(bot.id, null, if (botRuns.of(bot.id) > 0) "thinking" else "idle")
         }
     }
 
@@ -1439,6 +1456,14 @@ class LocalBrain(
 
 /** What a bot replies when it has nothing to send back. */
 const val NO_REPLY = "NO_REPLY"
+
+/**
+ * How many runs may keep a conversation open on the phone's own model at
+ * once. Each holds its own context cache (up to 8192 tokens) in memory, on
+ * top of the model itself; a third waits rather than risk the phone killing
+ * gbot for memory. Waiting runs are not stopped or timed out.
+ */
+const val MODEL_RUNS = 2
 
 /**
  * Whether a message is worth a planning pass. On the phone's own model
