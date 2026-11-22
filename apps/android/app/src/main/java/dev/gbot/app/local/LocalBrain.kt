@@ -26,10 +26,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -49,6 +49,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Tools that drive the bot's browser or computer, not just the web. */
 internal fun usesComputer(name: String) = name in COMPUTER_TOOLS
+
+/** Tools that work in the phone's one browser window (open_in_chrome hands off to Chrome instead). */
+internal fun usesBrowserWindow(name: String) = name.startsWith("browser_") || name == "vault_type"
 
 private val COMPUTER_TOOLS = setOf(
     "browser_open", "browser_read", "browser_click", "browser_fill", "browser_enter",
@@ -111,13 +114,23 @@ class LocalBrain(
     private val browser: BrowserController,
     private val scope: CoroutineScope,
 ) {
-    private val engineLock = Mutex()
-    private var engine: Engine? = null
-    private var engineKey: String? = null
+    // The phone's own model, loaded from one file at a time. Every run on it
+    // holds it while its conversation is open, so it is never closed or
+    // swapped under one; a run on another model waits until it is free.
+    // Each open conversation keeps its own context cache in memory, so only
+    // MODEL_RUNS runs keep one open at once; the rest wait their turn, the
+    // person's messages first.
+    // Typed as AutoCloseable so building the brain doesn't load the engine's
+    // classes; only running a model on the phone does.
+    private val engine = Leased<AutoCloseable>(open = { loadEngine(it) }, close = { it.close() }, limit = MODEL_RUNS)
 
-    // One model runs at a time on a phone; other runs wait their turn in
-    // the same queue the chat already draws, the person's messages first.
+    // Each chat is its own queue, so bots answer side by side, as on the
+    // server. What the phone has only one of is shared more narrowly: the
+    // model generates for one run at a time, the person's messages first,
+    // and the browser window belongs to one run until that run ends.
+    private val lanes = Lanes()
     private val turns = Turns()
+    private val browserLock = Mutex()
     private val book = AskBook()
     private val recovered = java.util.concurrent.atomic.AtomicBoolean(false)
     private var idleJob: Job? = null
@@ -126,11 +139,23 @@ class LocalBrain(
     private val queues = ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<QueueItem>>()
     private val paused = ConcurrentHashMap.newKeySet<String>()
     private val stopped = ConcurrentHashMap.newKeySet<String>()
-    private val browsing = ConcurrentHashMap.newKeySet<String>()
-    // What the running run agreed and did, for task_verify. One run holds
-    // the turn at a time, so one is enough.
-    @Volatile private var proof: RunBook? = null
+    // A bot can now run in its own chat and in a group at once (one run per
+    // chat, so a chat names a run). What it shows is kept per chat, so when
+    // one run ends the other's state (above all "waiting" on the person)
+    // comes back instead of being overwritten; browsing clears with its last run.
+    private class Shown(val group: Group?, val state: String, val detail: String?, val seq: Long)
+    private val shown = ConcurrentHashMap<String, ConcurrentHashMap<String, Shown>>()
+    private val shownSeq = java.util.concurrent.atomic.AtomicLong()
+    private val browsing = Counts()
     @Volatile private var warnedCpu = false
+
+    /** What one run holds and has done, now that runs overlap. */
+    private class RunState(val priority: Int) {
+        // What the run agreed and did, for task_verify.
+        val proof = RunBook()
+        @Volatile var hasBrowser = false
+        @Volatile var onComputer = false
+    }
 
     fun launch(bot: Bot, prompt: String) = start(Work(bot.id, prompt))
 
@@ -207,10 +232,10 @@ class LocalBrain(
         val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             // A paused message waits outside the line, so others go ahead.
             while (qid in paused && isActive) delay(300)
-            turns.take(w.priority) {
+            lanes.run(chat) {
                 doneQueued(chat, qid)
-                val bot = db.bot(w.botId) ?: return@take
-                val group = w.groupId?.let { db.group(it) ?: return@take }
+                val bot = db.bot(w.botId) ?: return@run
+                val group = w.groupId?.let { db.group(it) ?: return@run }
                 if (w.durable) db.putQueued(qid, now(), json.encodeToString(Work.serializer(), w.copy(tries = w.tries + 1)))
                 runCatching { run(bot, group, w) }
                     .onFailure {
@@ -300,28 +325,27 @@ class LocalBrain(
         })
     }
 
-    fun isBrowsing(botId: String): Boolean = botId in browsing
+    fun isBrowsing(botId: String): Boolean = browsing.of(botId) > 0
 
     /** What is held in memory right now, as a model id, or null. */
-    fun loadedModelId(): String? = engineKey?.let { LocalModels.id(File(it)) }
+    fun loadedModelId(): String? = engine.key?.let { LocalModels.id(File(it)) }
 
     /** The idle window, from the person's setting. */
     fun idleMinutes(): Int = ModelMemory.minutesOf(db.get("modelIdle"))
 
     fun setIdleMinutes(minutes: Int) {
         db.set("modelIdle", minutes.toString())
-        if (engine != null) scheduleIdleUnload()
+        if (engine.isOpen) scheduleIdleUnload()
     }
 
-    /** Close the native model only when no reply is running. */
+    /**
+     * Close the native model only when no run is queued or running in any
+     * chat; already unloaded counts as done. A run between two of its model
+     * calls would only load it again.
+     */
     suspend fun unloadIfIdle(): Boolean {
-        if (!turns.tryTake()) return false
-        return try {
-            engineLock.withLock { closeEngine() }
-            true // already unloaded counts as done
-        } finally {
-            turns.release()
-        }
+        if (busy()) return false
+        return engine.closeIfFree()
     }
 
     suspend fun unloadNow(): Boolean {
@@ -334,19 +358,14 @@ class LocalBrain(
     suspend fun shutdown() {
         idleJob?.cancel()
         idleJob = null
+        val running = (jobs.values + byQid.values).toSet()
         jobs.keys.toList().forEach { qid -> jobs.remove(qid)?.cancel() }
         byQid.values.forEach { it.cancel() }
         byQid.clear()
         queues.keys.toList().forEach { clearQueue(it) }
-        turns.take(Priority.PERSON) { engineLock.withLock { closeEngine() } }
-    }
-
-    private fun closeEngine(): Boolean {
-        val had = engine != null
-        runCatching { engine?.close() }
-        engine = null
-        engineKey = null
-        return had
+        // Every run lets go of the model as it stops; then it can close.
+        running.joinAll()
+        engine.closeIfFree()
     }
 
     private fun scheduleIdleUnload() {
@@ -386,7 +405,8 @@ class LocalBrain(
         w.joinRound?.let(::markJoined)
         // The asks this run sends go back together once it ends.
         val round = RunRound()
-        val runProof = RunBook().also { proof = it }
+        val rs = RunState(w.priority)
+        val runProof = rs.proof
         // A Slack message is outside text from the start, and so is a
         // message from a bot whose own run had read some.
         val taint = RunTaint(w.untrusted || w.kind == "slack")
@@ -436,7 +456,7 @@ class LocalBrain(
                     override suspend fun verify(): String {
                         val c = runProof.contract ?: return "Agree on a task_contract first."
                         book.call(w.root)
-                        val raw = oneShot(model, "You are an independent verifier.", verifyPrompt(prompt, c, runProof.evidence()), 1200)
+                        val raw = oneShot(model, w.priority, "You are an independent verifier.", verifyPrompt(prompt, c, runProof.evidence()), 1200)
                         return receipt(raw).also { runProof.receipt = it }
                     }
                 },
@@ -449,55 +469,59 @@ class LocalBrain(
             // and skipped quietly if the model will not produce one. A
             // bot's ask is already scoped by the bot that sent it, and a
             // round's answers only need finishing, so those skip it: on a
-            // phone every model call waits in the same line.
+            // phone's own model every call waits for its turn.
             // Needle, if it is on this phone, reads a short request first and
             // runs the one read-only tool it is sure of, so the model starts
             // with the result instead of spending a step choosing the tool.
             // Only when a model will read it, and within the run's time limit;
             // a request it already looked up needs no plan either.
             val lookup = if (model == null) "" else {
-                withTimeoutOrNull(RUN_TIMEOUT_MS) { needleHead(bot, group, w, prompt, tools, model is BrainModel.Remote, ::stage) }.orEmpty()
+                withTimeoutOrNull(RUN_TIMEOUT_MS) { needleHead(bot, group, w, rs, prompt, tools, model is BrainModel.Remote, ::stage) }.orEmpty()
             }
-            val plan = if (!w.plans || !worthPlanning(prompt) || lookup.isNotEmpty()) "" else {
-                stage("Planning")
+            // A run on the phone's model takes its place before it plans, so
+            // the plan's time limit counts planning, not waiting.
+            val text = holdModel(model, w.priority, ::stage) {
+                val plan = if (!w.plans || !worthPlanning(prompt) || lookup.isNotEmpty()) "" else {
+                    stage("Planning")
+                    book.call(w.root)
+                    withTimeoutOrNull(PLAN_TIMEOUT_MS) {
+                        when (model) {
+                            is BrainModel.Local -> planLocal(model.file, w.priority, bot, group, prompt, history)
+                            is BrainModel.Remote -> planRemote(model, bot, group, prompt, history)
+                            null -> null
+                        }
+                    }.let { cleanPlan(it.orEmpty()) }
+                }
+                if (plan.isNotEmpty()) log("plan ${plan.length} chars")
+
+                val system = systemPrompt(bot, group, peers) + planBlock(plan)
+
                 book.call(w.root)
-                withTimeoutOrNull(PLAN_TIMEOUT_MS) {
+                withTimeoutOrNull(RUN_TIMEOUT_MS) {
+                    val asked = prompt + lookup
                     when (model) {
-                        is BrainModel.Local -> planLocal(model.file, bot, group, prompt, history)
-                        is BrainModel.Remote -> planRemote(model, bot, group, prompt, history)
-                        null -> null
-                    }
-                }.let { cleanPlan(it.orEmpty()) }
-            }
-            if (plan.isNotEmpty()) log("plan ${plan.length} chars")
-
-            val system = systemPrompt(bot, group, peers) + planBlock(plan)
-
-            book.call(w.root)
-            val text = withTimeoutOrNull(RUN_TIMEOUT_MS) {
-                val asked = prompt + lookup
-                when (model) {
-                    is BrainModel.Local -> {
-                        log("local ${model.file.name} history=${history.size} tools=${tools.schemas.size + mcpTools.size}")
-                        runLocal(model.file, system, history, asked, tools, mcpTools, bot, group, ::stage)
-                    }
-                    is BrainModel.Remote -> {
-                        log("provider ${model.provider.name} ${model.name}")
-                        withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
-                            api.providers.run(
-                                model.provider, model.name, system, groupHistory(history, group, bot), asked, tools.schemas + mcpTools,
-                                onText = {},
-                                execute = { call -> executeTool(tools, bot, group, call.name, call.arguments.toJson(), ::stage) },
+                        is BrainModel.Local -> {
+                            log("local ${model.file.name} history=${history.size} tools=${tools.schemas.size + mcpTools.size}")
+                            runLocal(model.file, rs, system, history, asked, tools, mcpTools, bot, group, ::stage)
+                        }
+                        is BrainModel.Remote -> {
+                            log("provider ${model.provider.name} ${model.name}")
+                            withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
+                                api.providers.run(
+                                    model.provider, model.name, system, groupHistory(history, group, bot), asked, tools.schemas + mcpTools,
+                                    onText = {},
+                                    execute = { call -> executeTool(tools, rs, bot, group, call.name, call.arguments.toJson(), ::stage) },
+                                )
+                            } ?: throw IllegalStateException(
+                                "${model.provider.name} was still going after ${PROVIDER_TIMEOUT_MS / 60000} minutes, so I stopped. " +
+                                    "Check the endpoint and key in Settings → Models.",
                             )
-                        } ?: throw IllegalStateException(
-                            "${model.provider.name} was still going after ${PROVIDER_TIMEOUT_MS / 60000} minutes, so I stopped. " +
-                                "Check the endpoint and key in Settings → Models.",
-                        )
-                    }
-                    null -> if (api.providers.list().isNotEmpty()) {
-                        "Your provider isn't offering any models yet. Open Settings → Models → Providers and press refresh on it."
-                    } else {
-                        "There is no model on this phone yet. Open Settings → Models and download one, or connect a provider."
+                        }
+                        null -> if (api.providers.list().isNotEmpty()) {
+                            "Your provider isn't offering any models yet. Open Settings → Models → Providers and press refresh on it."
+                        } else {
+                            "There is no model on this phone yet. Open Settings → Models and download one, or connect a provider."
+                        }
                     }
                 }
             }
@@ -537,14 +561,23 @@ class LocalBrain(
             }
             throw e
         } finally {
-            if (exchange.isNotEmpty()) settle(exchange, status, outcome)
-            round.id?.let(::closeRound)
-            if (proof === runProof) proof = null
-            browsing.remove(bot.id)
-            emitComputer(bot.id, false)
-            // In a group the reply itself is the alert; its own chat has
-            // nothing else to show for it, so settle through "done".
-            if (landed && group == null) settleDone(bot) else emitPresence(bot.id, group, "idle")
+            // The browser window goes back first: nothing below may keep it
+            // from every other bot if it throws.
+            if (rs.hasBrowser) {
+                rs.hasBrowser = false
+                browserLock.unlock()
+            }
+            if (rs.onComputer && browsing.down(bot.id) == 0) emitComputer(bot.id, false)
+            try {
+                if (exchange.isNotEmpty()) settle(exchange, status, outcome)
+                round.id?.let(::closeRound)
+            } finally {
+                // In a group the reply itself is the alert; its own chat has
+                // nothing else to show for it, so settle through "done".
+                // Another run of this bot still going shows its own state again.
+                shown[bot.id]?.remove(group?.id.orEmpty())
+                if (landed && group == null) settleDone(bot) else showRest(bot.id)
+            }
         }
     }
 
@@ -563,7 +596,7 @@ class LocalBrain(
      * dropped once any other tool runs; a failed lookup isn't kept at all.
      */
     private suspend fun needleHead(
-        bot: Bot, group: Group?, w: Work, prompt: String,
+        bot: Bot, group: Group?, w: Work, rs: RunState, prompt: String,
         tools: LocalTools, remote: Boolean, stage: (String) -> Unit,
     ): String {
         if (w.kind != "person" || w.from != null || prompt.length > NEEDLE_MAX_CHARS || !Needle.ready(ctx)) return ""
@@ -572,7 +605,7 @@ class LocalBrain(
         }
         val call = withContext(Dispatchers.Default) { Needle.route(ctx, prompt, safe) } ?: return ""
         log("needle ${call.name} confidence=${call.confidence}")
-        val out = executeTool(tools, bot, group, call.name, call.arguments, stage)
+        val out = executeTool(tools, rs, bot, group, call.name, call.arguments, stage)
         // A failed lookup isn't kept: the model's retry should really run.
         if (!out.startsWith("The tool failed")) tools.prefetched[prefetchKey(call.name, call.arguments)] = out
         return needleBlock(call.name, call.arguments.toString(), out)
@@ -639,12 +672,12 @@ class LocalBrain(
 
     private suspend fun planLocal(
         file: File,
+        priority: Int,
         bot: Bot,
         group: Group?,
         prompt: String,
         history: List<GMessage>,
     ): String = withContext(Dispatchers.IO) {
-        val e = engine(file)
         val config = ConversationConfig(
             systemInstruction = Contents.of(planSystem(bot, group)),
             initialMessages = emptyList(),
@@ -653,10 +686,14 @@ class LocalBrain(
             samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.3, seed = 0),
             maxOutputToken = 160,
         )
-        e.createConversation(config).use { conv ->
-            val sb = StringBuilder()
-            conv.sendMessageAsync(Message.user(planAsk(prompt, history, group, bot))).collect { sb.append(textOf(it)) }
-            sb.toString()
+        withEngine(file, priority) { e ->
+            turns.take(priority) {
+                e.createConversation(config).use { conv ->
+                    val sb = StringBuilder()
+                    conv.sendMessageAsync(Message.user(planAsk(prompt, history, group, bot))).collect { sb.append(textOf(it)) }
+                    sb.toString()
+                }
+            }
         }
     }
 
@@ -675,6 +712,7 @@ class LocalBrain(
 
     private suspend fun runLocal(
         file: File,
+        rs: RunState,
         system: String,
         history: List<GMessage>,
         prompt: String,
@@ -684,7 +722,6 @@ class LocalBrain(
         group: Group?,
         onStage: (String) -> Unit,
     ): String = withContext(Dispatchers.IO) {
-        val e = engine(file)
         val config = ConversationConfig(
             systemInstruction = Contents.of(system),
             initialMessages = history.map { m ->
@@ -715,7 +752,10 @@ class LocalBrain(
         )
 
         val schemas = tools.schemas + mcpTools
-        e.createConversation(config).use { conv ->
+        // The conversation stays open for the whole run, but the model is
+        // only this run's while it reads and writes: other runs on it
+        // generate while this one's tools run or it waits on the person.
+        withEngine(file, rs.priority, onWait = { onStage("Waiting for the model") }) { e -> turns.take(rs.priority) { e.createConversation(config) }.use { conv ->
             var next: Message = Message.user(prompt.take(4000))
             var answer = ""
             var rescues = 0
@@ -725,9 +765,11 @@ class LocalBrain(
                 val text = StringBuilder()
                 var calls: List<ToolCall> = emptyList()
                 val failure = runCatching {
-                    conv.sendMessageAsync(next).collect { m ->
-                        text.append(textOf(m))
-                        if (m.toolCalls.isNotEmpty()) calls = m.toolCalls
+                    turns.take(rs.priority) {
+                        conv.sendMessageAsync(next).collect { m ->
+                            text.append(textOf(m))
+                            if (m.toolCalls.isNotEmpty()) calls = m.toolCalls
+                        }
                     }
                 }.exceptionOrNull()
                 if (failure != null) {
@@ -743,7 +785,7 @@ class LocalBrain(
                         // The engine's own turn did not survive the parse, so
                         // the result goes back as plain text rather than as a
                         // reply to a tool call it never recorded.
-                        val out = executeTool(tools, bot, group, rescued.name, rescued.arguments, onStage)
+                        val out = executeTool(tools, rs, bot, group, rescued.name, rescued.arguments, onStage)
                         Message.user("Result of ${rescued.name}:\n$out")
                     }
                     return@repeat
@@ -752,7 +794,7 @@ class LocalBrain(
                 if (text.isNotBlank()) answer = text.toString()
                 if (calls.isEmpty()) return@use answer
                 val results = calls.map { call ->
-                    call.name to executeTool(tools, bot, group, call.name, call.arguments.toJson(), onStage)
+                    call.name to executeTool(tools, rs, bot, group, call.name, call.arguments.toJson(), onStage)
                 }
                 // One step left: hand the results back as words with the
                 // wrap-up, so the run ends with its report rather than with
@@ -766,11 +808,12 @@ class LocalBrain(
                 }
             }
             answer.ifBlank { OUT_OF_STEPS }
-        }
+        } }
     }
 
     private suspend fun executeTool(
         tools: LocalTools,
+        rs: RunState,
         bot: Bot,
         group: Group?,
         called: String,
@@ -787,8 +830,19 @@ class LocalBrain(
         tools.prefetched.clear()
         val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch" || name == "web_search"
         val onComputer = usesComputer(name)
-        if (onComputer) {
-            browsing.add(bot.id)
+        // The phone has one browser window, and a page carries over from one
+        // call to the next, so it is this run's from its first browser step
+        // until the run ends. Another bot browsing first means a wait.
+        if (!rs.hasBrowser && usesBrowserWindow(name)) {
+            if (!browserLock.tryLock()) {
+                stage("Waiting for the browser")
+                engine.aside { browserLock.lock() }
+            }
+            rs.hasBrowser = true
+        }
+        if (onComputer && !rs.onComputer) {
+            rs.onComputer = true
+            browsing.up(bot.id)
             emitComputer(bot.id, true)
         }
         stage(
@@ -817,7 +871,7 @@ class LocalBrain(
         }.getOrElse { "The tool failed: ${it.message}" }
         if (name in RunTaint.SOURCES || api.isMcpTool(name)) tools.taint.mark(name)
         if (name != "show_ui") tools.see(out)
-        proof?.add(evidenceName(name, args), out)
+        rs.proof.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
         // the bot is and what they could be watching.
         if (name.startsWith("browser_") && usesComputer(name)) {
@@ -858,7 +912,7 @@ class LocalBrain(
         db.putMessage(card)
         emit("message", bot.id, json.encodeToJsonElement(card), group?.id)
         emitPresence(bot.id, group, "waiting", "Has a question")
-        api.awaitAnswer(id)
+        engine.aside { api.awaitAnswer(id) }
         emitPresence(bot.id, group, "thinking")
         val m = db.message(id)
         val answer = m?.str("answer").orEmpty()
@@ -867,7 +921,7 @@ class LocalBrain(
     }
 
     /** One plain call to the model, with no tools or history: planning aside, used to check work. */
-    private suspend fun oneShot(model: BrainModel?, system: String, prompt: String, maxTokens: Int): String = when (model) {
+    private suspend fun oneShot(model: BrainModel?, priority: Int, system: String, prompt: String, maxTokens: Int): String = when (model) {
         is BrainModel.Remote -> api.providers.run(model.provider, model.name, system, emptyList(), prompt, emptyList(), onText = {}, execute = { "" })
         is BrainModel.Local -> withContext(Dispatchers.IO) {
             val config = ConversationConfig(
@@ -875,10 +929,16 @@ class LocalBrain(
                 automaticToolCalling = false, samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.2, seed = 0),
                 maxOutputToken = maxTokens,
             )
-            engine(model.file).createConversation(config).use { conv ->
-                val sb = StringBuilder()
-                conv.sendMessageAsync(Message.user(prompt.take(6000))).collect { sb.append(textOf(it)) }
-                sb.toString()
+            // Called from a tool, between the run's own model calls, so the
+            // run holds the model (same file) but not the turn.
+            withEngine(model.file, priority) { e ->
+                turns.take(priority) {
+                    e.createConversation(config).use { conv ->
+                        val sb = StringBuilder()
+                        conv.sendMessageAsync(Message.user(prompt.take(6000))).collect { sb.append(textOf(it)) }
+                        sb.toString()
+                    }
+                }
             }
         }
         null -> ""
@@ -906,7 +966,7 @@ class LocalBrain(
         db.putMessage(card)
         emit("message", bot.id, json.encodeToJsonElement(card), group?.id)
         emitPresence(bot.id, group, "waiting")
-        val ok = api.awaitAnswer(id)
+        val ok = engine.aside { api.awaitAnswer(id) }
         emitPresence(bot.id, group, "thinking")
         return ok
     }
@@ -929,10 +989,17 @@ class LocalBrain(
         return list.takeLast(if (group == null) 8 else 12)
     }
 
-    private suspend fun engine(file: File): Engine = engineLock.withLock {
-        val key = file.absolutePath
-        engine?.takeIf { engineKey == key }?.let { return it }
-        engine?.let { runCatching { it.close() } }
+    /** For a run on the phone's model, hold it for all of [block]; any other model just runs. */
+    private suspend fun <T> holdModel(model: BrainModel?, priority: Int, stage: (String) -> Unit, block: suspend () -> T): T =
+        if (model is BrainModel.Local) withEngine(model.file, priority, onWait = { stage("Waiting for the model") }) { block() } else block()
+
+    /** Hold the phone's model, loaded from [file], while [block] runs. */
+    private suspend fun <T> withEngine(file: File, priority: Int, onWait: () -> Unit = {}, block: suspend (Engine) -> T): T =
+        engine.hold(file.absolutePath, priority, onWait) { block(it as Engine) }
+
+    /** Called by [engine] with nobody holding the last model, which it has closed. */
+    private fun loadEngine(path: String): Engine {
+        val file = File(path)
         val config = EngineConfig(
             modelPath = file.absolutePath,
             backend = Backend.GPU(),
@@ -952,10 +1019,8 @@ class LocalBrain(
             Engine(EngineConfig(modelPath = file.absolutePath, backend = Backend.CPU(), maxNumTokens = 8192, cacheDir = ctx.cacheDir.absolutePath))
                 .also { it.initialize() }
         }
-        engine = e
-        engineKey = key
         log("loaded ${file.name}")
-        e
+        return e
     }
 
     private fun systemPrompt(bot: Bot, group: Group?, peers: List<Bot>): String {
@@ -995,7 +1060,7 @@ class LocalBrain(
             appendLine("- calendar_* and contact_search: if the phone has several accounts the answer lists them; ask the person which with ask_user (give the accounts as options), then call again with account. They are remembered after that.")
             appendLine("- ask_user for any question or choice — a card, not plain text. notify, remember, forget, recall, profile, use_skill, file_*, routine_*.")
             appendLine("- task_contract then task_verify for a multi-step deliverable they will check; a quick answer needs neither. Never claim success against a failed check.")
-            appendLine("- show_ui draws a small screen in the chat. For a list of 2+ things to compare (hotels, products, places) you have read from a tool, give items: cards, one per item, with its picture (a page's Image line), price and rating as fields, and its link; then say what matters in prose, don't repeat every row. For a choice with details, a short form or a confirmation, build it from components with a button that sends an event: you get the person's tap and what they filled in. Plain questions stay with ask_user.")
+            appendLine("- show_ui draws a small screen in the chat. Before every reply, decide whether a card would read better than plain text, and if it would, show one and add a line or two of prose. A card fits any answer taken in at a glance: weather, a flight, parcel or train status, a score, a route or travel time, an event, a contact, a price, a few key numbers. Build it as a Card holding a Column: a h4 Text for what it is, a h1 Text for the main value, caption Texts for the details (the tool's description has a weather example). Conversation, explanations, opinions, code and long writing stay as text. For a list of 2+ things to compare (hotels, products, places) you have read from a tool, give items: cards, one per item, with its picture (a page's Image line), price and rating as fields, and its link; then say what matters in prose, don't repeat every row. For a choice with details, a short form or a confirmation, build it from components with a button that sends an event: you get the person's tap and what they filled in. Plain questions stay with ask_user.")
             if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots; asks come back together.")
             if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot can't be archived.")
             if (api.localMcp().any { it.enabled && it.status == "connected" }) appendLine("- Tools starting with mc… come from connected integrations.")
@@ -1198,7 +1263,7 @@ class LocalBrain(
         db.putMessage(card)
         emit("message", bot.id, json.encodeToJsonElement(card), group?.id)
         emitPresence(bot.id, group, "waiting", "Waiting for you")
-        api.awaitAnswer(id)
+        engine.aside { api.awaitAnswer(id) }
         emitPresence(bot.id, group, "thinking")
         val m = db.message(id)
         return Surfaces.answerLine(m?.str("answer").takeIf { m?.str("status") == "answered" }) + note
@@ -1265,11 +1330,20 @@ class LocalBrain(
         emitPresence(bot.id, null, "done")
         scope.launch {
             delay(2500)
-            if (presence[bot.id]?.state == "done") emitPresence(bot.id, null, "idle")
+            if (presence[bot.id]?.state == "done") showRest(bot.id)
         }
     }
 
+    /** Idle, or what another running run of the bot last showed; one waiting on the person first. */
+    private fun showRest(botId: String) {
+        val next = shown[botId]?.values?.maxWithOrNull(compareBy<Shown>({ it.state == "waiting" }, { it.seq }))
+        if (next == null) emitPresence(botId, null, "idle") else emitPresence(botId, next.group, next.state, next.detail)
+    }
+
     private fun emitPresence(botId: String, group: Group?, state: String, detail: String? = null) {
+        if (state in RUN_STATES) {
+            shown.getOrPut(botId) { ConcurrentHashMap() }[group?.id.orEmpty()] = Shown(group, state, detail, shownSeq.incrementAndGet())
+        }
         val p = Presence(state = state, detail = detail)
         if (state == "idle") presence.remove(botId) else presence[botId] = p
         emit("presence", botId, json.encodeToJsonElement(p), group?.id)
@@ -1403,8 +1477,20 @@ class LocalBrain(
 const val NO_REPLY = "NO_REPLY"
 
 /**
- * Whether a message is worth a planning pass. On a phone every model call
- * waits in the same line, so a short, single-step message is answered
+ * How many runs may keep a conversation open on the phone's own model at
+ * once. Each holds its own context cache (up to 8192 tokens) in memory, on
+ * top of the model itself; a third waits rather than risk the phone killing
+ * gbot for memory. Waiting runs are not stopped or timed out, and a run
+ * waiting on the person or on the browser steps aside, so it holds no place.
+ */
+const val MODEL_RUNS = 2
+
+/** What a run shows while it is going, kept per chat. */
+private val RUN_STATES = setOf("thinking", "working", "waiting")
+
+/**
+ * Whether a message is worth a planning pass. On the phone's own model
+ * every call waits for its turn, so a short, single-step message is answered
  * straight away: the plan would cost as much as the reply. Anything long,
  * listed, or asking for several things keeps its plan.
  */

@@ -2,7 +2,15 @@ package dev.gbot.app.local
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 import java.util.PriorityQueue
+import java.util.concurrent.ConcurrentHashMap
 
 /*
  * Bots asking bots: the rules shared with the server. See
@@ -74,9 +82,24 @@ fun askPrompt(from: String, message: String, expect: String): String =
     }
 
 /**
- * One model runs at a time on a phone. Whoever waits takes the next turn by
- * priority (lower first), then in arrival order: the person's messages go
- * ahead of a round's answers, which go ahead of bots' asks.
+ * One queue per chat, like the server's per-conversation workers: a chat's
+ * messages run in order, and different chats run side by side. A lane is a
+ * fair mutex, so waiters go in arrival order.
+ */
+class Lanes {
+    private val lanes = ConcurrentHashMap<String, Mutex>()
+
+    suspend fun <T> run(chat: String, block: suspend () -> T): T =
+        lanes.getOrPut(chat) { Mutex() }.withLock { block() }
+}
+
+/**
+ * The phone's own model generates for one run at a time; runs on a
+ * provider's model never wait here. A run takes the turn only while the
+ * model is working, not while its tools run or it waits on the person.
+ * Whoever waits takes the next turn by priority (lower first), then in
+ * arrival order: the person's messages go ahead of a round's answers,
+ * which go ahead of bots' asks.
  */
 class Turns {
     private class Waiter(val priority: Int, val seq: Long, val go: CompletableDeferred<Unit> = CompletableDeferred())
@@ -123,6 +146,253 @@ class Turns {
             if (handed) release()
             throw e
         }
+    }
+}
+
+/** How many of something each key has going, such as a bot's runs. */
+class Counts {
+    private val n = ConcurrentHashMap<String, Int>()
+
+    /** One more for [k]; the new count. */
+    fun up(k: String): Int = n.merge(k, 1, Int::plus) ?: 1
+
+    /** One fewer for [k]; what is left. */
+    fun down(k: String): Int = n.computeIfPresent(k) { _, v -> if (v <= 1) null else v - 1 } ?: 0
+
+    fun of(k: String): Int = n[k] ?: 0
+}
+
+/**
+ * One heavy thing opened for a key, such as the model loaded from one file.
+ * Up to [limit] holders share the open key at once; a different key waits
+ * until nobody holds the open one, then closes it and opens its own.
+ *
+ * Waiters are served strictly by priority (lower first), then in arrival
+ * order, and the one at the head isn't passed: a run waiting for another
+ * model isn't starved by a stream of runs on the current one, and the
+ * person's messages go first. A hold taken inside a hold of the same key
+ * (task_verify within a run) joins it at once and counts for nothing.
+ *
+ * A holder that has to wait on something slow and outside its control (the
+ * person's answer, another bot's browser) steps [aside]: it gives up its
+ * place under [limit] but keeps the key open, and comes back ahead of
+ * everyone waiting once a place is free.
+ *
+ * The one exception to not passing the head is bounded. While a run that was
+ * admitted before the head arrived stands aside, the head can't go anyway
+ * (that run's conversation keeps the open model), so runs on the open model
+ * may use its places past it. Runs that went past never keep that open
+ * themselves, so overlapping asides can't hold the head off for good.
+ */
+class Leased<T : Any>(
+    private val open: suspend (String) -> T,
+    private val close: (T) -> Unit,
+    private val limit: Int = Int.MAX_VALUE,
+) {
+    private class Waiter(
+        val key: String,
+        val priority: Int,
+        val seq: Long,
+        // Admissions so far when it joined: holders with a lower ticket came first.
+        val arrived: Long,
+        val back: Held? = null,
+        val go: CompletableDeferred<Unit> = CompletableDeferred(),
+    ) {
+        var ticket = -1L
+    }
+
+    private class Held(val owner: Leased<*>, val heldKey: String, val ticket: Long) : AbstractCoroutineContextElement(Held) {
+        companion object : CoroutineContext.Key<Held>
+
+        // Standing aside: in [standing], not counted in [holders].
+        @Volatile var away = false
+    }
+
+    private val order = compareBy<Waiter>({ it.priority }, { it.seq })
+    private val lock = Mutex()
+    private var value: T? = null
+    @Volatile var key: String? = null
+        private set
+    private var holders = 0
+    // Holders standing aside: they keep the key open but take no place.
+    private val standing = HashSet<Held>()
+    private var seq = 0L
+    // Counts admissions; a holder's ticket is its place in that order.
+    private var admitted = 0L
+    private val waiting = PriorityQueue(order)
+
+    val isOpen: Boolean get() = key != null
+
+    suspend fun <R> hold(k: String, priority: Int = 0, onWait: () -> Unit = {}, block: suspend (T) -> R): R {
+        coroutineContext[Held]?.let { h ->
+            if (h.owner === this && h.heldKey == k) return block(lock.withLock { value!! })
+        }
+        val (v, ticket) = acquire(k, priority, onWait)
+        val h = Held(this, k, ticket)
+        try {
+            return withContext(h) { block(v) }
+        } finally {
+            withContext(NonCancellable) {
+                lock.withLock {
+                    if (h.away) standing.remove(h) else holders--
+                    dispatch()
+                }
+            }
+        }
+    }
+
+    /**
+     * Run [block], a wait, without taking a place, when called inside a
+     * hold; the key stays open meanwhile. Outside a hold it just runs.
+     */
+    suspend fun <R> aside(block: suspend () -> R): R {
+        val h = coroutineContext[Held]?.takeIf { it.owner === this && !it.away } ?: return block()
+        lock.withLock {
+            holders--
+            standing.add(h)
+            h.away = true
+            dispatch()
+        }
+        val r = try {
+            block()
+        } catch (e: CancellationException) {
+            // Stopped while waiting: no coming back for a place. The run lets
+            // go of the key as it unwinds, so it holds up nobody.
+            throw e
+        } catch (e: Throwable) {
+            comeBack(h)
+            throw e
+        }
+        comeBack(h)
+        return r
+    }
+
+    private suspend fun comeBack(h: Held) {
+        val w = lock.withLock {
+            if (holders < limit) {
+                standing.remove(h)
+                holders++
+                h.away = false
+                null
+            } else {
+                // First in line; served as soon as a place is free.
+                Waiter(h.heldKey, Int.MIN_VALUE, seq++, admitted, back = h).also { waiting.add(it); dispatch() }
+            }
+        }
+        if (w == null) return
+        try {
+            w.go.await()
+        } catch (e: CancellationException) {
+            // Stopped on the way back: leave the line. Whether or not the
+            // place was already handed over, [Held.away] says which count
+            // the hold gives back as it unwinds.
+            withContext(NonCancellable) { lock.withLock { waiting.remove(w); dispatch() } }
+            throw e
+        }
+    }
+
+    /** Close it if nobody holds it or waits for it. True when nothing is open afterwards. */
+    suspend fun closeIfFree(): Boolean = lock.withLock {
+        if (holders > 0 || standing.isNotEmpty()) return@withLock false
+        shut()
+        true
+    }
+
+    private fun fits(w: Waiter) = if (w.back != null) holders < limit else fits(w.key)
+
+    private fun fits(k: String) = (holders == 0 && standing.isEmpty()) || (key == k && holders < limit)
+
+    /** Hand the open key to whoever is next, in order, as far as it fits. */
+    private fun dispatch() {
+        while (true) {
+            val w = next() ?: return
+            waiting.remove(w)
+            val back = w.back
+            if (back != null) {
+                standing.remove(back)
+                holders++
+                back.away = false
+            } else {
+                w.ticket = grant(w.key)
+            }
+            w.go.complete(Unit)
+        }
+    }
+
+    /**
+     * The head of the line, if it fits. Otherwise, for a head waiting for
+     * another model while a run admitted before it stands aside, the first
+     * run on the open model that fits, since the head can't go until that
+     * run comes back. Runs admitted after the head don't count, so the ones
+     * that went past can't keep it waiting by stepping aside in turn.
+     */
+    private fun next(): Waiter? {
+        val head = waiting.peek() ?: return null
+        if (fits(head)) return head
+        if (head.back != null || head.key == key) return null
+        if (standing.none { it.ticket < head.arrived }) return null
+        return waiting.sortedWith(order).firstOrNull { it.key == key && fits(it) }
+    }
+
+    /** A place on [k], opening it if needed; returns the holder's ticket. */
+    private fun grant(k: String): Long {
+        if (key != k) {
+            shut()
+            key = k
+        }
+        holders++
+        return admitted++
+    }
+
+    private suspend fun acquire(k: String, priority: Int, onWait: () -> Unit): Pair<T, Long> {
+        var ticket = -1L
+        val w = lock.withLock {
+            if (waiting.isEmpty() && fits(k)) {
+                ticket = grant(k)
+                null
+            } else {
+                // It may go ahead of a head that doesn't fit, and fit itself.
+                Waiter(k, priority, seq++, admitted).also { waiting.add(it); dispatch() }
+            }
+        }
+        if (w != null) {
+            // Served at once if it went ahead of a head that doesn't fit.
+            if (!w.go.isCompleted) onWait()
+            try {
+                w.go.await()
+            } catch (e: CancellationException) {
+                // Cancelled while waiting: leave the line, or give back
+                // what was already handed over.
+                withContext(NonCancellable) {
+                    lock.withLock {
+                        if (!waiting.remove(w)) holders--
+                        dispatch()
+                    }
+                }
+                throw e
+            }
+            ticket = w.ticket
+        }
+        // The first holder of a newly granted key opens it; the rest find it open.
+        val v = try {
+            lock.withLock { value ?: open(k).also { value = it } }
+        } catch (e: Throwable) {
+            withContext(NonCancellable) {
+                lock.withLock {
+                    holders--
+                    if (holders == 0 && value == null) key = null
+                    dispatch()
+                }
+            }
+            throw e
+        }
+        return v to ticket
+    }
+
+    private fun shut() {
+        value?.let { runCatching { close(it) } }
+        value = null
+        key = null
     }
 }
 

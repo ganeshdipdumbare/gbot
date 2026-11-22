@@ -367,8 +367,11 @@ the same alert the server sends. Team sharing and spaces stay
 server features, because they exist to share between people.
 
 Phone limits worth knowing: the model download is 2–4 GB and the largest wants
-8 GB of RAM; the first load and a long prompt take seconds; one reply runs at a
-time (the rest wait in the chat queue); the browser has its own cookie jar
+8 GB of RAM; the first load and a long prompt take seconds; each chat has its
+own queue, so bots on a provider's model answer side by side, while bots on the
+phone's own model take turns whenever it is writing (your messages first), with
+at most two of them working at once to save memory (a bot waiting on you or on
+the browser doesn't count), and only one bot uses the browser window at a time; the browser has its own cookie jar
 (not Chrome's, so sign in inside gbot's window), some sites block WebViews,
 downloads are not handled yet, and webhook routines need a server.
 The model is unloaded after two idle minutes (or when gbot goes to the

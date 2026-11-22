@@ -42,6 +42,15 @@ class SurfacesTest {
     }
 
     @Test
+    fun theGlanceExampleTheModelCopiesIsAValidCard() {
+        val sf = Surfaces.build(args(GLANCE_EXAMPLE)) { null }
+        assertEquals("Weather", sf.title)
+        assertFalse(sf.interactive)
+        assertEquals("Card", part(sf, "root")["component"]!!.jsonPrimitive.content)
+        assertEquals("14°C, light rain", part(sf, "now")["text"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun aLinkButtonIsShownWithoutWaiting() {
         val sf = Surfaces.build(args("""{"components":[
             {"id":"root","component":"Button","child":"l","action":{"functionCall":{"call":"openUrl","args":{"url":"https://example.com/a"}}}},
@@ -114,7 +123,8 @@ class SurfacesTest {
 
     @Test
     fun aPictureIsKeptOnThePhoneAndNamedByItsFile() {
-        val asked = mutableListOf<String>()
+        // Pictures are fetched in parallel, so the list must take two writers.
+        val asked = java.util.Collections.synchronizedList(mutableListOf<String>())
         val sf = Surfaces.build(args("""{"components":[
             {"id":"root","component":"Column","children":["a","b"]},
             {"id":"a","component":"Image","url":"https://cdn.example.com/a.jpg"},
