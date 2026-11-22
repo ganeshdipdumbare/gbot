@@ -33,7 +33,7 @@ class RunBook {
     private companion object {
         /** Tools that prove nothing about the work, or carry secrets. */
         val QUIET = setOf(
-            "ask_user", "plan", "remember", "recall", "forget", "profile", "message_bot", "vault_type", "use_skill",
+            "ask_user", "show_ui", "plan", "remember", "recall", "forget", "profile", "message_bot", "vault_type", "use_skill",
             "task_contract", "task_verify", "routine_list", "routine_run", "routine_create", "routine_update", "routine_delete",
         )
     }

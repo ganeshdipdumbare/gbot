@@ -81,7 +81,7 @@ jobs:
       - name: Accept the Android licenses
         run: yes | sdkmanager --licenses > /dev/null
       - name: Install the Android SDK
-        run: sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
+        run: sdkmanager --install "platforms;android-37.1" "build-tools;37.0.0" > /dev/null
       - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
 
       # Tagged releases must be signed with the release key, which lives only

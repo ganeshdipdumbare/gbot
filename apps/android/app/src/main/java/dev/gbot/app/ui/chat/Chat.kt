@@ -351,12 +351,13 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
                 Column(Modifier.animateItem(fadeInSpec = Motion.quick(), placementSpec = null, fadeOutSpec = Motion.fast())) {
                     if (r.stamp != null) Text(r.stamp, style = T.tiny, color = g.ink3, modifier = Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 4.dp), textAlign = TextAlign.Center)
                     when {
+                        m.role == "card" && m.kind == "ui" -> SurfaceRow(m, author)
                         m.role == "card" -> if (author != null) Card(m, author, onTakeover)
                         m.role == "event" && m.kind == "activity" -> Activity(m)
                         r.round?.isEmpty() == true -> Unit
                         r.round != null -> RoundCard(r.round, s.bots)
                         m.role == "event" && m.kind == "picture" -> PictureRow(m, author)
-                        m.role == "event" && m.kind == "results" -> ResultsRow(m, author)
+                        m.role == "event" && (m.kind == "ui" || m.kind == "results") -> SurfaceRow(m, author)
                         m.role == "event" && m.kind == "botmsg" -> Exchange(m, s.bots)
                         m.role == "event" && m.kind == "browser" -> EventLine(m, author, onWatch)
                         m.role == "event" -> EventLine(m, author)
