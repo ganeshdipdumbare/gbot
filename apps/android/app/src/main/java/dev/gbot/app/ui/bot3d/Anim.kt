@@ -67,15 +67,14 @@ internal class Anim(lively: Boolean) {
 
     /**
      * Where it looks: a slow wander of its own. A phone has no pointer to
-     * follow, so the wander covers the range the web's bots turn through
-     * when they track the mouse (-1..1 both ways): turning side to side,
-     * tipping back to show the top, and leaning in to look from below.
+     * follow, so it turns side to side, tips back to show its top and leans
+     * in to look from below. Up and down go as far as the web's pointer
+     * steers (±1 lively, ±0.8 otherwise); side to side keeps the old
+     * reach (±1.25 lively, a little past the pointer's; ±0.8 otherwise).
      */
     fun drift(dt: Float, lively: Boolean) {
         driftAt -= dt
         if (driftAt < 0) {
-            // Side to side keeps the old reach (lively bots a little past
-            // the pointer's); up and down now go as far as the pointer does.
             val wide = if (lively) 1.25f else 0.8f
             val tall = if (lively) 1f else 0.8f
             driftAt = if (lively) rand(1.4f, 3.1f) else rand(2.8f, 5.2f)
