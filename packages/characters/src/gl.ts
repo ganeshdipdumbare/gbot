@@ -672,11 +672,13 @@ export function mount(canvas: HTMLCanvasElement, opts: ViewOpts) {
         // still turns side to side, shows its top and looks up from below.
         view.anim.driftAt -= dt;
         if (view.anim.driftAt < 0) {
-          const reach = lively ? 1 : 0.8;
+          // Side to side keeps the old reach (lively bots a little past the
+          // pointer's); up and down now go as far as the pointer does.
+          const wide = lively ? 1.25 : 0.8, tall = lively ? 1 : 0.8;
           view.anim.driftAt = lively ? rand(1.4, 3.1) : rand(2.8, 5.2);
           view.anim.gazeTo = Math.random() < (lively ? 0.25 : 0.35)
             ? { x: 0, y: 0 }
-            : { x: rand(-reach, reach), y: rand(-reach, reach) };
+            : { x: rand(-wide, wide), y: rand(-tall, tall) };
         }
       }
       setMood(view.anim, mood);

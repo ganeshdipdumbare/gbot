@@ -143,9 +143,11 @@ internal fun GbotFlat(
     if (mood == "idle" && !small) LaunchedEffect(lively) {
         while (true) {
             delay(if (lively) 1400L + Random.nextLong(1700) else 2800L + Random.nextLong(2400))
-            val spread = if (lively) 2.5f else 1.6f
-            drift = if (Random.nextFloat() < (if (lively) 0.35f else 0.45f)) Offset.Zero
-            else Offset((Random.nextFloat() - 0.5f) * spread, (Random.nextFloat() - 0.5f) * (if (lively) 1.3f else 0.8f))
+            // The same wander as the 3D rig (bot3d/Anim.drift).
+            val wide = if (lively) 1.25f else 0.8f
+            val tall = if (lively) 1f else 0.8f
+            drift = if (Random.nextFloat() < (if (lively) 0.25f else 0.35f)) Offset.Zero
+            else Offset((Random.nextFloat() * 2 - 1) * wide, (Random.nextFloat() * 2 - 1) * tall)
         }
     } else LaunchedEffect(Unit) { drift = Offset.Zero }
     val soft = spring<Float>(dampingRatio = 0.62f, stiffness = 260f)

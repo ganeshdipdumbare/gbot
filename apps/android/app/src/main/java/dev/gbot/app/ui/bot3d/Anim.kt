@@ -74,10 +74,13 @@ internal class Anim(lively: Boolean) {
     fun drift(dt: Float, lively: Boolean) {
         driftAt -= dt
         if (driftAt < 0) {
-            val reach = if (lively) 1f else 0.8f
+            // Side to side keeps the old reach (lively bots a little past
+            // the pointer's); up and down now go as far as the pointer does.
+            val wide = if (lively) 1.25f else 0.8f
+            val tall = if (lively) 1f else 0.8f
             driftAt = if (lively) rand(1.4f, 3.1f) else rand(2.8f, 5.2f)
             if (Random.nextFloat() < (if (lively) 0.25f else 0.35f)) { gazeToX = 0f; gazeToY = 0f }
-            else { gazeToX = rand(-reach, reach); gazeToY = rand(-reach, reach) }
+            else { gazeToX = rand(-wide, wide); gazeToY = rand(-tall, tall) }
         }
     }
 
