@@ -667,13 +667,16 @@ export function mount(canvas: HTMLCanvasElement, opts: ViewOpts) {
         view.anim.gazeTo.x = clamp(lookAt.x);
         view.anim.gazeTo.y = clamp(lookAt.y);
       } else {
+        // The same range the pointer steers through (-1..1 both ways), so a
+        // bot with no cursor to follow (the macOS app, Android's Anim.drift)
+        // still turns side to side, shows its top and looks up from below.
         view.anim.driftAt -= dt;
         if (view.anim.driftAt < 0) {
-          const spread = lively ? 2.5 : 1.6;
+          const reach = lively ? 1 : 0.8;
           view.anim.driftAt = lively ? rand(1.4, 3.1) : rand(2.8, 5.2);
-          view.anim.gazeTo = Math.random() < (lively ? 0.35 : 0.45)
+          view.anim.gazeTo = Math.random() < (lively ? 0.25 : 0.35)
             ? { x: 0, y: 0 }
-            : { x: (Math.random() - 0.5) * spread, y: (Math.random() - 0.5) * spread * 0.6 };
+            : { x: rand(-reach, reach), y: rand(-reach, reach) };
         }
       }
       setMood(view.anim, mood);

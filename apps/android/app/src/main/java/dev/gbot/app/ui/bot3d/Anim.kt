@@ -65,14 +65,19 @@ internal class Anim(lively: Boolean) {
     /** A look change is a pop, not a cut. */
     fun pop() { squashV -= 3.2f }
 
-    /** Where it looks: a slow wander of its own. */
+    /**
+     * Where it looks: a slow wander of its own. A phone has no pointer to
+     * follow, so the wander covers the range the web's bots turn through
+     * when they track the mouse (-1..1 both ways): turning side to side,
+     * tipping back to show the top, and leaning in to look from below.
+     */
     fun drift(dt: Float, lively: Boolean) {
         driftAt -= dt
         if (driftAt < 0) {
-            val spread = if (lively) 2.5f else 1.6f
+            val reach = if (lively) 1f else 0.8f
             driftAt = if (lively) rand(1.4f, 3.1f) else rand(2.8f, 5.2f)
-            if (Random.nextFloat() < (if (lively) 0.35f else 0.45f)) { gazeToX = 0f; gazeToY = 0f }
-            else { gazeToX = (Random.nextFloat() - 0.5f) * spread; gazeToY = (Random.nextFloat() - 0.5f) * spread * 0.6f }
+            if (Random.nextFloat() < (if (lively) 0.25f else 0.35f)) { gazeToX = 0f; gazeToY = 0f }
+            else { gazeToX = rand(-reach, reach); gazeToY = rand(-reach, reach) }
         }
     }
 
