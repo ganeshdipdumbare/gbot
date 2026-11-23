@@ -166,8 +166,10 @@ function ComputerView({ bot, open, control, onClose }: {
   // textarea sits over the screen and collects real keystrokes and IME.
   const keyboard = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
-  // One MJPEG connection renders every frame; no request per frame.
-  const src = open && status?.state === "on" ? api.streamUrl(bot.id) : null;
+  // Poll single JPEGs instead of multipart MJPEG in <img>. WebKit (Safari
+  // and the macOS app's WKWebView) does not paint multipart/x-mixed-replace,
+  // so the full-screen panel stayed black while the thumbnail kept working.
+  const src = useScreen(bot.id, open && status?.state === "on", 8);
 
   async function take() {
     setError("");
@@ -392,7 +394,7 @@ function ComputerView({ bot, open, control, onClose }: {
                 className={`absolute inset-0 size-full resize-none border-0 bg-transparent p-0 text-transparent caret-transparent opacity-0 outline-none text-[16px] ${holding ? "cursor-crosshair" : "pointer-events-none"}`}
               />
               {src
-                ? <img key={src} src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />
+                ? <img src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />
                 : <div className="absolute inset-0 grid place-items-center text-white/60 text-sm">
                   {status?.state === "starting" ? "Waking up…" : status?.state === "on" ? "Connecting to the screen…" : "Its computer is asleep"}
                 </div>}
