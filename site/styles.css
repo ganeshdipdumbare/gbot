@@ -362,7 +362,7 @@ figcaption b { display: block; color: var(--ink); font-weight: 620; }
 .apps dl { display: grid; gap: 4px; margin: 20px 0 0; }
 .apps dt { color: var(--ink-3); font: 600 11.5px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; }
 .apps dd { margin: 2px 0 12px; color: var(--ink-2); font-size: 15px; line-height: 1.5; }
-.apps code, .compare code { padding: 1px 5px; border-radius: 6px; background: var(--surface); font: 500 .86em/1.4 var(--mono); letter-spacing: 0; }
+.apps code, .compare code, .faq code { overflow-wrap: anywhere; padding: 1px 5px; border-radius: 6px; background: var(--surface); font: 500 .86em/1.4 var(--mono); letter-spacing: 0; }
 
 .compare { margin-top: clamp(44px, 6vw, 72px); }
 .compare-scroll { overflow-x: auto; border-radius: 22px; background: var(--card); box-shadow: var(--shadow); scrollbar-width: thin; }

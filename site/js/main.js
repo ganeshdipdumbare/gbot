@@ -171,3 +171,12 @@ if (studioEl) {
     startStudio();
   }
 }
+
+// A link to a question in the FAQ opens that answer instead of landing on a
+// closed one.
+function openFromHash() {
+  const el = location.hash && document.getElementById(location.hash.slice(1));
+  if (el instanceof HTMLDetailsElement) el.open = true;
+}
+addEventListener("hashchange", openFromHash);
+openFromHash();

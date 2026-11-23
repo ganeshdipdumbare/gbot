@@ -400,7 +400,7 @@
           <h3>Mac</h3>
           <p class="app-sub">A 4 MB native window around the same web app.</p>
           <dl>
-            <dt>Install</dt><dd><code>make desktop</code> builds <code>gbot.app</code> and a <code>.dmg</code>.</dd>
+            <dt>Install</dt><dd>Download the <code>.dmg</code>, or build it with <code>make desktop</code>. If macOS refuses the download, <a href="#mac-open">here's the fix</a>.</dd>
             <dt>Runs in</dt><dd>Mode 1 only. It finds the server on this Mac by itself, or connects to any address you type, and remembers it.</dd>
             <dt>Alerts</dt><dd>Native macOS notifications.</dd>
             <dt>Good for</dt><dd>Keeping your crew in the Dock instead of a browser tab. If the server isn't up yet, it waits and opens the moment it is.</dd>
@@ -510,6 +510,11 @@
         <details>
           <summary>How is the Mac app different from the web app?</summary>
           <p>It is the same app in a native window. It finds the server on your Mac on its own (or remembers the address you give it), lives in the Dock, and uses macOS notifications. Everything else is identical, because the server is doing the work.</p>
+        </details>
+        <details id="mac-open">
+          <summary>macOS says gbot is damaged and should go to the Trash?</summary>
+          <p>The app is fine. The download isn't signed with a paid Apple Developer ID yet, so macOS blocks any copy that came from the internet. Drag <b>gbot</b> from the .dmg into Applications, run <code>xattr -dr com.apple.quarantine /Applications/gbot.app</code> in Terminal, then open it. You only do this once per download.</p>
+          <p>Or build it yourself: <code>git clone https://github.com/ganeshdipdumbare/gbot</code>, then <code>make desktop</code> in that folder (needs Node, pnpm and Rust). An app built on your own Mac isn't flagged, so it opens straight away. The build steps are in the <a href="https://github.com/ganeshdipdumbare/gbot#desktop-mobile-and-phone-only">README</a>.</p>
         </details>
         <details>
           <summary>What do I lose on the phone alone?</summary>
