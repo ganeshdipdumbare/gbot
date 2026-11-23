@@ -75,8 +75,9 @@ export const GbotSvg = memo(function GbotSvg({ look, seed = "gbot", mood = "idle
     const id = setInterval(() => {
       if (steered.current) return;
       const r = Math.random();
-      const spread = lively ? 2.5 : 1.6;
-      setDrift(r < (lively ? 0.35 : 0.45) ? { x: 0, y: 0 } : { x: (Math.random() - 0.5) * spread, y: (Math.random() - 0.5) * (lively ? 1.3 : 0.8) });
+      // The same wander as the 3D rig (gl.ts).
+      const wide = lively ? 1.25 : 0.8, tall = lively ? 1 : 0.8;
+      setDrift(r < (lively ? 0.25 : 0.35) ? { x: 0, y: 0 } : { x: (Math.random() * 2 - 1) * wide, y: (Math.random() * 2 - 1) * tall });
     }, lively ? 1400 + Math.random() * 1700 : 2800 + Math.random() * 2400);
     return () => clearInterval(id);
   }, [mood, lively]);

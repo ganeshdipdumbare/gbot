@@ -2,11 +2,19 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import type { Mood } from "@gbot/characters";
 import type { Bot, Presence } from "./api";
 
-/** Gaze toward the pointer, relative to an element's center (-1..1). */
+/** The macOS app's shell marks its pages (apps/desktop/src-tauri/src/lib.rs). */
+const inDesktopApp = () => document.documentElement.dataset.shell === "desktop";
+
+/**
+ * Gaze toward the pointer, relative to an element's center (-1..1). Only
+ * the website follows the cursor: in the macOS app, as on Android, the
+ * gaze stays null and the bots wander on their own.
+ */
 export function useGaze<T extends Element>(): [RefObject<T | null>, { x: number; y: number } | null] {
   const ref = useRef<T>(null);
   const [gaze, setGaze] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
+    if (inDesktopApp()) return;
     let raf = 0;
     let idle: ReturnType<typeof setTimeout>;
     const onMove = (e: PointerEvent) => {

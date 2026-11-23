@@ -65,14 +65,21 @@ internal class Anim(lively: Boolean) {
     /** A look change is a pop, not a cut. */
     fun pop() { squashV -= 3.2f }
 
-    /** Where it looks: a slow wander of its own. */
+    /**
+     * Where it looks: a slow wander of its own. A phone has no pointer to
+     * follow, so it turns side to side, tips back to show its top and leans
+     * in to look from below. Up and down go as far as the web's pointer
+     * steers (±1 lively, ±0.8 otherwise); side to side keeps the old
+     * reach (±1.25 lively, a little past the pointer's; ±0.8 otherwise).
+     */
     fun drift(dt: Float, lively: Boolean) {
         driftAt -= dt
         if (driftAt < 0) {
-            val spread = if (lively) 2.5f else 1.6f
+            val wide = if (lively) 1.25f else 0.8f
+            val tall = if (lively) 1f else 0.8f
             driftAt = if (lively) rand(1.4f, 3.1f) else rand(2.8f, 5.2f)
-            if (Random.nextFloat() < (if (lively) 0.35f else 0.45f)) { gazeToX = 0f; gazeToY = 0f }
-            else { gazeToX = (Random.nextFloat() - 0.5f) * spread; gazeToY = (Random.nextFloat() - 0.5f) * spread * 0.6f }
+            if (Random.nextFloat() < (if (lively) 0.25f else 0.35f)) { gazeToX = 0f; gazeToY = 0f }
+            else { gazeToX = rand(-wide, wide); gazeToY = rand(-tall, tall) }
         }
     }
 
