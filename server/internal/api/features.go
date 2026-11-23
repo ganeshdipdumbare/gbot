@@ -271,6 +271,14 @@ func (s *Server) computerScreen(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Cap in-flight polls only. Do not share the long-lived MJPEG budget:
+	// four open streams would otherwise 429 every thumbnail and WebKit
+	// full-screen poll, leaving those views blank with no explanation.
+	if !screenPolls.open(o) {
+		writeErr(w, 429, "this computer is already shown in several windows; close one")
+		return
+	}
+	defer screenPolls.close(o)
 	img, err := s.Computer.Screenshot(r.Context(), o)
 	if err != nil {
 		writeErr(w, 409, err.Error())
@@ -281,23 +289,32 @@ func (s *Server) computerScreen(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(img)
 }
 
-// maxStreams bounds open screen streams per computer. Each one runs a
+// maxStreams bounds open MJPEG streams per computer. Each one runs a
 // capture inside the computer every frame; a few windows is plenty, and
 // the stream itself has no time limit.
 const maxStreams = 4
 
+// maxScreenPolls bounds concurrent /computer/screen captures per owner.
+// Separate from maxStreams so long-lived MJPEG windows cannot starve
+// thumbnail and WebKit polling clients.
+const maxScreenPolls = 4
+
 type streamCount struct {
-	mu sync.Mutex
-	n  map[string]int
+	mu  sync.Mutex
+	n   map[string]int
+	max int
 }
 
-var streams = streamCount{n: map[string]int{}}
+var (
+	streams     = streamCount{n: map[string]int{}, max: maxStreams}
+	screenPolls = streamCount{n: map[string]int{}, max: maxScreenPolls}
+)
 
 func (c *streamCount) open(o computer.Owner) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	k := o.Bot + "|" + o.User
-	if c.n[k] >= maxStreams {
+	if c.n[k] >= c.max {
 		return false
 	}
 	c.n[k]++
