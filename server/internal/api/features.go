@@ -271,6 +271,13 @@ func (s *Server) computerScreen(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Same per-owner cap as the MJPEG stream: a hung poll or many tabs
+	// must not pile screenshot execs into the computer without bound.
+	if !streams.open(o) {
+		writeErr(w, 429, "this computer is already shown in several windows; close one")
+		return
+	}
+	defer streams.close(o)
 	img, err := s.Computer.Screenshot(r.Context(), o)
 	if err != nil {
 		writeErr(w, 409, err.Error())
@@ -281,9 +288,9 @@ func (s *Server) computerScreen(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(img)
 }
 
-// maxStreams bounds open screen streams per computer. Each one runs a
-// capture inside the computer every frame; a few windows is plenty, and
-// the stream itself has no time limit.
+// maxStreams bounds open screen captures per computer (MJPEG streams and
+// in-flight /computer/screen polls share the same budget). Each one runs
+// a capture inside the computer; a few windows is plenty.
 const maxStreams = 4
 
 type streamCount struct {

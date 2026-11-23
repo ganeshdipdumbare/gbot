@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CompositionEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type TouchEvent as RTouchEvent, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CompositionEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type TouchEvent as RTouchEvent, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
@@ -6,6 +6,14 @@ import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
 import { onLive, set, useStore } from "../lib/store";
 import { attempt, toastError } from "../lib/toast";
 import { bouncy, Button, fade, Icon, IconButton, Input, Label, leave, spring, TextArea } from "./ui";
+
+/** WebKit does not paint multipart/x-mixed-replace in <img> (Safari + WKWebView). */
+function mjpegInImgWorks() {
+  if (document.documentElement.dataset.shell === "desktop") return false;
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua)) return false;
+  return !(/Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|Firefox/.test(ua));
+}
 
 // The bot's own place: its computer (status → preview → takeover) and
 // the routines it runs by itself.
@@ -52,11 +60,14 @@ function useScreen(botId: string, on: boolean, fps = 1.2) {
     if (!on) { setSrc(null); return; }
     let stop = false;
     let last: string | null = null;
+    let ac: AbortController | null = null;
     const loop = async () => {
       while (!stop) {
         if (document.visibilityState === "visible") {
+          ac = new AbortController();
+          const timeout = window.setTimeout(() => ac?.abort(), 8000);
           try {
-            const res = await fetch(api.screenUrl(botId), { credentials: "same-origin" });
+            const res = await fetch(api.screenUrl(botId), { credentials: "same-origin", signal: ac.signal });
             if (res.ok) {
               const blob = await res.blob();
               // Unmounted or turned off while the frame was loading: create no URL.
@@ -66,13 +77,14 @@ function useScreen(botId: string, on: boolean, fps = 1.2) {
               if (last) URL.revokeObjectURL(last);
               last = url;
             }
-          } catch { /* keep the last frame */ }
+          } catch { /* keep the last frame; abort/timeout just retries */ }
+          finally { window.clearTimeout(timeout); }
         }
         await new Promise((r) => setTimeout(r, 1000 / fps));
       }
     };
     loop();
-    return () => { stop = true; if (last) URL.revokeObjectURL(last); };
+    return () => { stop = true; ac?.abort(); if (last) URL.revokeObjectURL(last); };
   }, [botId, on, fps]);
   return src;
 }
@@ -111,7 +123,7 @@ function ComputerTab({ bot, onOpen, viewing }: { bot: Bot; onOpen: () => void; v
   const [status] = useComputer(bot);
   const on = status?.state === "on";
   const sleeping = status?.state === "asleep";
-  // The full-screen stream replaces the thumbnail while it is open.
+  // Full-screen viewing replaces the thumbnail while it is open.
   const src = useScreen(bot.id, on && !viewing);
   const where = `${status?.backend === "microsandbox" ? "Its own microVM on this machine." : "A container on this machine."}${bot.computerNetwork ? " Online." : " Offline until you allow internet in its settings."}`;
 
@@ -166,10 +178,16 @@ function ComputerView({ bot, open, control, onClose }: {
   // textarea sits over the screen and collects real keystrokes and IME.
   const keyboard = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
-  // Poll single JPEGs instead of multipart MJPEG in <img>. WebKit (Safari
-  // and the macOS app's WKWebView) does not paint multipart/x-mixed-replace,
-  // so the full-screen panel stayed black while the thumbnail kept working.
-  const src = useScreen(bot.id, open && status?.state === "on", 8);
+  // Chromium paints MJPEG in <img>; WebKit (Safari / macOS WKWebView) does
+  // not, so those clients poll single JPEGs instead of a black panel.
+  const useMjpeg = useMemo(() => mjpegInImgWorks(), []);
+  const live = open && status?.state === "on";
+  const polled = useScreen(bot.id, live && !useMjpeg, 8);
+  const streamSrc = useMemo(
+    () => (live && useMjpeg ? api.streamUrl(bot.id) : null),
+    [live, useMjpeg, bot.id],
+  );
+  const src = useMjpeg ? streamSrc : polled;
 
   async function take() {
     setError("");
