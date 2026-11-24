@@ -120,7 +120,7 @@ fun Activity(m: Message) {
  * screen.
  */
 @Composable
-fun PictureRow(m: Message, author: Bot?) {
+fun PictureRow(m: Message, author: Bot?, face: String? = null) {
     val g = LocalG.current
     var open by remember { mutableStateOf(false) }
     var img by remember(m.id) { mutableStateOf<ImageBitmap?>(null) }
@@ -130,7 +130,7 @@ fun PictureRow(m: Message, author: Bot?) {
         missing = img == null
     }
     Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.Bottom) {
-        Box(Modifier.width(40.dp)) { if (author != null) Gbot(author.look, author.id, 34) }
+        Box(Modifier.width(40.dp)) { if (face != null && author != null) Gbot(author.look, author.id, 34, mood = face) }
         Column(Modifier.widthIn(max = 320.dp)) {
             Text(m.content, style = T.tiny, color = g.ink3, modifier = Modifier.padding(start = 4.dp, bottom = 3.dp))
             val shape = RoundedCornerShape(18.dp)
@@ -289,7 +289,7 @@ private fun prettyJson(o: JsonObject): String = kotlinx.serialization.json.Json 
 
 /** Where a bot asks for something: approval, an answer, or your hand on its computer. */
 @Composable
-fun Card(m: Message, bot: Bot, onTakeover: () -> Unit) {
+fun Card(m: Message, bot: Bot, onTakeover: () -> Unit, face: String? = null) {
     val app = GbotApp.instance
     val g = LocalG.current
     val scope = rememberCoroutineScope()
@@ -338,8 +338,7 @@ fun Card(m: Message, bot: Bot, onTakeover: () -> Unit) {
 
     Column(Modifier.padding(vertical = 10.dp).widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(g.surface).border(1.dp, g.warning.copy(alpha = 0.25f), RoundedCornerShape(18.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Gbot(bot.look, bot.id, 24, mood = "waiting")
-            Spacer(Modifier.width(8.dp))
+            if (face != null) { Gbot(bot.look, bot.id, 24, mood = face); Spacer(Modifier.width(8.dp)) }
             Text(bot.name, style = T.small.copy(fontWeight = FontWeight.SemiBold, fontSize = 14.sp), color = g.ink, modifier = Modifier.weight(1f), maxLines = 1)
             Row(Modifier.clip(RoundedCornerShape(50)).background(g.warning.copy(alpha = 0.14f)).padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(6.dp).clip(CircleShape).background(g.warning))
@@ -384,12 +383,12 @@ fun Card(m: Message, bot: Bot, onTakeover: () -> Unit) {
 
 /** A centered system line: errors, routine runs, notes. */
 @Composable
-fun EventLine(m: Message, author: Bot?, onTap: (() -> Unit)? = null) {
+fun EventLine(m: Message, author: Bot?, onTap: (() -> Unit)? = null, face: String? = null) {
     val g = LocalG.current
     val err = m.kind == "error"
     val row = Modifier.fillMaxWidth().padding(vertical = 10.dp, horizontal = 12.dp).let { if (onTap != null) it.tap(onClick = onTap) else it }
     Row(row, horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        if (author != null) { Gbot(author.look, author.id, 22, mood = if (err) "blocked" else "idle"); Spacer(Modifier.width(6.dp)) }
+        if (face != null && author != null) { Gbot(author.look, author.id, 22, mood = face); Spacer(Modifier.width(6.dp)) }
         if (m.kind == "routine") { Icon("clock", size = 14.dp, color = g.ink2); Spacer(Modifier.width(4.dp)) }
         if (m.kind == "browser") { Icon("screen", size = 14.dp, color = g.ink2); Spacer(Modifier.width(4.dp)) }
         Markdown(m.content, color = if (err) g.danger else g.ink2, style = T.small.copy(textAlign = TextAlign.Center))
