@@ -27,9 +27,9 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
 
-/** One on-screen bot: its own clock and motion, painted by the shared rig. */
-private class BotView(lively: Boolean) {
-    val anim = Anim(lively)
+/** One on-screen bot: its own spring and mood on its bot's shared [Pulse], painted by the shared rig. */
+private class BotView(seed: String, lively: Boolean) {
+    val anim = Anim(Pulse.of(seed))
     val frame = Frame()
     var look: Traits? = null
     var mood = "idle"
@@ -84,8 +84,8 @@ private class BotView(lively: Boolean) {
         val dt = if (last == 0L) 1f / 60 else ((now - last) / 1e9f).coerceAtMost(0.05f)
         last = now
         anim.still = still
-        // Where it looks: a slow wander of its own, as on the web.
-        anim.drift(dt, lively)
+        // Where it looks: its bot's wander, the same in every copy on screen.
+        anim.drift(now, lively)
         anim.changeMood(mood)
         anim.update(dt, BotGL.outlineOf(look.shape), shadowBase(look.shape), frame)
     }
@@ -191,14 +191,15 @@ private const val TRIES = 3
 
 @Composable
 internal fun Gbot3D(
-    t: Traits, size: Int, modifier: Modifier, mood: String, live: Boolean, lively: Boolean,
+    t: Traits, seed: String, size: Int, modifier: Modifier, mood: String, live: Boolean, lively: Boolean,
     bg: Color, liveColor: Color,
     /** The 2D bot, drawn instead if this one's 3D paints keep failing. */
     fallback: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current.density
-    val view = remember { BotView(lively) }
+    val view = remember { BotView(seed, lively) }
+    view.anim.pulse = Pulse.of(seed)
     // Reduced motion: a still bot, as the web does for prefers-reduced-motion.
     val still = remember {
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f

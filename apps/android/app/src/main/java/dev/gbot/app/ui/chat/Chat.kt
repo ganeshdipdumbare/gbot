@@ -288,6 +288,18 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
         (st == "thinking" || st == "working") && (group != null || !answered) && messages.orEmpty().none { it.streaming && it.botId == id }
     }
 
+    fun authorOf(m: Message): Bot? {
+        val from = m.str("from")?.let { f -> s.bots.find { it.id == f } }
+        return from ?: m.botId?.let { byId[it] ?: s.bots.find { b -> b.id == it } }
+    }
+    // The newest row a bot wrote, which alone carries its face; none while
+    // a thinking row is up, since that row shows the face instead.
+    val faceId = if (typing.isNotEmpty()) null else rows.firstOrNull { r ->
+        val m = r.m
+        r.round == null && m.kind != "activity" && m.kind != "botmsg" && authorOf(m) != null &&
+            (m.role != "user" || m.str("from") != null)
+    }?.m?.id
+
     // Reverse layout keeps the newest message at the bottom as text streams.
     val atBottom by remember { derivedStateOf { list.firstVisibleItemIndex <= 1 } }
     var below by remember(key) { mutableIntStateOf(0) }
@@ -343,25 +355,27 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
             }
             items(rows, key = { it.m.id }) { r ->
                 val m = r.m
-                val from = m.str("from")?.let { f -> s.bots.find { it.id == f } }
-                val author = from ?: m.botId?.let { byId[it] ?: s.bots.find { b -> b.id == it } }
+                val author = authorOf(m)
+                // One bot face in the transcript: on the newest bot row,
+                // moving and in the same mood as the one in the header.
+                val face = if (m.id == faceId && author != null) moodOf(s.presence[author.id], author) else null
                 // New rows arrive with a quick fade. No placement spring:
                 // a streaming reply grows every frame, and the rows above
                 // must follow it exactly rather than trail behind.
                 Column(Modifier.animateItem(fadeInSpec = Motion.quick(), placementSpec = null, fadeOutSpec = Motion.fast())) {
                     if (r.stamp != null) Text(r.stamp, style = T.tiny, color = g.ink3, modifier = Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 4.dp), textAlign = TextAlign.Center)
                     when {
-                        m.role == "card" && m.kind == "ui" -> SurfaceRow(m, author)
-                        m.role == "card" -> if (author != null) Card(m, author, onTakeover)
+                        m.role == "card" && m.kind == "ui" -> SurfaceRow(m, author, face)
+                        m.role == "card" -> if (author != null) Card(m, author, onTakeover, face)
                         m.role == "event" && m.kind == "activity" -> Activity(m)
                         r.round?.isEmpty() == true -> Unit
                         r.round != null -> RoundCard(r.round, s.bots)
-                        m.role == "event" && m.kind == "picture" -> PictureRow(m, author)
-                        m.role == "event" && (m.kind == "ui" || m.kind == "results") -> SurfaceRow(m, author)
+                        m.role == "event" && m.kind == "picture" -> PictureRow(m, author, face)
+                        m.role == "event" && (m.kind == "ui" || m.kind == "results") -> SurfaceRow(m, author, face)
                         m.role == "event" && m.kind == "botmsg" -> Exchange(m, s.bots)
-                        m.role == "event" && m.kind == "browser" -> EventLine(m, author, onWatch)
-                        m.role == "event" -> EventLine(m, author)
-                        else -> Bubble(m, author, r.first, r.last, group != null, onLong)
+                        m.role == "event" && m.kind == "browser" -> EventLine(m, author, onWatch, face)
+                        m.role == "event" -> EventLine(m, author, face = face)
+                        else -> Bubble(m, author, r.first, r.last, group != null, face, onLong)
                     }
                 }
             }
@@ -390,7 +404,7 @@ private fun Transcript(key: ChatKey, bot: Bot?, group: Group?, members: List<Bot
 }
 
 @Composable
-private fun Bubble(m: Message, author: Bot?, first: Boolean, last: Boolean, inGroup: Boolean, onLong: (Message) -> Unit) {
+private fun Bubble(m: Message, author: Bot?, first: Boolean, last: Boolean, inGroup: Boolean, face: String?, onLong: (Message) -> Unit) {
     val g = LocalG.current
     val fromBot = m.role == "user" && m.str("from") != null
     val mine = m.role == "user" && !fromBot
@@ -400,8 +414,8 @@ private fun Bubble(m: Message, author: Bot?, first: Boolean, last: Boolean, inGr
     val shape = if (mine) RoundedCornerShape(big, if (first) big else small, if (last) big else small, big)
     else RoundedCornerShape(if (first) big else small, big, big, if (last) big else small)
     Row(Modifier.fillMaxWidth().padding(top = if (first) 10.dp else 2.dp), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
-        if (!mine && named) {
-            Box(Modifier.width(40.dp)) { if (last && author != null) Gbot(author.look, author.id, 34, mood = if (m.streaming) "working" else "idle") }
+        if (!mine) {
+            Box(Modifier.width(40.dp)) { if (face != null && author != null) Gbot(author.look, author.id, 34, mood = face) }
         }
         Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start, modifier = Modifier.widthIn(max = 320.dp)) {
             if (named && first && !mine && author != null) Text(author.name, style = T.tiny, color = g.ink3, modifier = Modifier.padding(start = 4.dp, bottom = 3.dp))

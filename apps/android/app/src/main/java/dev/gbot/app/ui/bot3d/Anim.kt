@@ -34,26 +34,65 @@ internal class Frame {
     var eyeScale = 1f
 }
 
-internal class Anim(lively: Boolean) {
+/**
+ * One bot's clock, shared by every copy of it on screen: where it is
+ * looking, when it blinks and where it is in its breath. The header, the
+ * chat and the home list all read the same one, so a bot moves as one bot
+ * wherever it shows up, and a screen change doesn't restart its motion.
+ * It runs on wall time, so copies painted at different rates still agree.
+ */
+internal class Pulse {
+    /** Where it looks, from -1 to 1 each way; each copy scales it by its reach. */
+    var gazeX = 0f; private set
+    var gazeY = 0f; private set
+    val gazeRate = rand(5f, 9f)
+    val phase = rand(0f, 10f)
+    var t = 0f; private set
+    /** Seconds left of the blink under way; 0 when the eyes are open. */
+    var blink = 0f; private set
+    private var driftAt = rand(0.4f, 2.4f)
+    private var nextBlink = rand(1f, 4f)
+    private var last = 0L
+
+    fun advance(now: Long) {
+        if (now <= last) return
+        val dt = if (last == 0L) 0f else (now - last) / 1e9f
+        last = now
+        t += dt
+        driftAt -= dt
+        if (driftAt < 0) {
+            driftAt = rand(2.2f, 4.6f)
+            if (Random.nextFloat() < 0.3f) { gazeX = 0f; gazeY = 0f }
+            else { gazeX = rand(-1f, 1f); gazeY = rand(-1f, 1f) }
+        }
+        blink = max(0f, blink - dt)
+        nextBlink -= dt
+        if (nextBlink < 0) {
+            blink = 0.11f
+            nextBlink = if (Random.nextFloat() < 0.2f) 0.26f else rand(2.4f, 6.5f)
+        }
+    }
+
+    companion object {
+        private val all = HashMap<String, Pulse>()
+        fun of(seed: String): Pulse = all.getOrPut(seed) { Pulse() }
+    }
+}
+
+internal class Anim(var pulse: Pulse) {
     var still = false
     var mood = "idle"; private set
     private var gx = 0f; private var gy = 0f
     var gazeToX = 0f; var gazeToY = 0f
-    private val gazeRate = rand(5f, 9f)
-    private val phase = rand(0f, 10f)
-    var t = 0f
-    private var driftAt = rand(0.4f, 2.4f)
+    val t: Float get() = pulse.t
     private var y = 0f; private var vy = 0f; private var air = false
     var squash = 0f; var squashV = 0f
     private var lean = 0f; private var lift = 0f
-    private var blink = 0f; private var nextBlink = rand(1f, 4f)
     private var happy = 0f
     private val etx = FloatArray(2); private val ety = FloatArray(2)
     private val esx = floatArrayOf(1f, 1f); private val esy = floatArrayOf(1f, 1f); private val erot = FloatArray(2)
     private var hopAt = -1f; private var hopPower = 3.2f
     private var first = true
-
-    init { if (lively) driftAt = rand(0.4f, 1.4f) }
 
     /** A bot that just finished hops. */
     fun changeMood(m: String) {
@@ -66,25 +105,19 @@ internal class Anim(lively: Boolean) {
     fun pop() { squashV -= 3.2f }
 
     /**
-     * Where it looks: a slow wander of its own. A phone has no pointer to
+     * Where it looks: its [Pulse]'s slow wander. A phone has no pointer to
      * follow, so it turns side to side, tips back to show its top and leans
-     * in to look from below. Up and down go as far as the web's pointer
-     * steers (±1 lively, ±0.8 otherwise); side to side keeps the old
-     * reach (±1.25 lively, a little past the pointer's; ±0.8 otherwise).
+     * in to look from below. A lively copy reaches further (±1.25 side to
+     * side, ±1 up and down) than a quiet one (±0.8 each way).
      */
-    fun drift(dt: Float, lively: Boolean) {
-        driftAt -= dt
-        if (driftAt < 0) {
-            val wide = if (lively) 1.25f else 0.8f
-            val tall = if (lively) 1f else 0.8f
-            driftAt = if (lively) rand(1.4f, 3.1f) else rand(2.8f, 5.2f)
-            if (Random.nextFloat() < (if (lively) 0.25f else 0.35f)) { gazeToX = 0f; gazeToY = 0f }
-            else { gazeToX = rand(-wide, wide); gazeToY = rand(-tall, tall) }
-        }
+    fun drift(now: Long, lively: Boolean) {
+        pulse.advance(now)
+        val wide = if (lively) 1.25f else 0.8f
+        val tall = if (lively) 1f else 0.8f
+        gazeToX = pulse.gazeX * wide; gazeToY = pulse.gazeY * tall
     }
 
     fun update(dt: Float, o: Outline, shadowBase: Float, f: Frame) {
-        t += dt
         if (hopAt >= 0) {
             hopAt -= dt
             if (hopAt < 0) { vy = hopPower; air = true; squashV -= 3f }
@@ -101,11 +134,11 @@ internal class Anim(lively: Boolean) {
             squash += squashV * h
         }
 
-        val g = ease(gazeRate, dt)
+        val g = ease(pulse.gazeRate, dt)
         gx += (gazeToX - gx) * g
         gy += (gazeToY - gy) * g
 
-        val p = t + phase
+        val p = pulse.t + pulse.phase
         var leanTo = 0f; var liftTo = 0f; var breathe = 0f; var scan = 0f
         if (!still) {
             when (mood) {
@@ -137,15 +170,8 @@ internal class Anim(lively: Boolean) {
         f.faceX = o.faceX + gx * 3 * U + scan
         f.faceY = o.faceY + gy * 2 * U
 
-        if (!still && mood != "sleepy") {
-            nextBlink -= dt
-            if (nextBlink < 0) {
-                blink = 0.11f
-                nextBlink = if (Random.nextFloat() < 0.2f) 0.26f else rand(2.4f, 6.5f)
-            }
-        }
-        blink = max(0f, blink - dt)
-        f.lids += ((if (blink > 0) 0.1f else 1f) - f.lids) * ease(60f, dt)
+        val blinking = !still && mood != "sleepy" && pulse.blink > 0
+        f.lids += ((if (blinking) 0.1f else 1f) - f.lids) * ease(60f, dt)
 
         val isHappy = mood == "done"
         happy += ((if (isHappy) 1f else 0f) - happy) * ease(16f, dt)

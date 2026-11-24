@@ -121,7 +121,7 @@ private val LocalSurfaceKey = compositionLocalOf { "" }
  * the person's tap (a card), or an older show_results list drawn the same way.
  */
 @Composable
-fun SurfaceRow(m: Message, author: Bot?) {
+fun SurfaceRow(m: Message, author: Bot?, face: String? = null) {
     val app = GbotApp.instance
     val g = LocalG.current
     val scope = rememberCoroutineScope()
@@ -147,7 +147,7 @@ fun SurfaceRow(m: Message, author: Bot?) {
     }
 
     Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.Bottom) {
-        Box(Modifier.width(40.dp)) { if (author != null) Gbot(author.look, author.id, 34) }
+        Box(Modifier.width(40.dp)) { if (face != null && author != null) Gbot(author.look, author.id, 34, mood = face) }
         Column(Modifier.widthIn(max = 340.dp)) {
             val title = m.str("title") ?: if (isCard) "" else m.content
             if (title.isNotEmpty()) Text(title, style = T.tiny, color = g.ink3, modifier = Modifier.padding(start = 4.dp, bottom = 3.dp))
