@@ -775,9 +775,8 @@ class LocalBrain(
             var next: Message = Message.user(prompt.take(4000))
             var answer = ""
             var rescues = 0
-            // The step a card was asked at: if the very next one fails for
-            // anything but a garbled call (rescued below), the answer stands.
-            var askedAt = -2
+            // The step a card was asked at, or -1.
+            var askedAt = -1
             repeat(MAX_STEPS) { step ->
                 // The flow emits deltas, so the step's text is their sum.
                 onStage("Thinking")
@@ -791,16 +790,19 @@ class LocalBrain(
                         }
                     }
                 }.exceptionOrNull()
-                if (failure != null && step == askedAt + 1 && answer.isNotBlank() && !isToolCallSyntaxFailure(failure) && failure !is CancellationException) {
-                    // Only a card was asked for; the answer already stands.
-                    log("step ${step + 1}: card ask failed, keeping the answer")
-                    return@use answer
-                }
                 if (failure != null) {
                     // A small model writing a tool call slightly wrong is a
                     // typo, not the end of the task: read the call out of the
                     // text it wrote, or ask it to write the call again.
-                    if (!isToolCallSyntaxFailure(failure) || rescues++ >= MAX_RESCUES) throw failure
+                    if (!isToolCallSyntaxFailure(failure) || rescues++ >= MAX_RESCUES) {
+                        // After a card ask the answer was already written:
+                        // an optional card failing doesn't take it away.
+                        if (askedAt >= 0 && answer.isNotBlank() && failure !is CancellationException) {
+                            log("step ${step + 1}: failed after a card ask, keeping the answer")
+                            return@use answer
+                        }
+                        throw failure
+                    }
                     val rescued = salvageToolCall(throwableText(failure), schemas)
                     log("step ${step + 1}: tool call unreadable, rescued ${rescued?.name ?: "nothing"}")
                     next = if (rescued == null) {

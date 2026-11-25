@@ -9,8 +9,8 @@ import java.net.URI
  * with a space left in. Each becomes an address a tap can open, or nothing.
  */
 object Links {
-    /** A link found in text: where it sits, what it shows, and where it goes. */
-    data class Found(val range: IntRange, val label: String, val url: String)
+    /** A link found in text: where it sits, what it shows, where it goes, and the address as written. */
+    data class Found(val range: IntRange, val label: String, val url: String, val raw: String = url)
 
     private val MD_LINK = Regex("""\[([^\]\n]{1,300})]\(\s*<?([^)\s>]+(?:\s[^)\s>]+)*)>?\s*\)""")
     private val BARE = Regex("""(?i)\b(?:https?://|www\.)[^\s<>"'`]+""")
@@ -65,10 +65,13 @@ object Links {
     private fun Char.isHex() = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
     private const val UNSAFE = " |^{}`\\\"<>"
 
-    /** Endings that make a scheme-less name a file, not a site. */
+    /**
+     * Endings that make a scheme-less name a file, not a site. Endings that
+     * are mostly sites (.app, .sh, .io) are left out.
+     */
     private val FILE_TYPES = setOf(
         "pdf", "zip", "mov", "mp4", "mp3", "md", "txt", "doc", "docx", "xls", "xlsx", "csv", "json", "xml", "html", "htm",
-        "png", "jpg", "jpeg", "gif", "webp", "svg", "js", "ts", "kt", "py", "sh", "apk", "dmg", "exe", "app", "rar", "gz", "tar", "log",
+        "png", "jpg", "jpeg", "gif", "webp", "svg", "js", "ts", "kt", "py", "apk", "dmg", "exe", "rar", "gz", "tar", "log",
     )
 
     /** A bare address with the punctuation of the sentence around it left off. */
@@ -91,7 +94,7 @@ object Links {
     fun bare(text: String): List<Found> = BARE.findAll(text).mapNotNull { m ->
         val shown = trimBare(m.value)
         val url = normalize(shown) ?: return@mapNotNull null
-        Found(m.range.first until m.range.first + shown.length, shown, url)
+        Found(m.range.first until m.range.first + shown.length, shown, url, shown)
     }.toList()
 
     /**
@@ -104,7 +107,7 @@ object Links {
         val taken = ArrayList<IntRange>()
         for (m in MD_LINK.findAll(text)) {
             val url = normalize(m.groupValues[2]) ?: continue
-            out += Found(m.range, m.groupValues[1].trim(), url)
+            out += Found(m.range, m.groupValues[1].trim(), url, m.groupValues[2].trim())
             taken += m.range
         }
         for (f in bare(text)) if (taken.none { f.range.first in it }) out += f

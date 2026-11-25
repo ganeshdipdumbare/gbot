@@ -131,7 +131,10 @@ object Surfaces {
             val p = parts.getValue(id)
             when (p.str("component")) {
                 "Text" -> (p["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { t ->
-                    Links.inText(t).forEach { f -> if (LocalResults.isHttps(f.url) && allowLink(f.url)) textLinks += f.url }
+                    Links.inText(t).forEach { f ->
+                        // The tool's own spelling counts too: encoding a | or [ doesn't make it a new address.
+                        if (LocalResults.isHttps(f.url) && (allowLink(f.url) || allowLink(f.raw))) textLinks += f.url
+                    }
                 }
                 "Image" -> {
                     val url = (p["url"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()

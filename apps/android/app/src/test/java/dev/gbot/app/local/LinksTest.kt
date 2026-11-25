@@ -23,6 +23,8 @@ class LinksTest {
         assertNull(Links.normalize("report.pdf"))
         assertNull(Links.normalize("invoice.zip"))
         assertEquals("https://example.com/report.pdf", Links.normalize("example.com/report.pdf"))
+        assertEquals("https://linear.app", Links.normalize("linear.app"))
+        assertEquals("https://bun.sh/docs", Links.normalize("bun.sh/docs"))
     }
 
     @Test fun addressesUriRefusesStillOpen() {
@@ -49,5 +51,9 @@ class LinksTest {
         ).jsonObject
         val sf = Surfaces.build(args, allowLink = { it == "https://a.com/x" || it == "http://plain.com" }) { null }
         assertEquals(setOf("https://a.com/x"), Surfaces.links(sf.spec))
+        // A tool's address with a | still opens once encoded.
+        val raw = "https://a.com/s?q=a|b"
+        val piped = Json.parseToJsonElement("""{"components":[{"id":"root","component":"Text","text":"[Search]($raw)"}]}""").jsonObject
+        assertEquals(setOf("https://a.com/s?q=a%7Cb"), Surfaces.links(Surfaces.build(piped, allowLink = { it == raw }) { null }.spec))
     }
 }
