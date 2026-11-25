@@ -118,6 +118,7 @@ func TestLongChatNeverWaitsForItsSummary(t *testing.T) {
 		h = append(h, user("question "+strings.Repeat("words ", 120)), said("answer "+strings.Repeat("words ", 120)))
 	}
 	h = append(h, user("latest question"))
+	seed(t, st, "t-window", h)
 	m := &slowModel{release: make(chan struct{}), calls: make(chan struct{}, 4)}
 	ctx := withThread(context.Background(), "t-window")
 
@@ -224,6 +225,7 @@ func TestSummaryCoveringPastTheWindowIsSafe(t *testing.T) {
 	st := runsDB(t)
 	r := quietRuntime(st, 1500)
 	h := longChat(12)
+	seed(t, st, "t-past", h)
 	if err := st.SaveSummary(context.Background(), "t-past", len(h)-1, "they like tea"); err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +246,7 @@ func TestRoughFallbackKeepsTheOutsideMark(t *testing.T) {
 	r := quietRuntime(st, 1500)
 	h := append([]kritrim.Message{user("read example.com")}, fetch("w1", "page text")...)
 	h = append(h, longChat(30)...)
+	seed(t, st, "t-mark", h)
 	if err := st.SaveSummary(context.Background(), "t-mark", 0, "they like tea"); err != nil {
 		t.Fatal(err)
 	}
@@ -283,5 +286,48 @@ func TestFailingSummaryIsNotRetriedEveryStep(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if n := len(m.calls); n != 0 {
 		t.Fatalf("a failing summary was retried %d more times right away", n)
+	}
+}
+
+func seed(t *testing.T, st *store.Store, th string, h []kritrim.Message) {
+	t.Helper()
+	if err := store.NewSessions(st).Save(context.Background(), &kritrim.Session{ID: th, Messages: h}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A summary that finishes after the chat was cleared must not bring the
+// cleared conversation back, and an older summary never replaces a newer one.
+func TestLateSummaryIsDropped(t *testing.T) {
+	st := runsDB(t)
+	ctx := context.Background()
+	h := longChat(12)
+	seed(t, st, "t-late", h)
+	if err := st.SaveSummary(ctx, "t-late", 20, "newer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSummary(ctx, "t-late", 10, "older"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.GetSummary(ctx, "t-late"); s == nil || s.Summary != "newer" {
+		t.Fatalf("older summary replaced the newer one: %+v", s)
+	}
+
+	r := quietRuntime(st, 1500)
+	m := &slowModel{release: make(chan struct{}), calls: make(chan struct{}, 4)}
+	r.fitContext(withThread(ctx, "t-late"), m, &kritrim.Request{Messages: append(h, longChat(12)...)})
+	<-m.calls
+	if _, err := st.DB.Exec(ctx, `DELETE FROM agent_sessions WHERE id=$1`, "t-late"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(ctx, `DELETE FROM summaries WHERE thread_id=$1`, "t-late"); err != nil {
+		t.Fatal(err)
+	}
+	close(m.release)
+	for r.summarizingNow("t-late") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s, _ := st.GetSummary(ctx, "t-late"); s != nil {
+		t.Fatalf("a cleared chat's summary came back: %+v", s)
 	}
 }
