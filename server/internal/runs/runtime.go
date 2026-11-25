@@ -152,7 +152,8 @@ type Runtime struct {
 	syncMu    sync.Mutex               // serializes agent rebuilds
 	rounds    *rounds
 
-	summarizing sync.Map // thread id → a summary is being written
+	summarizing   sync.Map // thread id → a summary is being written
+	summaryFailed sync.Map // thread id → when its last summary failed
 }
 
 // agentSlot is one built agent and the runs still using it.

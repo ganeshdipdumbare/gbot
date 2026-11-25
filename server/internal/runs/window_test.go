@@ -205,3 +205,83 @@ func runsDB(t *testing.T) *store.Store {
 	}
 	return st
 }
+
+func longChat(turns int) []kritrim.Message {
+	var h []kritrim.Message
+	for i := 0; i < turns; i++ {
+		h = append(h, user("question "+strings.Repeat("words ", 120)), said("answer "+strings.Repeat("words ", 120)))
+	}
+	return append(h, user("latest question"))
+}
+
+func quietRuntime(st *store.Store, budget int) *Runtime {
+	return &Runtime{cfg: Config{ContextTokens: budget}, store: st, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
+// A saved summary can cover more than the current window drops, e.g. once
+// a heavy turn's pages are shortened and the window reaches further back.
+func TestSummaryCoveringPastTheWindowIsSafe(t *testing.T) {
+	st := runsDB(t)
+	r := quietRuntime(st, 1500)
+	h := longChat(12)
+	if err := st.SaveSummary(context.Background(), "t-past", len(h)-1, "they like tea"); err != nil {
+		t.Fatal(err)
+	}
+	req := &kritrim.Request{Messages: h}
+	r.fitContext(withThread(context.Background(), "t-past"), &slowModel{calls: make(chan struct{}, 4)}, req)
+	if !strings.Contains(req.Messages[0].Content, "they like tea") {
+		t.Fatalf("saved summary not used: %.200s", req.Messages[0].Content)
+	}
+	if last := req.Messages[len(req.Messages)-1]; last.Content != "latest question" {
+		t.Fatalf("lost the person's message: %+v", last)
+	}
+}
+
+// The rough fallback joined to a clean saved summary still says it holds
+// outside text, so the run is tainted.
+func TestRoughFallbackKeepsTheOutsideMark(t *testing.T) {
+	st := runsDB(t)
+	r := quietRuntime(st, 1500)
+	h := append([]kritrim.Message{user("read example.com")}, fetch("w1", "page text")...)
+	h = append(h, longChat(30)...)
+	if err := st.SaveSummary(context.Background(), "t-mark", 0, "they like tea"); err != nil {
+		t.Fatal(err)
+	}
+	m := &slowModel{release: make(chan struct{}), calls: make(chan struct{}, 4)}
+	defer close(m.release)
+	req := &kritrim.Request{Messages: h}
+	r.fitContext(withThread(context.Background(), "t-mark"), m, req)
+	if !strings.Contains(req.Messages[0].Content, "they like tea") || !strings.Contains(req.Messages[0].Content, outsideMark) {
+		t.Fatalf("combined summary lost the saved text or the outside mark:\n%.300s", req.Messages[0].Content)
+	}
+}
+
+type failingModel struct{ calls chan struct{} }
+
+func (m *failingModel) Generate(ctx context.Context, req kritrim.Request) (*kritrim.Response, error) {
+	m.calls <- struct{}{}
+	return nil, context.DeadlineExceeded
+}
+
+func (m *failingModel) Stream(ctx context.Context, req kritrim.Request, emit func(kritrim.Delta)) (*kritrim.Response, error) {
+	return m.Generate(ctx, req)
+}
+
+func TestFailingSummaryIsNotRetriedEveryStep(t *testing.T) {
+	st := runsDB(t)
+	r := quietRuntime(st, 1500)
+	m := &failingModel{calls: make(chan struct{}, 8)}
+	ctx := withThread(context.Background(), "t-fail")
+	r.fitContext(ctx, m, &kritrim.Request{Messages: longChat(12)})
+	<-m.calls
+	for r.summarizingNow("t-fail") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	for i := 0; i < 3; i++ {
+		r.fitContext(ctx, m, &kritrim.Request{Messages: longChat(12)})
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := len(m.calls); n != 0 {
+		t.Fatalf("a failing summary was retried %d more times right away", n)
+	}
+}

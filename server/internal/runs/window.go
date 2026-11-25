@@ -39,6 +39,9 @@ const (
 	summaryLag = 8
 	// A background summary may take this long before it is given up.
 	summaryTimeout = 10 * time.Minute
+	// After a failed summary, a thread waits this long before trying
+	// again, so a failing provider doesn't get one extra call per step.
+	summaryRetry = 2 * time.Minute
 )
 
 // fitContext trims the request's messages for model m.
@@ -61,9 +64,13 @@ func (r *Runtime) fitContext(ctx context.Context, m kritrim.Model, req *kritrim.
 	if th != "" {
 		old, _ = r.store.GetSummary(ctx, th)
 	}
+	// The summary can cover more than is dropped now (the window moves
+	// back once a heavy turn's tool answers are shortened, or Covered was
+	// counted by an earlier strategy); what it covers past start is kept
+	// in the prompt as well.
 	covered := 0
 	if old != nil {
-		covered = min(old.Covered, len(msgs))
+		covered = max(min(old.Covered, start), 0)
 	}
 	outside := (old != nil && strings.HasPrefix(old.Summary, outsideMark)) || carriesOutside(full[covered:start])
 	if rc := runFrom(ctx); rc != nil && rc.isTainted() {
@@ -81,12 +88,12 @@ func (r *Runtime) fitContext(ctx context.Context, m kritrim.Model, req *kritrim.
 		text = old.Summary
 	}
 	if cut < start && kritrim.EstimateTokens(msgs[cut:]) > 2*budget {
-		rough := markOutside(roughSummary(full[covered:start]), outside)
-		if text == "" {
-			text = rough
-		} else {
-			text += "\n\n" + strings.TrimPrefix(rough, outsideMark)
+		rough := roughSummary(full[covered:start])
+		if text != "" {
+			rough = strings.TrimPrefix(text, outsideMark) + "\n\n" + rough
 		}
+		// outside already counts a marked saved summary.
+		text = markOutside(rough, outside)
 		cut = start
 	}
 	var out []kritrim.Message
@@ -103,6 +110,9 @@ func (r *Runtime) fitContext(ctx context.Context, m kritrim.Model, req *kritrim.
 // refreshSummary rewrites a thread's summary in the background, one at a
 // time per thread.
 func (r *Runtime) refreshSummary(ctx context.Context, m kritrim.Model, th string, old *store.Summary, dropped []kritrim.Message, outside bool) {
+	if at, failed := r.summaryFailed.Load(th); failed && time.Since(at.(time.Time)) < summaryRetry {
+		return
+	}
 	if _, busy := r.summarizing.LoadOrStore(th, true); busy {
 		return
 	}
@@ -113,12 +123,14 @@ func (r *Runtime) refreshSummary(ctx context.Context, m kritrim.Model, th string
 		defer r.summarizing.Delete(th)
 		text, err := summarize(bg, m, old, dropped)
 		if err != nil || text == "" {
-			if err != nil {
-				r.log.Debug("summary", "thread", th, "err", err)
-			}
+			r.summaryFailed.Store(th, time.Now())
+			r.log.Warn("summary", "thread", th, "err", err, "empty", err == nil)
 			return
 		}
-		_ = r.store.SaveSummary(bg, th, len(dropped), markOutside(text, outside))
+		r.summaryFailed.Delete(th)
+		if err := r.store.SaveSummary(bg, th, len(dropped), markOutside(text, outside)); err != nil {
+			r.log.Warn("save summary", "thread", th, "err", err)
+		}
 	}()
 }
 
