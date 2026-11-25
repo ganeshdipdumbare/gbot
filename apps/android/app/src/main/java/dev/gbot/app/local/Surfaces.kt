@@ -43,6 +43,7 @@ object Surfaces {
     const val MAX_TEXT = 600
     const val MAX_DATA = 16_000
     const val MAX_PICTURES = 12
+    const val MAX_TEXT_LINKS = 24
 
     /** A picture the phone kept, as a surface names it. */
     const val FILE_SCHEME = "gbot-file:"
@@ -122,9 +123,16 @@ object Surfaces {
         // Every check first; nothing is fetched until the surface passes.
         var interactive = false
         val pictures = LinkedHashMap<String, String>() // part id -> its https address
+        // Links written in a Text open only when a tool gave the address or
+        // the person wrote it, the same rule as a link button; the rest stay
+        // words. The renderer links only what is listed here.
+        val textLinks = LinkedHashSet<String>()
         for (id in reached) {
             val p = parts.getValue(id)
             when (p.str("component")) {
+                "Text" -> (p["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { t ->
+                    Links.inText(t).forEach { f -> if (LocalResults.isHttps(f.url) && allowLink(f.url)) textLinks += f.url }
+                }
                 "Image" -> {
                     val url = (p["url"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
                         ?: throw Rejected("Image \"$id\" needs url as an https address written out, not a data path.")
@@ -180,6 +188,7 @@ object Surfaces {
             put("components", out)
             if (data != null) put("data", data)
             if (files.isNotEmpty()) put("files", JsonArray(files.map { JsonPrimitive(it) }))
+            if (textLinks.isNotEmpty()) put("links", JsonArray(textLinks.take(MAX_TEXT_LINKS).map { JsonPrimitive(it) }))
         }
         return Surface(title, spec, interactive, dropped)
     }
@@ -254,6 +263,10 @@ object Surfaces {
             add(envelope("updateDataModel", buildJsonObject { put("surfaceId", surfaceId); put("path", "/"); put("value", d) }))
         }
     }
+
+    /** The links a surface's Text parts may open: each one passed the link rule in [build]. */
+    fun links(spec: JsonObject): Set<String> =
+        (spec["links"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }?.toSet().orEmpty()
 
     /** The files a surface may draw: only the pictures kept for it. */
     fun files(spec: JsonObject): Set<String> =

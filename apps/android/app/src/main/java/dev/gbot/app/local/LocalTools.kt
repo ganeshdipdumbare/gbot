@@ -242,7 +242,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
                 "a list to compare, a choice or a short form. For a list of 2 to 12 things to compare (hotels, products, places) " +
                 "just give items. For anything else (a glance card, a choice, a short form, a confirmation) give components: a flat list where each has an id, " +
                 "a component type and its properties, containers name their children by id, and one has the id \"root\". Parts: " +
-                "Text{text, variant: h1-h5|body|caption}; Image{url}; Row, Column, List{children:[ids]}; Card{child}; Divider; " +
+                "Text{text, variant: h1-h5|body|caption} (a Text may hold [name](https://…) links); Image{url}; Row, Column, List{children:[ids]}; Card{child}; Divider; " +
                 "Button{child: a Text's id, variant: primary|default|borderless, action}; TextField{label, value}; CheckBox{label, value}; " +
                 "ChoicePicker{label, options:[{label, value}], value, variant: mutuallyExclusive|multipleSelection}; Slider{label, min, max, value}. " +
                 "Put starting values in data and bind inputs to them with {\"path\": \"/name\"}. A button's action is {\"event\": {\"name\": \"book\", \"context\": {\"name\": {\"path\": \"/name\"}}}} " +

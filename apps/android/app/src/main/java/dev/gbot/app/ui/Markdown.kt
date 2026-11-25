@@ -64,6 +64,7 @@ import org.commonmark.node.SoftLineBreak
 import org.commonmark.node.StrongEmphasis
 import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
+import dev.gbot.app.local.Links
 import org.commonmark.node.Text as MdText
 
 private val parser: Parser = Parser.builder().extensions(listOf(TablesExtension.create(), StrikethroughExtension.create())).build()
@@ -165,19 +166,34 @@ private fun Inline(n: Node, color: Color, style: TextStyle, caret: Boolean) {
     val g = LocalG.current
     val s = remember(n, g, caret) {
         buildAnnotatedString {
+            val linkStyle = TextLinkStyles(SpanStyle(color = g.accent, textDecoration = TextDecoration.Underline))
+            var inLink = false
             fun walk(node: Node) {
                 when (node) {
-                    is MdText -> append(node.literal)
+                    // A bare address in a sentence opens too, without the
+                    // full stop or bracket written after it.
+                    is MdText -> if (inLink) append(node.literal) else {
+                        val text = node.literal
+                        var at = 0
+                        for (f in Links.bare(text)) {
+                            append(text.substring(at, f.range.first))
+                            withLink(LinkAnnotation.Url(f.url, linkStyle)) { append(f.label) }
+                            at = f.range.last + 1
+                        }
+                        append(text.substring(at))
+                    }
                     is SoftLineBreak, is HardLineBreak -> append("\n")
                     is Code -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 13.5.sp, background = g.surface2)) { append(" ${node.literal} ") }
                     is Emphasis -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { node.children().forEach(::walk) }
                     is StrongEmphasis -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { node.children().forEach(::walk) }
                     is Strikethrough -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { node.children().forEach(::walk) }
                     is Link -> {
-                        val url = node.destination
-                        if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("mailto:")) {
-                            withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = g.accent, textDecoration = TextDecoration.Underline)))) { node.children().forEach(::walk) }
-                        } else node.children().forEach(::walk)
+                        // example.com or www.… without a scheme still opens.
+                        val url = Links.normalize(node.destination)
+                        inLink = true
+                        if (url != null) withLink(LinkAnnotation.Url(url, linkStyle)) { node.children().forEach(::walk) }
+                        else node.children().forEach(::walk)
+                        inLink = false
                     }
                     is Image -> node.children().forEach(::walk)
                     is HtmlInline -> append(node.literal)

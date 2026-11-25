@@ -420,7 +420,7 @@ class LocalBrain(
         val rs = RunState(w.priority)
         // A card only reaches the person in their own chat: not in Slack,
         // and not in an answer that goes back to another bot.
-        rs.cards = exchange.isEmpty() && w.kind != "slack"
+        rs.cards = w.exchange.isEmpty() && w.kind != "slack"
         val runProof = rs.proof
         // A Slack message is outside text from the start, and so is a
         // message from a bot whose own run had read some.
@@ -775,6 +775,7 @@ class LocalBrain(
             var next: Message = Message.user(prompt.take(4000))
             var answer = ""
             var rescues = 0
+            var asked = false
             repeat(MAX_STEPS) { step ->
                 // The flow emits deltas, so the step's text is their sum.
                 onStage("Thinking")
@@ -788,6 +789,11 @@ class LocalBrain(
                         }
                     }
                 }.exceptionOrNull()
+                if (failure != null && asked && answer.isNotBlank() && failure !is CancellationException) {
+                    // Only a card was asked for; the answer already stands.
+                    log("step ${step + 1}: card ask failed, keeping the answer")
+                    return@use answer
+                }
                 if (failure != null) {
                     // A small model writing a tool call slightly wrong is a
                     // typo, not the end of the task: read the call out of the
@@ -813,6 +819,7 @@ class LocalBrain(
                     val nudge = if (step >= MAX_STEPS - 2) null else rs.beforeDone(answer)
                     if (nudge == null) return@use answer
                     log("step ${step + 1}: asked for a card")
+                    asked = true
                     next = Message.user(nudge)
                     return@repeat
                 }
@@ -885,7 +892,7 @@ class LocalBrain(
         }
         val out = runCatching {
             if (name == "show_ui") {
-                showUi(bot, group, args, tools::mayShow)
+                showUi(bot, group, args, tools::mayShow).also { if (!it.startsWith(NOT_SHOWN)) rs.shown = true }
             } else if (api.isMcpTool(name)) {
                 api.callMcp(name, args) { bytes, mime, from -> keepPicture(bot, group, bytes, mime, from) }.take(4000)
             } else {
@@ -894,7 +901,6 @@ class LocalBrain(
         }.getOrElse { "The tool failed: ${it.message}" }
         if (name in RunTaint.SOURCES || api.isMcpTool(name)) tools.taint.mark(name)
         if (name != "show_ui") tools.see(out)
-        if (name == "show_ui" && !out.startsWith("Nothing was shown")) rs.shown = true
         if (CardNudge.isLookup(name, api.isMcpTool(name))) rs.looked = true
         rs.proof.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
@@ -1063,6 +1069,7 @@ class LocalBrain(
             appendLine("- A short answer in a few sentences or bullets. For a task, as many short bullets as the work needs. Say it once.")
             appendLine("- Facts go in a card, not in Markdown: an answer read at a glance (weather, a flight, a parcel, a score, a price, a time, an event, a contact, a few key numbers) or a list to compare is a show_ui card by default, with a line or two of prose beside it. Plain text is for conversation, explanations, advice, opinions, code and long writing.")
             appendLine("- Shape text with Markdown; the chat renders all of it: short bullets, a small table (2-3 columns) only when a card can't hold the comparison, a fenced code block for code, commands or output, `code` for a value or command inline, **bold** on the number or result that matters, a Markdown link for a page you used.")
+            appendLine("- Links: write each as [name](https://…) with the address exactly as a tool gave it or the person wrote it — never one you made up, shortened or guessed. They open on tap, in text and in cards.")
             appendLine("- A `##` heading only when a long answer has real sections. Never one above a short answer, and never a heading with a single line under it.")
             appendLine("- Report work as one line per step: what you did, the result, what's left for them.")
             appendLine("- If you can answer from this chat, your memory or what you already know, answer now and call no tools.")
@@ -1268,7 +1275,7 @@ class LocalBrain(
                 }
             }
         } catch (e: Surfaces.Rejected) {
-            return "Nothing was shown: ${e.reason} Fix it and call show_ui again."
+            return "$NOT_SHOWN: ${e.reason} Fix it and call show_ui again."
         }
         val note = if (surface.dropped > 0) " ${surface.dropped} picture(s) were left out: only https addresses a tool gave you can be shown." else ""
         if (!surface.interactive) {
@@ -1458,6 +1465,9 @@ class LocalBrain(
          * a very long one.
          */
         const val MAX_STEPS = 24
+
+        /** How a show_ui result starts when nothing reached the chat. */
+        const val NOT_SHOWN = "Nothing was shown"
 
         /**
          * Said on the last round a run has, in place of more tool results.

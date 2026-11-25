@@ -32,9 +32,16 @@ class CardNudgeTest {
         assertNull(CardNudge.check("Berlin is 14°C.", looked = true, shown = true))
     }
 
+    @Test fun plainConfirmationsAndLinkListsPassThrough() {
+        assertNull(CardNudge.check("Done, I saved 1 contact.", looked = true, shown = false))
+        assertNull(CardNudge.check("Sources:\nhttps://a.com/1\nhttps://b.com/2\nhttps://c.com/3", looked = false, shown = false))
+    }
+
     @Test fun lookups() {
         assertTrue(CardNudge.isLookup("web_search", mcp = false))
         assertTrue(CardNudge.isLookup("calendar_list", mcp = false))
+        assertTrue(CardNudge.isLookup("email_read", mcp = false))
+        assertFalse(CardNudge.isLookup("calendar_add", mcp = false))
         assertTrue(CardNudge.isLookup("mcp_anything", mcp = true))
         assertFalse(CardNudge.isLookup("remember", mcp = false))
     }

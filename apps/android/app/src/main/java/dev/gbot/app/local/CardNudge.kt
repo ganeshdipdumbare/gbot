@@ -15,12 +15,18 @@ object CardNudge {
             "or items for a list of things to compare — then reply in a line or two of prose that doesn't repeat what the card shows. " +
             "If this answer really is conversation, an explanation, advice or code, send your reply again unchanged and call nothing."
 
-    /** Tools whose answers are facts worth a card. */
-    private val LOOKUPS = setOf("web_search", "web_fetch", "browser_read", "contact_search", "recall", "routine_list", "bot_list")
-    private val LOOKUP_PREFIXES = listOf("calendar_", "mail_", "weather")
+    /**
+     * Tools that read facts worth a card. Writes (calendar_add, email_draft)
+     * are left out: their confirmation is a sentence, not a card. Every
+     * integration tool counts; a plain confirmation from one has no
+     * figures worth laying out and passes [check] anyway.
+     */
+    private val LOOKUPS = setOf(
+        "web_search", "web_fetch", "browser_read", "contact_search", "calendar_list", "email_list", "email_read",
+        "recall", "routine_list", "bot_list",
+    )
 
-    fun isLookup(tool: String, mcp: Boolean): Boolean =
-        mcp || tool in LOOKUPS || LOOKUP_PREFIXES.any { tool.startsWith(it) }
+    fun isLookup(tool: String, mcp: Boolean): Boolean = mcp || tool in LOOKUPS
 
     /**
      * The words to send back before [reply] goes out, or null to let it go.
@@ -50,10 +56,22 @@ object CardNudge {
         return pairs >= 3
     }
 
-    /** Numbers that carry meaning: a price, a time, a temperature, a score. */
-    internal fun hasFigures(text: String): Boolean = FIGURE.containsMatchIn(text)
+    /**
+     * Numbers that carry meaning: a price, a time, a temperature, a
+     * percentage, a score — or at least three numbers, as a summary of
+     * figures has. "I saved 1 contact" has none worth a card.
+     */
+    internal fun hasFigures(text: String): Boolean {
+        val plain = URL.replace(text, " ")
+        return UNIT.containsMatchIn(plain) || NUMBER.findAll(plain).count() >= 3
+    }
 
     private val NUMBERED = Regex("""^\d+[.)]\s.*""")
-    private val PAIR = Regex("""^[-*•]?\s*\**[\p{L}][\p{L} /]{1,24}\**\s*:\s*\**\S""")
-    private val FIGURE = Regex("""\d""")
+    // "Label: value", but not an address ("https://…" has a label and a colon too).
+    private val PAIR = Regex("""^[-*•]?\s*\**[\p{L}][\p{L} /]{1,24}\**\s*:(?!//)\s*\**\S""")
+    private val URL = Regex("""(?i)\b(?:https?://|www\.)\S+""")
+    private val NUMBER = Regex("""\d+(?:[.,:]\d+)*""")
+    private val UNIT = Regex(
+        """(?i)[$€£¥₹]\s?\d|\d\s?(?:[$€£¥₹%°]|km\b|mi\b|kg\b|min\b|h\b|hrs?\b|mins?\b|am\b|pm\b|usd\b|eur\b|gbp\b)|\b\d{1,2}:\d{2}\b|\b\d+\s?[-–:]\s?\d+\b""",
+    )
 }
