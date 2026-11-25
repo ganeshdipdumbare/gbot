@@ -155,6 +155,18 @@ class LocalBrain(
         val proof = RunBook()
         @Volatile var hasBrowser = false
         @Volatile var onComputer = false
+        // Cards by default (CardNudge): whether the run read facts, drew a
+        // card, and was already asked once to show one.
+        @Volatile var cards = true
+        @Volatile var looked = false
+        @Volatile var shown = false
+        @Volatile private var nudged = false
+
+        /** The ask to show a card before [reply] goes out, at most once a run. */
+        fun beforeDone(reply: String): String? {
+            if (!cards || nudged) return null
+            return CardNudge.check(reply, looked, shown)?.also { nudged = true }
+        }
     }
 
     fun launch(bot: Bot, prompt: String) = start(Work(bot.id, prompt))
@@ -406,6 +418,9 @@ class LocalBrain(
         // The asks this run sends go back together once it ends.
         val round = RunRound()
         val rs = RunState(w.priority)
+        // A card only reaches the person in their own chat: not in Slack,
+        // and not in an answer that goes back to another bot.
+        rs.cards = exchange.isEmpty() && w.kind != "slack"
         val runProof = rs.proof
         // A Slack message is outside text from the start, and so is a
         // message from a bot whose own run had read some.
@@ -511,6 +526,7 @@ class LocalBrain(
                                     model.provider, model.name, system, groupHistory(history, group, bot), asked, tools.schemas + mcpTools,
                                     onText = {},
                                     execute = { call -> executeTool(tools, rs, bot, group, call.name, call.arguments.toJson(), ::stage) },
+                                    beforeDone = rs::beforeDone,
                                 )
                             } ?: throw IllegalStateException(
                                 "${model.provider.name} was still going after ${PROVIDER_TIMEOUT_MS / 60000} minutes, so I stopped. " +
@@ -792,7 +808,14 @@ class LocalBrain(
                 }
                 log("step ${step + 1}: ${text.length} chars, ${calls.size} calls")
                 if (text.isNotBlank()) answer = text.toString()
-                if (calls.isEmpty()) return@use answer
+                if (calls.isEmpty()) {
+                    // One more look before the reply goes out: a card, maybe.
+                    val nudge = if (step >= MAX_STEPS - 2) null else rs.beforeDone(answer)
+                    if (nudge == null) return@use answer
+                    log("step ${step + 1}: asked for a card")
+                    next = Message.user(nudge)
+                    return@repeat
+                }
                 val results = calls.map { call ->
                     call.name to executeTool(tools, rs, bot, group, call.name, call.arguments.toJson(), onStage)
                 }
@@ -871,6 +894,8 @@ class LocalBrain(
         }.getOrElse { "The tool failed: ${it.message}" }
         if (name in RunTaint.SOURCES || api.isMcpTool(name)) tools.taint.mark(name)
         if (name != "show_ui") tools.see(out)
+        if (name == "show_ui" && !out.startsWith("Nothing was shown")) rs.shown = true
+        if (CardNudge.isLookup(name, api.isMcpTool(name))) rs.looked = true
         rs.proof.add(evidenceName(name, args), out)
         // Say the site, not just "working", so the header tells them where
         // the bot is and what they could be watching.
@@ -1036,7 +1061,8 @@ class LocalBrain(
             appendLine("How to reply:")
             appendLine("- Answer in the first line. No preamble, no restating the question, no greeting, no sign-off.")
             appendLine("- A short answer in a few sentences or bullets. For a task, as many short bullets as the work needs. Say it once.")
-            appendLine("- Shape it with Markdown; the chat renders all of it: short bullets, a small table (2-3 columns) when you compare three or more things, a fenced code block for code, commands or output, `code` for a value or command inline, **bold** on the number or result that matters, a Markdown link for a page you used.")
+            appendLine("- Facts go in a card, not in Markdown: an answer read at a glance (weather, a flight, a parcel, a score, a price, a time, an event, a contact, a few key numbers) or a list to compare is a show_ui card by default, with a line or two of prose beside it. Plain text is for conversation, explanations, advice, opinions, code and long writing.")
+            appendLine("- Shape text with Markdown; the chat renders all of it: short bullets, a small table (2-3 columns) only when a card can't hold the comparison, a fenced code block for code, commands or output, `code` for a value or command inline, **bold** on the number or result that matters, a Markdown link for a page you used.")
             appendLine("- A `##` heading only when a long answer has real sections. Never one above a short answer, and never a heading with a single line under it.")
             appendLine("- Report work as one line per step: what you did, the result, what's left for them.")
             appendLine("- If you can answer from this chat, your memory or what you already know, answer now and call no tools.")
@@ -1060,7 +1086,7 @@ class LocalBrain(
             appendLine("- calendar_* and contact_search: if the phone has several accounts the answer lists them; ask the person which with ask_user (give the accounts as options), then call again with account. They are remembered after that.")
             appendLine("- ask_user for any question or choice — a card, not plain text. notify, remember, forget, recall, profile, use_skill, file_*, routine_*.")
             appendLine("- task_contract then task_verify for a multi-step deliverable they will check; a quick answer needs neither. Never claim success against a failed check.")
-            appendLine("- show_ui draws a small screen in the chat. Before every reply, decide whether a card would read better than plain text, and if it would, show one and add a line or two of prose. A card fits any answer taken in at a glance: weather, a flight, parcel or train status, a score, a route or travel time, an event, a contact, a price, a few key numbers. Build it as a Card holding a Column: a h4 Text for what it is, a h1 Text for the main value, caption Texts for the details (the tool's description has a weather example). Conversation, explanations, opinions, code and long writing stay as text. For a list of 2+ things to compare (hotels, products, places) you have read from a tool, give items: cards, one per item, with its picture (a page's Image line), price and rating as fields, and its link; then say what matters in prose, don't repeat every row. For a choice with details, a short form or a confirmation, build it from components with a button that sends an event: you get the person's tap and what they filled in. Plain questions stay with ask_user.")
+            appendLine("- show_ui draws a small screen in the chat, and it is your default for facts. Before every reply, ask whether it carries facts the person reads at a glance or compares; if it does, show a card first and add a line or two of prose. A card fits any answer taken in at a glance: weather, a flight, parcel or train status, a score, a route or travel time, an event, a contact, a price, a few key numbers. Build it as a Card holding a Column: a h4 Text for what it is, a h1 Text for the main value, caption Texts for the details (the tool's description has a weather example). Conversation, explanations, opinions, code and long writing stay as text. For a list of 2+ things to compare (hotels, products, places) you have read from a tool, give items: cards, one per item, with its picture (a page's Image line), price and rating as fields, and its link; then say what matters in prose, don't repeat every row. For a choice with details, a short form or a confirmation, build it from components with a button that sends an event: you get the person's tap and what they filled in. Plain questions stay with ask_user.")
             if (peers.isNotEmpty()) appendLine("- message_bot: ask or tell another of the person's bots; asks come back together.")
             if (bot.id == MAIN_BOT) appendLine("- bot_list, bot_create, bot_update, bot_archive: the person's other bots. Changes ask first; the main bot can't be archived.")
             if (api.localMcp().any { it.enabled && it.status == "connected" }) appendLine("- Tools starting with mc… come from connected integrations.")

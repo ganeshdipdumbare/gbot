@@ -44,3 +44,14 @@ way it waits for `ask_user`. The tap is stored as the card's answer,
 `{"event": name, "context": {...}}`, and the bot reads back
 `The person tapped "book" with {...}`. The person can also tap Skip. Once
 answered, the surface stays visible but no longer answers.
+
+## Cards by default (`local/CardNudge.kt`)
+
+The prompt makes a card the default for facts: an answer read at a glance or a
+list to compare. Models still drift to Markdown, so when a run is about to end
+without a card, and the run read from a lookup tool (web, calendar, contacts,
+mail, an integration) or the reply is a table, a list of figures or a few
+`Label: value` lines, the bot is asked once to show it with `show_ui`. It may
+send its reply unchanged when it is conversation, an explanation or code.
+Replies with code blocks, very long write-ups, Slack runs and answers to other
+bots are never asked.

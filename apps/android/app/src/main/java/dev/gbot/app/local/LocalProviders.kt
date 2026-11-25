@@ -156,19 +156,21 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
         tools: List<ToolSchema>,
         onText: (String) -> Unit,
         execute: suspend (ToolCall) -> String,
+        beforeDone: (String) -> String? = { null },
     ): String = withContext(Dispatchers.IO) {
         val key = key(p.id).orEmpty()
         val base = p.baseUrl.trimEnd('/').ifBlank { defaultBase(p.kind) }
         when (p.kind) {
-            "anthropic" -> anthropic(base, key, model, system, history, prompt, tools, onText, execute)
-            "gemini" -> gemini(base, key, model, system, history, prompt, tools, onText, execute)
-            else -> openai(base, key, model, system, history, prompt, tools, onText, execute)
+            "anthropic" -> anthropic(base, key, model, system, history, prompt, tools, onText, execute, beforeDone)
+            "gemini" -> gemini(base, key, model, system, history, prompt, tools, onText, execute, beforeDone)
+            else -> openai(base, key, model, system, history, prompt, tools, onText, execute, beforeDone)
         }
     }
 
     private suspend fun openai(
         base: String, key: String, model: String, system: String, history: List<Message>, prompt: String,
         tools: List<ToolSchema>, onText: (String) -> Unit, execute: suspend (ToolCall) -> String,
+        beforeDone: (String) -> String?,
     ): String {
         val messages = mutableListOf<JsonObject>()
         messages += buildJsonObject { put("role", "system"); put("content", system) }
@@ -206,7 +208,14 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = parseObject(f["arguments"]?.jsonPrimitive?.contentOrNull),
                 )
             }
-            if (calls.isEmpty()) return said
+            if (calls.isEmpty()) {
+                // One more look before the reply goes out (e.g. show it as a card).
+                val nudge = if (last) null else beforeDone(said)
+                if (nudge == null) return said
+                messages += buildJsonObject { put("role", "assistant"); put("content", text) }
+                messages += buildJsonObject { put("role", "user"); put("content", nudge) }
+                continue
+            }
             // The wrap-up step's tool calls are ignored: it was told to answer.
             if (last) return said.ifBlank { OUT_OF_STEPS }
             messages += buildJsonObject {
@@ -228,6 +237,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
     private suspend fun anthropic(
         base: String, key: String, model: String, system: String, history: List<Message>, prompt: String,
         tools: List<ToolSchema>, onText: (String) -> Unit, execute: suspend (ToolCall) -> String,
+        beforeDone: (String) -> String?,
     ): String {
         val messages = mutableListOf<JsonObject>()
         history.forEach { messages += wireAnthropic(it) }
@@ -274,7 +284,13 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = (o["input"] as? JsonObject) ?: JsonObject(emptyMap()),
                 )
             }
-            if (calls.isEmpty()) return said
+            if (calls.isEmpty()) {
+                val nudge = if (last) null else beforeDone(said)
+                if (nudge == null || blocks.isEmpty()) return said
+                messages += buildJsonObject { put("role", "assistant"); put("content", JsonArray(blocks.toList())) }
+                messages += buildJsonObject { put("role", "user"); put("content", nudge) }
+                continue
+            }
             if (last) return said.ifBlank { OUT_OF_STEPS }
             messages += buildJsonObject { put("role", "assistant"); put("content", JsonArray(blocks.toList())) }
             val results = buildJsonArray {
@@ -294,6 +310,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
     private suspend fun gemini(
         base: String, key: String, model: String, system: String, history: List<Message>, prompt: String,
         tools: List<ToolSchema>, onText: (String) -> Unit, execute: suspend (ToolCall) -> String,
+        beforeDone: (String) -> String?,
     ): String {
         val contents = mutableListOf<JsonObject>()
         history.forEach { contents += wireGemini(it) }
@@ -327,7 +344,13 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = (f["args"] as? JsonObject) ?: JsonObject(emptyMap()),
                 )
             }
-            if (calls.isEmpty()) return said
+            if (calls.isEmpty()) {
+                val nudge = if (last) null else beforeDone(said)
+                if (nudge == null || text.isEmpty()) return said
+                contents += buildJsonObject { put("role", "model"); putJsonArray("parts") { addJsonObject { put("text", text) } } }
+                contents += buildJsonObject { put("role", "user"); putJsonArray("parts") { addJsonObject { put("text", nudge) } } }
+                continue
+            }
             if (last) return said.ifBlank { OUT_OF_STEPS }
             contents += buildJsonObject {
                 put("role", "model")
