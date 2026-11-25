@@ -32,6 +32,10 @@ else is refused, and the reason goes back to the bot so it can fix the surface.
   wrote, the same rule as pictures, and a link button is always drawn as a link
   that names its site. No other part may call `openUrl`. Only pure functions
   such as `formatString` and `required` may appear in values.
+- A Text may hold `[name](https://…)` links and bare addresses. Each opens
+  only if it passes the same rule as a link button; the surface lists those in
+  `links`, and a named link shows its site beside it. Any other link stays
+  plain words.
 - Pictures are fetched only after the whole surface passes, side by side, so a
   rejected surface leaves no files and one slow host can't hold the run.
 - What the person answers stays out of the verifier's evidence, as with
@@ -44,3 +48,25 @@ way it waits for `ask_user`. The tap is stored as the card's answer,
 `{"event": name, "context": {...}}`, and the bot reads back
 `The person tapped "book" with {...}`. The person can also tap Skip. Once
 answered, the surface stays visible but no longer answers.
+
+## Cards by default (`local/CardNudge.kt`)
+
+The prompt makes a card the default for facts: an answer read at a glance or a
+list to compare. Models still drift to Markdown, so when a run is about to end
+without a card, and the run read from a lookup tool (web, calendar, contacts,
+email, an integration) and the reply has real figures (a price, a time, a
+temperature, three or more numbers), or the reply is a table, a list of figures
+or a few `Label: value` lines, the bot is asked once to show it with `show_ui`.
+Not when only the wrap-up step is left, and if that extra call fails the
+answer already written still goes out. It may
+send its reply unchanged when it is conversation, an explanation or code.
+Replies with code blocks, very long write-ups, Slack runs and answers to other
+bots are never asked.
+
+## Links in messages
+
+Chat text opens Markdown links and bare addresses alike (`https://…`,
+`www.…`), without the punctuation around them. A link written without a
+scheme (`[name](example.com)`) gets `https://`; `mailto:` and `tel:` work too.
+Anything else (a relative path, `javascript:`) stays as words. The finder is
+`local/Links.kt`.

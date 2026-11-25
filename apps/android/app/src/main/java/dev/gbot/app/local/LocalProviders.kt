@@ -156,19 +156,21 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
         tools: List<ToolSchema>,
         onText: (String) -> Unit,
         execute: suspend (ToolCall) -> String,
+        beforeDone: (String) -> String? = { null },
     ): String = withContext(Dispatchers.IO) {
         val key = key(p.id).orEmpty()
         val base = p.baseUrl.trimEnd('/').ifBlank { defaultBase(p.kind) }
         when (p.kind) {
-            "anthropic" -> anthropic(base, key, model, system, history, prompt, tools, onText, execute)
-            "gemini" -> gemini(base, key, model, system, history, prompt, tools, onText, execute)
-            else -> openai(base, key, model, system, history, prompt, tools, onText, execute)
+            "anthropic" -> anthropic(base, key, model, system, history, prompt, tools, onText, execute, beforeDone)
+            "gemini" -> gemini(base, key, model, system, history, prompt, tools, onText, execute, beforeDone)
+            else -> openai(base, key, model, system, history, prompt, tools, onText, execute, beforeDone)
         }
     }
 
     private suspend fun openai(
         base: String, key: String, model: String, system: String, history: List<Message>, prompt: String,
         tools: List<ToolSchema>, onText: (String) -> Unit, execute: suspend (ToolCall) -> String,
+        beforeDone: (String) -> String?,
     ): String {
         val messages = mutableListOf<JsonObject>()
         messages += buildJsonObject { put("role", "system"); put("content", system) }
@@ -183,6 +185,9 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
             }
         }
         var said = ""
+        // The answer already written when a card was asked for: if that
+        // extra call fails, the person still gets it.
+        var held: String? = null
         for (step in 0 until MAX_STEPS) {
             val last = step == MAX_STEPS - 1
             if (last) messages += buildJsonObject { put("role", "user"); put("content", WRAP_UP) }
@@ -192,7 +197,12 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                 put("messages", JsonArray(messages))
                 if (toolJson.isNotEmpty()) put("tools", JsonArray(toolJson))
             }
-            val r = post("$base/chat/completions", mapOf("Authorization" to "Bearer $key"), body)
+            val r = try {
+                post("$base/chat/completions", mapOf("Authorization" to "Bearer $key"), body)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                held?.let { return it } ?: throw e
+            }
             val msg = r["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")?.jsonObject
                 ?: return said.ifBlank { UNREADABLE }
             val text = msg["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
@@ -206,7 +216,15 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = parseObject(f["arguments"]?.jsonPrimitive?.contentOrNull),
                 )
             }
-            if (calls.isEmpty()) return said
+            if (calls.isEmpty()) {
+                // One more look before the reply goes out (e.g. show it as a card).
+                val nudge = if (step >= MAX_STEPS - 2) null else beforeDone(said)
+                if (nudge == null) return said
+                messages += buildJsonObject { put("role", "assistant"); put("content", text) }
+                messages += buildJsonObject { put("role", "user"); put("content", nudge) }
+                held = said
+                continue
+            }
             // The wrap-up step's tool calls are ignored: it was told to answer.
             if (last) return said.ifBlank { OUT_OF_STEPS }
             messages += buildJsonObject {
@@ -228,6 +246,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
     private suspend fun anthropic(
         base: String, key: String, model: String, system: String, history: List<Message>, prompt: String,
         tools: List<ToolSchema>, onText: (String) -> Unit, execute: suspend (ToolCall) -> String,
+        beforeDone: (String) -> String?,
     ): String {
         val messages = mutableListOf<JsonObject>()
         history.forEach { messages += wireAnthropic(it) }
@@ -236,6 +255,9 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
             buildJsonObject { put("name", t.name); put("description", t.description); put("input_schema", t.parameters) }
         }
         var said = ""
+        // The answer already written when a card was asked for: if that
+        // extra call fails, the person still gets it.
+        var held: String? = null
         for (step in 0 until MAX_STEPS) {
             val last = step == MAX_STEPS - 1
             // The tool list stays on the last step: a conversation holding
@@ -257,7 +279,12 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                 put("messages", JsonArray(messages))
                 if (toolJson.isNotEmpty()) put("tools", JsonArray(toolJson))
             }
-            val r = post("$base/v1/messages", mapOf("x-api-key" to key, "anthropic-version" to "2023-06-01"), body)
+            val r = try {
+                post("$base/v1/messages", mapOf("x-api-key" to key, "anthropic-version" to "2023-06-01"), body)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                held?.let { return it } ?: throw e
+            }
             val blocks = (r["content"] as? JsonArray).orEmpty()
             val text = blocks.mapNotNull { b ->
                 val o = b.jsonObject
@@ -274,7 +301,14 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = (o["input"] as? JsonObject) ?: JsonObject(emptyMap()),
                 )
             }
-            if (calls.isEmpty()) return said
+            if (calls.isEmpty()) {
+                val nudge = if (step >= MAX_STEPS - 2) null else beforeDone(said)
+                if (nudge == null || blocks.isEmpty()) return said
+                messages += buildJsonObject { put("role", "assistant"); put("content", JsonArray(blocks.toList())) }
+                messages += buildJsonObject { put("role", "user"); put("content", nudge) }
+                held = said
+                continue
+            }
             if (last) return said.ifBlank { OUT_OF_STEPS }
             messages += buildJsonObject { put("role", "assistant"); put("content", JsonArray(blocks.toList())) }
             val results = buildJsonArray {
@@ -294,6 +328,7 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
     private suspend fun gemini(
         base: String, key: String, model: String, system: String, history: List<Message>, prompt: String,
         tools: List<ToolSchema>, onText: (String) -> Unit, execute: suspend (ToolCall) -> String,
+        beforeDone: (String) -> String?,
     ): String {
         val contents = mutableListOf<JsonObject>()
         history.forEach { contents += wireGemini(it) }
@@ -302,6 +337,9 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
             buildJsonObject { put("name", t.name); put("description", t.description); put("parameters", t.parameters) }
         }
         var said = ""
+        // The answer already written when a card was asked for: if that
+        // extra call fails, the person still gets it.
+        var held: String? = null
         for (step in 0 until MAX_STEPS) {
             val last = step == MAX_STEPS - 1
             if (last) contents += buildJsonObject {
@@ -313,7 +351,12 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                 put("contents", JsonArray(contents))
                 if (toolJson.isNotEmpty()) putJsonArray("tools") { addJsonObject { put("functionDeclarations", JsonArray(toolJson)) } }
             }
-            val r = post("$base/models/$model:generateContent?key=$key", emptyMap(), body)
+            val r = try {
+                post("$base/models/$model:generateContent?key=$key", emptyMap(), body)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                held?.let { return it } ?: throw e
+            }
             val parts = r["candidates"]?.jsonArray?.firstOrNull()?.jsonObject?.get("content")?.jsonObject?.get("parts")?.jsonArray
                 ?: return said.ifBlank { UNREADABLE }
             val text = parts.mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }.joinToString("")
@@ -327,7 +370,14 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
                     arguments = (f["args"] as? JsonObject) ?: JsonObject(emptyMap()),
                 )
             }
-            if (calls.isEmpty()) return said
+            if (calls.isEmpty()) {
+                val nudge = if (step >= MAX_STEPS - 2) null else beforeDone(said)
+                if (nudge == null || text.isEmpty()) return said
+                contents += buildJsonObject { put("role", "model"); putJsonArray("parts") { addJsonObject { put("text", text) } } }
+                contents += buildJsonObject { put("role", "user"); putJsonArray("parts") { addJsonObject { put("text", nudge) } } }
+                held = said
+                continue
+            }
             if (last) return said.ifBlank { OUT_OF_STEPS }
             contents += buildJsonObject {
                 put("role", "model")

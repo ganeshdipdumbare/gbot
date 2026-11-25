@@ -65,13 +65,22 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.gbot.app.GbotApp
 import dev.gbot.app.data.keyOf
+import dev.gbot.app.local.Links
 import dev.gbot.app.local.LocalBrain
 import dev.gbot.app.local.LocalResults
 import dev.gbot.app.local.Surfaces
@@ -112,6 +121,9 @@ private val LocalFiles = compositionLocalOf { emptySet<String>() }
 
 /** The ink a Text inside a button takes. */
 private val LocalInk = compositionLocalOf<Color?> { null }
+
+/** The links this surface's Text parts may open (Surfaces.links). */
+private val LocalLinks = compositionLocalOf { emptySet<String>() }
 
 /** The cache key prefix for this surface's pictures. */
 private val LocalSurfaceKey = compositionLocalOf { "" }
@@ -228,6 +240,7 @@ fun SurfaceView(id: String, spec: JsonObject, live: Boolean, onEvent: (String, J
         LocalA2uiReadinessEvaluator provides readiness,
         LocalLive provides live,
         LocalFiles provides Surfaces.files(spec),
+        LocalLinks provides Surfaces.links(spec),
         LocalSurfaceKey provides id,
     ) {
         when (val st = observeA2uiComponentState(surface)) {
@@ -288,8 +301,33 @@ private object PText : A2uiBasicCatalogV1.Text {
             else -> T.body
         }
         val color = ink ?: if (variant == A2uiBasicCatalogV1.Text.Variant.Caption) g.ink2 else g.ink
-        Text(text, style = style, color = color, modifier = modifier.described(accessibility), maxLines = if (ink != null) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
+        val allowed = LocalLinks.current
+        val shown = remember(text, allowed, ink, g) { linked(text, if (ink != null) emptySet() else allowed, g.accent, g.ink3) }
+        Text(shown, style = style, color = color, modifier = modifier.described(accessibility), maxLines = if (ink != null) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
     }
+}
+
+/**
+ * A card Text with its links: `[name](address)` shows the name and a bare
+ * address shows itself. Only an address in [allowed] opens, and a named
+ * link says its site beside it, so a name can't hide where it goes. The
+ * rest stay words, without their Markdown brackets.
+ */
+internal fun linked(text: String, allowed: Set<String>, accent: Color, quiet: Color): AnnotatedString = buildAnnotatedString {
+    var at = 0
+    for (f in Links.inText(text)) {
+        if (f.range.first < at) continue
+        append(text.substring(at, f.range.first))
+        if (f.url in allowed) {
+            withLink(LinkAnnotation.Url(f.url, TextLinkStyles(SpanStyle(color = accent, textDecoration = TextDecoration.Underline)))) { append(f.label) }
+            val host = Links.host(f.url)
+            if (host.isNotEmpty() && !f.label.contains(host, ignoreCase = true)) withStyle(SpanStyle(color = quiet)) { append(" ($host)") }
+        } else {
+            append(f.label)
+        }
+        at = f.range.last + 1
+    }
+    append(text.substring(at))
 }
 
 private object PImage : A2uiBasicCatalogV1.Image {

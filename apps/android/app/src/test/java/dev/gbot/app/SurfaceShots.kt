@@ -94,6 +94,30 @@ class SurfaceShots {
     }
 
     @Test
+    fun linksInCardTextOpenOnlyWhenAToolGaveThem() {
+        val card = Surfaces.build(Json.parseToJsonElement("""{"title":"Parcel","components":[
+            {"id":"root","component":"Card","child":"c"},
+            {"id":"c","component":"Column","children":["h","v","t","s"]},
+            {"id":"h","component":"Text","text":"DHL parcel","variant":"h4"},
+            {"id":"v","component":"Text","text":"Out for delivery","variant":"h1"},
+            {"id":"t","component":"Text","text":"Track it on [the DHL page](https://dhl.de/track?id=1).","variant":"caption"},
+            {"id":"s","component":"Text","text":"More at [this page](https://made.up/x) or https://dhl.de/track?id=1","variant":"caption"}]}""").jsonObject,
+            allowLink = { it == "https://dhl.de/track?id=1" }) { null }
+        val opened = ArrayList<String>()
+        rule.setContent {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalUriHandler provides object : androidx.compose.ui.platform.UriHandler {
+                    override fun openUri(uri: String) { opened += uri }
+                },
+            ) { Page { SurfaceView("s4", card.spec, live = false, onEvent = { _, _ -> }) } }
+        }
+        rule.waitForIdle()
+        save("surface-links")
+        rule.onNodeWithText("Track it on the DHL page (dhl.de).", substring = false).assertExists()
+        rule.onNodeWithText("More at this page or https://dhl.de/track?id=1").assertExists()
+    }
+
+    @Test
     fun anAnsweredSurfaceNoLongerAnswers() {
         var got = 0
         rule.setContent { Page { SurfaceView("s2", form.spec, live = false, onEvent = { _, _ -> got++ }) } }
