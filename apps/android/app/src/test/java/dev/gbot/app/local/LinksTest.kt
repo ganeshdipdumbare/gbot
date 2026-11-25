@@ -19,6 +19,17 @@ class LinksTest {
         assertNull(Links.normalize("/relative/path"))
         assertNull(Links.normalize("notes"))
         assertNull(Links.normalize("https://localhost"))
+        // A file name is not a site, even where its ending is a real TLD.
+        assertNull(Links.normalize("report.pdf"))
+        assertNull(Links.normalize("invoice.zip"))
+        assertEquals("https://example.com/report.pdf", Links.normalize("example.com/report.pdf"))
+    }
+
+    @Test fun addressesUriRefusesStillOpen() {
+        assertEquals("https://example.com/s?q=a%7Cb", Links.normalize("https://example.com/s?q=a|b"))
+        assertEquals("https://api.x.com/i?filter%5Bstatus%5D=open", Links.normalize("https://api.x.com/i?filter[status]=open"))
+        assertEquals("https://x.com/100%25-off", Links.normalize("https://x.com/100%-off"))
+        assertEquals("https://x.com/a%20b", Links.normalize("https://x.com/a%20b"))
     }
 
     @Test fun bareAddressesLeaveTheSentenceOut() {

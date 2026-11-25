@@ -31,15 +31,45 @@ object Links {
             lower.startsWith("tel:") -> return s.replace(" ", "").takeIf { it.length > 4 }
             lower.startsWith("http://") || lower.startsWith("https://") -> Unit
             lower.startsWith("//") -> s = "https:$s"
-            lower.startsWith("www.") || DOMAIN.matches(s) -> s = "https://$s"
+            lower.startsWith("www.") -> s = "https://$s"
+            // example.com/page, but not a file name: report.pdf, notes.md
+            // and clip.mov read as sites (.zip and .mov are real ones).
+            DOMAIN.matches(s) && s.substringBefore('/').substringBefore('?').substringBefore('#').substringBefore(':')
+                .substringAfterLast('.').lowercase() !in FILE_TYPES -> s = "https://$s"
             else -> return null
         }
-        s = s.replace(" ", "%20")
+        s = encode(s)
         return runCatching {
             val u = URI(s)
             s.takeIf { (u.scheme == "http" || u.scheme == "https") && !u.host.isNullOrEmpty() && '.' in u.host }
         }.getOrNull()
     }
+
+    /**
+     * Characters a browser takes but java.net.URI refuses (a space, `|`,
+     * `[]` in a query, a lone `%`), written the way URI wants them, so a
+     * real address isn't dropped for how a site spells it.
+     */
+    private fun encode(s: String): String = buildString {
+        // Brackets belong only in the host (an IPv6 address); after it they are encoded.
+        val hostEnd = s.indexOf("://").let { at -> if (at < 0) 0 else s.indexOfAny(charArrayOf('/', '?', '#'), at + 3).let { if (it < 0) s.length else it } }
+        s.forEachIndexed { i, c ->
+            when {
+                c == '%' && !(i + 2 < s.length && s[i + 1].isHex() && s[i + 2].isHex()) -> append("%25")
+                c in UNSAFE || c.code < 0x20 || (i >= hostEnd && (c == '[' || c == ']')) -> append('%').append("%02X".format(c.code))
+                else -> append(c)
+            }
+        }
+    }
+
+    private fun Char.isHex() = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+    private const val UNSAFE = " |^{}`\\\"<>"
+
+    /** Endings that make a scheme-less name a file, not a site. */
+    private val FILE_TYPES = setOf(
+        "pdf", "zip", "mov", "mp4", "mp3", "md", "txt", "doc", "docx", "xls", "xlsx", "csv", "json", "xml", "html", "htm",
+        "png", "jpg", "jpeg", "gif", "webp", "svg", "js", "ts", "kt", "py", "sh", "apk", "dmg", "exe", "app", "rar", "gz", "tar", "log",
+    )
 
     /** A bare address with the punctuation of the sentence around it left off. */
     fun trimBare(raw: String): String {

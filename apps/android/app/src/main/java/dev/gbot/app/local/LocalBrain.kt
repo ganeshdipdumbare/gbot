@@ -775,7 +775,9 @@ class LocalBrain(
             var next: Message = Message.user(prompt.take(4000))
             var answer = ""
             var rescues = 0
-            var asked = false
+            // The step a card was asked at: if the very next one fails for
+            // anything but a garbled call (rescued below), the answer stands.
+            var askedAt = -2
             repeat(MAX_STEPS) { step ->
                 // The flow emits deltas, so the step's text is their sum.
                 onStage("Thinking")
@@ -789,7 +791,7 @@ class LocalBrain(
                         }
                     }
                 }.exceptionOrNull()
-                if (failure != null && asked && answer.isNotBlank() && failure !is CancellationException) {
+                if (failure != null && step == askedAt + 1 && answer.isNotBlank() && !isToolCallSyntaxFailure(failure) && failure !is CancellationException) {
                     // Only a card was asked for; the answer already stands.
                     log("step ${step + 1}: card ask failed, keeping the answer")
                     return@use answer
@@ -819,7 +821,7 @@ class LocalBrain(
                     val nudge = if (step >= MAX_STEPS - 2) null else rs.beforeDone(answer)
                     if (nudge == null) return@use answer
                     log("step ${step + 1}: asked for a card")
-                    asked = true
+                    askedAt = step
                     next = Message.user(nudge)
                     return@repeat
                 }
