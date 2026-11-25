@@ -40,6 +40,11 @@ class LinksTest {
         assertEquals("www.x.org", found.last().label)
     }
 
+    @Test fun aToolsBracketedAddressIsKeptWhole() {
+        assertEquals("https://en.wikipedia.org/wiki/Rust_(language)", Links.trimBare("https://en.wikipedia.org/wiki/Rust_(language))."))
+        assertEquals("https://a.com/x", Links.trimBare("https://a.com/x)"))
+    }
+
     @Test fun markdownAndBareLinksInCardText() {
         val found = Links.inText("Book at [Hotel Adlon](hoteladlon.de/rooms) or https://booking.com/x, then go.")
         assertEquals(listOf("Hotel Adlon" to "https://hoteladlon.de/rooms", "https://booking.com/x" to "https://booking.com/x"), found.map { it.label to it.url })
