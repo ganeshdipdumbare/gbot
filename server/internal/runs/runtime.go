@@ -154,6 +154,7 @@ type Runtime struct {
 
 	summarizing   sync.Map // thread id → a summary is being written
 	summaryFailed sync.Map // thread id → when its last summary failed
+	cleared       sync.Map // thread id → *atomic.Uint64, bumped when its chat is cleared
 }
 
 // agentSlot is one built agent and the runs still using it.
@@ -614,7 +615,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		}
 	}
 	ctx = withRun(ctx, rc)
-	ctx = withThread(ctx, threadID(b, c.User))
+	ctx = r.withThread(ctx, threadID(b, c.User))
 
 	runID, err := r.store.StartRun(bg, b.ID, req.ID, j.Trigger, model)
 	if err != nil {
@@ -782,7 +783,7 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		// transcript, and a paused one keeps its own thread until answered.
 		th := groupThread(j, runID)
 		thread = th
-		ctx = withThread(ctx, th)
+		ctx = r.withThread(ctx, th)
 		if j.Decisions != nil {
 			sess, _ := ag.Session(bg, th)
 			res, err = runAgent.Run(ctx, "", kritrim.Thread(th), kritrim.User(userID),

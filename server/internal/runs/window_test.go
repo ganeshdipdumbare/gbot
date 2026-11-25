@@ -362,3 +362,39 @@ func TestClearingAChatStopsItsSummary(t *testing.T) {
 		t.Fatalf("the cleared chat's summary was saved: %+v", s)
 	}
 }
+
+// A run that began before the clear and summarizes after it (it was
+// stopped, but reached its next step) doesn't save the old chat.
+func TestRunFromBeforeAClearDoesNotSaveItsSummary(t *testing.T) {
+	st := runsDB(t)
+	ctx := context.Background()
+	r := quietRuntime(st, 1500)
+	h := longChat(12)
+	seed(t, st, "t-stale", h)
+	runCtx := r.withThread(ctx, "t-stale")
+	r.stopSummary("t-stale") // the person clears the chat
+	if _, err := st.ClearChat(ctx, "00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000", "t-stale", false); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, st, "t-stale", longChat(30))
+
+	m := &slowModel{release: make(chan struct{}), calls: make(chan struct{}, 4)}
+	close(m.release)
+	r.fitContext(runCtx, m, &kritrim.Request{Messages: h})
+	<-m.calls
+	for r.summarizingNow("t-stale") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s, _ := st.GetSummary(ctx, "t-stale"); s != nil {
+		t.Fatalf("a run from before the clear saved the old chat's summary: %+v", s)
+	}
+	// A run that begins after the clear does save.
+	r.fitContext(r.withThread(ctx, "t-stale"), m, &kritrim.Request{Messages: longChat(30)})
+	<-m.calls
+	for r.summarizingNow("t-stale") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s, _ := st.GetSummary(ctx, "t-stale"); s == nil {
+		t.Fatal("a run after the clear couldn't save its summary")
+	}
+}

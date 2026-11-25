@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -76,7 +77,7 @@ func (r *Runtime) fitContext(ctx context.Context, m kritrim.Model, req *kritrim.
 	if rc := runFrom(ctx); rc != nil && rc.isTainted() {
 		outside = true
 	}
-	if th != "" && (old == nil || start-covered >= summaryLag) {
+	if th != "" && ctx.Err() == nil && (old == nil || start-covered >= summaryLag) {
 		r.refreshSummary(ctx, m, th, old, full[:start], outside)
 	}
 
@@ -140,15 +141,42 @@ func (r *Runtime) refreshSummary(ctx context.Context, m kritrim.Model, th string
 			return
 		}
 		r.summaryFailed.Delete(th)
+		if r.clears(th) != clearsOf(ctx) {
+			return // the chat was cleared after this run began
+		}
 		if err := r.store.SaveSummary(bg, th, len(dropped), markOutside(text, outside)); err != nil {
 			r.log.Warn("save summary", "thread", th, "err", err)
 		}
 	}()
 }
 
+type clearsKey struct{}
+
+// withThread names the run's thread and notes how often its chat had been
+// cleared when the run began: a run that began before a clear may still
+// start a summary of the old chat, which then must not be saved.
+func (r *Runtime) withThread(ctx context.Context, th string) context.Context {
+	return context.WithValue(withThread(ctx, th), clearsKey{}, r.clears(th))
+}
+
+func clearsOf(ctx context.Context) uint64 {
+	n, _ := ctx.Value(clearsKey{}).(uint64)
+	return n
+}
+
+func (r *Runtime) clears(th string) uint64 {
+	if v, ok := r.cleared.Load(th); ok {
+		return v.(*atomic.Uint64).Load()
+	}
+	return 0
+}
+
 // stopSummary stops a thread's background summary and waits for it, so
-// nothing it wrote can outlive a cleared chat.
+// nothing it wrote can outlive a cleared chat. A summary started later by
+// a run that began before now is not saved either.
 func (r *Runtime) stopSummary(th string) {
+	v, _ := r.cleared.LoadOrStore(th, new(atomic.Uint64))
+	v.(*atomic.Uint64).Add(1)
 	if v, ok := r.summarizing.LoadAndDelete(th); ok {
 		job := v.(*summaryJob)
 		job.cancel()
