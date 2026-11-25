@@ -1,0 +1,207 @@
+package runs
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ganeshdipdumbare/kritrim"
+	"github.com/jackc/pgx/v5"
+
+	"gbot/internal/store"
+)
+
+func user(s string) kritrim.Message { return kritrim.Message{Role: kritrim.RoleUser, Content: s} }
+func said(s string) kritrim.Message { return kritrim.Message{Role: kritrim.RoleAssistant, Content: s} }
+
+func fetch(id string, page string) []kritrim.Message {
+	return []kritrim.Message{
+		{Role: kritrim.RoleAssistant, Reasoning: "let me look", ReasoningSig: "sig",
+			ToolCalls: []kritrim.ToolCall{{ID: id, Name: "web_fetch", Args: map[string]any{"url": "https://example.com"}}}},
+		{Role: kritrim.RoleTool, ToolCallID: id, Content: page},
+	}
+}
+
+// One earlier turn that read a long page, then the current turn reading another.
+func pageHistory() []kritrim.Message {
+	var h []kritrim.Message
+	h = append(h, user("what does example.com say?"))
+	h = append(h, fetch("c1", "OPENING "+strings.Repeat("old page ", 2000))...)
+	h = append(h, said("It says hello."))
+	h = append(h, user("and now?"))
+	h = append(h, fetch("c2", strings.Repeat("new page ", 2000))...)
+	return h
+}
+
+func TestEarlierToolAnswersAreShortened(t *testing.T) {
+	h := pageHistory()
+	got := lightenEarlier(h)
+	old := got[2]
+	if len(old.Content) > staleToolHead+300 || !strings.Contains(old.Content, "web_fetch") || !strings.Contains(old.Content, "OPENING") {
+		t.Fatalf("earlier page not shortened to its opening (%d chars):\n%.300s", len(old.Content), old.Content)
+	}
+	if got[1].Reasoning != "" || got[1].ReasoningSig != "" {
+		t.Fatal("earlier turn's thinking was resent")
+	}
+	if got[6].Content != h[6].Content || got[5].ReasoningSig != "sig" {
+		t.Fatal("the current turn must stay whole")
+	}
+	if h[2].Content == old.Content {
+		t.Fatal("the stored history was changed in place")
+	}
+	if kritrim.EstimateTokens(got) > kritrim.EstimateTokens(h)*2/3 {
+		t.Fatalf("prompt barely shrank: %d → %d tokens", kritrim.EstimateTokens(h), kritrim.EstimateTokens(got))
+	}
+}
+
+func TestWindowStartsAtThePersonAndKeepsTheCurrentTurn(t *testing.T) {
+	h := pageHistory()
+	start := windowStart(h, 10)
+	if start != 4 || h[start].Role != kritrim.RoleUser {
+		t.Fatalf("window starts at %d, want the current turn at 4", start)
+	}
+	if windowStart(h, 1_000_000) != 0 {
+		t.Fatal("everything fits, nothing should be dropped")
+	}
+}
+
+func TestOneLongTurnKeepsItsNewestToolAnswers(t *testing.T) {
+	h := []kritrim.Message{user("research it")}
+	for _, id := range []string{"a", "b", "c", "d", "e", "f"} {
+		h = append(h, fetch(id, strings.Repeat(id, 5000))...)
+	}
+	got := lightenTurn(h, 1000)
+	var whole, short int
+	for _, m := range got {
+		if m.Role != kritrim.RoleTool {
+			continue
+		}
+		if len(m.Content) == 5000 {
+			whole++
+		} else {
+			short++
+		}
+	}
+	if whole != freshToolResults || short != 6-freshToolResults {
+		t.Fatalf("whole=%d short=%d", whole, short)
+	}
+	if got[len(got)-1].Content != h[len(h)-1].Content {
+		t.Fatal("the newest answer was shortened")
+	}
+}
+
+// slowModel stands in for a provider that takes a while to summarize.
+type slowModel struct {
+	release chan struct{}
+	calls   chan struct{}
+}
+
+func (m *slowModel) Generate(ctx context.Context, req kritrim.Request) (*kritrim.Response, error) {
+	m.calls <- struct{}{}
+	<-m.release
+	return &kritrim.Response{Text: "They asked about example.com; it says hello."}, nil
+}
+
+func (m *slowModel) Stream(ctx context.Context, req kritrim.Request, emit func(kritrim.Delta)) (*kritrim.Response, error) {
+	return m.Generate(ctx, req)
+}
+
+func TestLongChatNeverWaitsForItsSummary(t *testing.T) {
+	st := runsDB(t)
+	r := &Runtime{cfg: Config{ContextTokens: 1500}, store: st, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	var h []kritrim.Message
+	for i := 0; i < 12; i++ {
+		h = append(h, user("question "+strings.Repeat("words ", 120)), said("answer "+strings.Repeat("words ", 120)))
+	}
+	h = append(h, user("latest question"))
+	m := &slowModel{release: make(chan struct{}), calls: make(chan struct{}, 4)}
+	ctx := withThread(context.Background(), "t-window")
+
+	done := make(chan *kritrim.Request)
+	go func() {
+		req := &kritrim.Request{Messages: h}
+		r.fitContext(ctx, m, req)
+		done <- req
+	}()
+	var req *kritrim.Request
+	select {
+	case req = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the step waited for the summary")
+	}
+	select {
+	case <-m.calls:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no summary was started in the background")
+	}
+	if last := req.Messages[len(req.Messages)-1]; last.Content != "latest question" {
+		t.Fatalf("lost the person's message: %+v", last)
+	}
+
+	close(m.release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if s, _ := st.GetSummary(context.Background(), "t-window"); s != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the background summary was never saved")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for r.summarizingNow("t-window") {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	req = &kritrim.Request{Messages: h}
+	r.fitContext(ctx, m, req)
+	if !strings.Contains(req.Messages[0].Content, "it says hello") {
+		t.Fatalf("the saved summary didn't stand in for the old turns: %.200s", req.Messages[0].Content)
+	}
+	if n := kritrim.EstimateTokens(req.Messages); n > 1500 {
+		t.Fatalf("prompt still over budget: %d tokens", n)
+	}
+	select {
+	case <-m.calls:
+		t.Fatal("summarized again although the summary is current")
+	default:
+	}
+}
+
+func (r *Runtime) summarizingNow(th string) bool {
+	_, busy := r.summarizing.Load(th)
+	return busy
+}
+
+// runsDB is a fresh database of its own, so this package's tests never
+// share one with another package's running at the same time.
+func runsDB(t *testing.T) *store.Store {
+	t.Helper()
+	admin := os.Getenv("GBOT_TEST_ADMIN_URL")
+	if admin == "" {
+		admin = "postgres://gbot:gbot-local@127.0.0.1:55432/gbot?sslmode=disable"
+	}
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, admin)
+	if err != nil {
+		t.Skipf("no Postgres for integration tests: %v", err)
+	}
+	defer conn.Close(ctx)
+	_, _ = conn.Exec(ctx, `DROP DATABASE IF EXISTS gbot_test_runs WITH (FORCE)`)
+	if _, err := conn.Exec(ctx, `CREATE DATABASE gbot_test_runs`); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, strings.Replace(admin, "/gbot?", "/gbot_test_runs?", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}

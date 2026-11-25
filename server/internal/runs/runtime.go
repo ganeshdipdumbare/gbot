@@ -151,6 +151,8 @@ type Runtime struct {
 	providers map[string]providerState // by provider id
 	syncMu    sync.Mutex               // serializes agent rebuilds
 	rounds    *rounds
+
+	summarizing sync.Map // thread id → a summary is being written
 }
 
 // agentSlot is one built agent and the runs still using it.
@@ -191,17 +193,20 @@ func (r *Runtime) build(model string) (*kritrim.Agent, error) {
 		Tools:   tools,
 		Approve: r.approve,
 		Hooks: kritrim.Hooks{
-			BeforeModel: r.beforeModel,
-			BeforeTool:  r.beforeTool,
-			AfterTool:   r.afterTool,
+			// The prompt is fitted here, not by kritrim's ContextConfig:
+			// old tool answers are shortened on every step, and the
+			// summary of dropped turns is written in the background.
+			BeforeModel: func(ctx context.Context, e *kritrim.ModelEvent) error {
+				if e.Request != nil {
+					r.fitContext(ctx, m, e.Request)
+				}
+				return r.beforeModel(ctx, e)
+			},
+			BeforeTool: r.beforeTool,
+			AfterTool:  r.afterTool,
 		},
-		Retry:  &kritrim.Retry{Max: 3},
-		Limits: kritrim.Limits{Steps: max(r.cfg.MaxSteps, 1), ToolCalls: max(96, max(r.cfg.MaxSteps, 1)*4)},
-		Context: &kritrim.ContextConfig{
-			MaxTokens: r.contextTokens(),
-			KeepLast:  20,
-			Strategy:  kritrim.Summarize(r.summarizer(m)),
-		},
+		Retry:     &kritrim.Retry{Max: 3},
+		Limits:    kritrim.Limits{Steps: max(r.cfg.MaxSteps, 1), ToolCalls: max(96, max(r.cfg.MaxSteps, 1)*4)},
 		Reasoning: r.reasoningFor(model),
 		Logger:    func(msg string) { r.log.Debug("agent", "msg", msg) },
 	})
