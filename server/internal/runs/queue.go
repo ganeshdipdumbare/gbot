@@ -365,6 +365,8 @@ func (r *Runtime) ClearChat(ctx context.Context, b *store.Bot, userID string, me
 	if err := r.ClearQueue(ctx, b.SpaceID, b.ID, userID, ""); err != nil {
 		return err
 	}
+	// A summary still being written would bring the old chat back.
+	r.stopSummary(threadID(b, userID))
 	if _, err := r.store.ClearChat(ctx, b.ID, userID, threadID(b, userID), memory); err != nil {
 		return err
 	}

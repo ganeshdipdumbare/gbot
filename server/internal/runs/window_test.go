@@ -102,7 +102,11 @@ type slowModel struct {
 
 func (m *slowModel) Generate(ctx context.Context, req kritrim.Request) (*kritrim.Response, error) {
 	m.calls <- struct{}{}
-	<-m.release
+	select {
+	case <-m.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	return &kritrim.Response{Text: "They asked about example.com; it says hello."}, nil
 }
 
@@ -329,5 +333,32 @@ func TestLateSummaryIsDropped(t *testing.T) {
 	}
 	if s, _ := st.GetSummary(ctx, "t-late"); s != nil {
 		t.Fatalf("a cleared chat's summary came back: %+v", s)
+	}
+}
+
+// Clearing a chat stops its summary, even if the person starts a long new
+// chat on the same thread before the old summary would have finished.
+func TestClearingAChatStopsItsSummary(t *testing.T) {
+	st := runsDB(t)
+	ctx := context.Background()
+	r := quietRuntime(st, 1500)
+	h := longChat(12)
+	seed(t, st, "t-clear", h)
+	m := &slowModel{release: make(chan struct{}), calls: make(chan struct{}, 4)}
+	defer close(m.release)
+	r.fitContext(withThread(ctx, "t-clear"), m, &kritrim.Request{Messages: h})
+	<-m.calls
+
+	r.stopSummary("t-clear")
+	if r.summarizingNow("t-clear") {
+		t.Fatal("summary still running after the chat was cleared")
+	}
+	if _, err := st.ClearChat(ctx, "00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000", "t-clear", false); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, st, "t-clear", longChat(30)) // a new, longer chat on the same thread
+	time.Sleep(50 * time.Millisecond)
+	if s, _ := st.GetSummary(ctx, "t-clear"); s != nil {
+		t.Fatalf("the cleared chat's summary was saved: %+v", s)
 	}
 }

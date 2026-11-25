@@ -107,23 +107,35 @@ func (r *Runtime) fitContext(ctx context.Context, m kritrim.Model, req *kritrim.
 	req.Messages = lightenTurn(out, budget)
 }
 
+// summaryJob is one background summary, so clearing the chat can stop it.
+type summaryJob struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 // refreshSummary rewrites a thread's summary in the background, one at a
 // time per thread.
 func (r *Runtime) refreshSummary(ctx context.Context, m kritrim.Model, th string, old *store.Summary, dropped []kritrim.Message, outside bool) {
 	if at, failed := r.summaryFailed.Load(th); failed && time.Since(at.(time.Time)) < summaryRetry {
 		return
 	}
-	if _, busy := r.summarizing.LoadOrStore(th, true); busy {
+	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), summaryTimeout)
+	job := &summaryJob{cancel: cancel, done: make(chan struct{})}
+	if _, busy := r.summarizing.LoadOrStore(th, job); busy {
+		cancel()
 		return
 	}
 	dropped = append([]kritrim.Message(nil), dropped...)
-	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), summaryTimeout)
 	go func() {
+		defer close(job.done)
+		defer r.summarizing.CompareAndDelete(th, job)
 		defer cancel()
-		defer r.summarizing.Delete(th)
 		text, err := summarize(bg, m, old, dropped)
+		if bg.Err() == context.Canceled {
+			return // the chat was cleared
+		}
 		if err != nil || text == "" {
-			r.summaryFailed.Store(th, time.Now())
+			r.summaryFailedAt(th)
 			r.log.Warn("summary", "thread", th, "err", err, "empty", err == nil)
 			return
 		}
@@ -132,6 +144,30 @@ func (r *Runtime) refreshSummary(ctx context.Context, m kritrim.Model, th string
 			r.log.Warn("save summary", "thread", th, "err", err)
 		}
 	}()
+}
+
+// stopSummary stops a thread's background summary and waits for it, so
+// nothing it wrote can outlive a cleared chat.
+func (r *Runtime) stopSummary(th string) {
+	if v, ok := r.summarizing.LoadAndDelete(th); ok {
+		job := v.(*summaryJob)
+		job.cancel()
+		<-job.done
+	}
+	r.summaryFailed.Delete(th)
+}
+
+// summaryFailedAt notes a failed summary, forgetting failures old enough
+// to be retried anyway: group turns never come back to their thread.
+func (r *Runtime) summaryFailedAt(th string) {
+	now := time.Now()
+	r.summaryFailed.Range(func(k, v any) bool {
+		if now.Sub(v.(time.Time)) >= summaryRetry {
+			r.summaryFailed.Delete(k)
+		}
+		return true
+	})
+	r.summaryFailed.Store(th, now)
 }
 
 // lightenEarlier shortens what earlier turns left behind: long tool
