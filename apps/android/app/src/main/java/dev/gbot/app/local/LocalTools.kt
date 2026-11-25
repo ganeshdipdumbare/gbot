@@ -118,8 +118,12 @@ fun choiceLines(raw: String, max: Int): List<String> {
 
     /** Records the https addresses in a tool's answer. */
     fun see(text: String) {
-        // A balanced closing bracket is part of the address (…/Rust_(language)).
-        SEEN_LINK.findAll(text).take(200).forEach { seen += WebLookup.key(Links.trimBare(it.value)) }
+        // Both ways the address may end: without the sentence's punctuation
+        // after it, and keeping a balanced bracket (…/Rust_(language)).
+        SEEN_LINK.findAll(text).take(200).forEach {
+            seen += WebLookup.key(it.value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}'))
+            seen += WebLookup.key(Links.trimBare(it.value))
+        }
     }
 
     /** Whether a card picture's address came from a tool's answer or the person, not made up by the bot. */
