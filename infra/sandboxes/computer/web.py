@@ -295,27 +295,56 @@ def fx_note(page, text):
     fx_run(page, "t => { window.__gbotFx.note(t); return null; }", text)
 
 
-def fx_reveal(el):
-    """Scroll an element into view smoothly, so the person watching sees the
-    page move to it instead of jumping. Waits until it stops moving."""
+def fx_reveal(page, el):
+    """Get an element into the visible area before acting on it. If it is out
+    of view, the cursor says which way it is scrolling (up, down, left or
+    right) and the page scrolls there smoothly, so the person watching sees
+    it. It checks again afterwards, and tries up to three times."""
     if not FX_JS:
         return
-    try:
-        el.evaluate("""async (e) => {
-          const r = e.getBoundingClientRect(), vh = innerHeight;
-          if (r.top >= 70 && r.bottom <= vh - 70) return;
-          e.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          let last = -1, still = 0;
-          const t0 = performance.now();
-          while (performance.now() - t0 < 1800 && still < 3) {
-            await new Promise((ok) => setTimeout(ok, 50));
-            const top = e.getBoundingClientRect().top;
-            still = Math.abs(top - last) < 0.5 ? still + 1 : 0;
-            last = top;
-          }
-        }""", timeout=4000)
-    except Exception:
-        pass
+    for _ in range(3):
+        try:
+            # Which axes need scrolling.
+            way = el.evaluate("""e => {
+              // Out of view means not fully visible (one bigger than the view only needs its middle in view).
+              // A header or footer target that is on screen is never "scrolled to".
+              const r = e.getBoundingClientRect(), vw = innerWidth, vh = innerHeight;
+              // One bigger than the view only needs its middle in view, since that is where the cursor
+              // goes and where the click lands.
+              const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+              const tall = r.height > vh, wide = r.width > vw;
+              const v = tall ? (cy < 0 ? '↑' : cy > vh ? '↓' : '') : (r.top < 0 ? '↑' : r.bottom > vh ? '↓' : '');
+              const h = wide ? (cx < 0 ? '←' : cx > vw ? '→' : '')
+                : (r.left < 0 ? '←' : r.right > vw ? '→' : '');
+              return v + h;
+            }""", timeout=4000)
+        except Exception:
+            return
+        if not way:
+            return
+        fx_run(page, """([t]) => { const f = window.__gbotFx, x = innerWidth * 0.62, y = innerHeight * 0.55;
+          f.ring(null); f.move(x, y, t); return [x, y, f.dur]; }""", ["Scrolling " + way])
+        # Start the smooth scroll, then watch it from here until the element stops
+        # moving; nothing waits on the page's own timers.
+        try:
+            where = "e => { const b = e.getBoundingClientRect(); return b.top * 10000 + b.left; }"
+            first = el.evaluate(where, timeout=2000)
+            # Only the axis that needs it is centred; the other stays where it is, so a page's
+            # carousels and tab strips aren't shifted for a step that only needed to go down.
+            el.evaluate("""(e, w) => e.scrollIntoView({
+              block: /[↑↓]/.test(w) ? 'center' : 'nearest', inline: /[←→]/.test(w) ? 'center' : 'nearest', behavior: 'smooth' })""", way, timeout=4000)
+            last, still = None, 0
+            for _ in range(36):
+                time.sleep(0.05)
+                pos = el.evaluate(where, timeout=2000)
+                still = still + 1 if last is not None and abs(pos - last) < 0.5 else 0
+                last = pos
+                if still >= 3:
+                    break
+            if last is not None and abs(last - first) < 1:
+                return  # the page can't scroll any further; don't try again
+        except Exception:
+            return
 
 
 # GBOT_ALLOWED_HOSTS is set by gbot for a bot whose owner chose a site
@@ -482,7 +511,7 @@ def element(page, ref):
                     same = False
                 if not same:
                     fail(f"[{ref}] changed since the snapshot. Take a new browser_snapshot.")
-                fx_reveal(found)
+                fx_reveal(page, found)
                 try:
                     found.scroll_into_view_if_needed(timeout=ACTION_TIMEOUT)
                 except Exception:

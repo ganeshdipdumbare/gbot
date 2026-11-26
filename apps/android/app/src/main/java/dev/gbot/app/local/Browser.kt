@@ -205,7 +205,12 @@ class BrowserController(private val ctx: Context) {
     /** Scroll to the element, glide the cursor to it and ring it, so the step can be watched. */
     private suspend fun fxStep(id: Int, text: String, press: Boolean) {
         if (fxJs.isEmpty()) return
-        if (eval("__gbotFxReveal($id)").contains("1")) kotlinx.coroutines.delay(550)
+        // Out of view: scroll to it (the label says which way), and check again, up to three times.
+        eval("window.__gbotFxTry = null")  // each step starts fresh: only a scroll made in this step counts
+        for (attempt in 0 until 3) {
+            if (!eval("__gbotFxReveal($id)").contains("1")) break
+            kotlinx.coroutines.delay(750)
+        }
         if (!eval("__gbotFxTo($id, ${quote(text)})").contains("1")) return
         kotlinx.coroutines.delay(520)
         if (press) {
@@ -424,10 +429,29 @@ class BrowserController(private val ctx: Context) {
     var el = byId(id);
     if (!el) return '';
     var r = el.getBoundingClientRect();
-    if (r.top >= 70 && r.bottom <= innerHeight - 70) return '';
-    el.scrollIntoView({block:'center', behavior:'smooth'});
+    // What the person sees is the visual viewport (smaller and offset when zoomed).
+    var vv = window.visualViewport;
+    var vl = vv ? vv.offsetLeft : 0, vt = vv ? vv.offsetTop : 0;
+    var vr = vl + (vv ? vv.width : innerWidth), vb = vt + (vv ? vv.height : innerHeight);
+    // Out of view means not fully visible, so a header or footer target that is on screen is never
+    // "scrolled to". One bigger than the view only needs its middle in view: that is where the
+    // cursor goes and where the tap lands.
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var tall = r.height > vb - vt, wide = r.width > vr - vl;
+    var up = tall ? cy < vt : r.top < vt, down = tall ? cy > vb : r.bottom > vb;
+    var left = wide ? cx < vl : r.left < vl, right = wide ? cx > vr : r.right > vr;
+    var way = (up ? '\u2191' : down ? '\u2193' : '') + (left ? '\u2190' : right ? '\u2192' : '');
+    if (!way) { window.__gbotFxTry = null; return ''; }
+    // The last scroll to this element changed nothing (it can't go further): don't announce another.
+    var pos = r.top * 10000 + r.left, now = Date.now(), last = window.__gbotFxTry;
+    window.__gbotFxTry = {id: id, pos: pos, at: now};
+    if (last && last.id === id && last.pos === pos && now - last.at < 4000) return '';
+    if (window.__gbotFx) { window.__gbotFx.ring(null); window.__gbotFx.move(vl + (vr - vl) * 0.62, vt + (vb - vt) * 0.55, 'Scrolling ' + way); }
+    // Only the axis that needs it is centred, so carousels and tab strips aren't shifted needlessly.
+    el.scrollIntoView({block: (up || down) ? 'center' : 'nearest', inline: (left || right) ? 'center' : 'nearest', behavior:'smooth'});
     return '1';
   };
+
   window.__gbotFxTo = function(id, text){
     var el = byId(id);
     if (!el || !window.__gbotFx) return '';

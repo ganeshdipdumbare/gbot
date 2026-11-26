@@ -47,6 +47,30 @@
     .toast.on { opacity: 1; transform: none; }
   `;
 
+  // What the person can actually see: the visual viewport (smaller when the page is
+  // zoomed or the keyboard is up), else the window. Everything is kept inside it, with
+  // a margin, so the cursor is never somewhere nobody can see.
+  const M = 14;
+  const view = () => {
+    const v = window.visualViewport;
+    const l = v ? v.offsetLeft : 0, t = v ? v.offsetTop : 0;
+    return { l, t, r: l + (v ? v.width : innerWidth), b: t + (v ? v.height : innerHeight) };
+  };
+  const keep = (x, y) => {
+    const v = view();
+    return [
+      Math.min(Math.max(x, v.l + M), Math.max(v.l + M, v.r - M)),
+      Math.min(Math.max(y, v.t + M), Math.max(v.t + M, v.b - M)),
+    ];
+  };
+  const inside = (x, y) => { const v = view(); return x >= v.l && x <= v.r && y >= v.t && y <= v.b; };
+  // Which way a point that is out of view lies, to say so in the label: both
+  // directions when it is off diagonally.
+  const where = (x, y) => {
+    const v = view();
+    return (y > v.b ? "↓" : y < v.t ? "↑" : "") + (x > v.r ? "→" : x < v.l ? "←" : "");
+  };
+
   const mount = () => {
     const parent = document.documentElement;
     if (!parent) return false;
@@ -68,15 +92,25 @@
     return true;
   };
 
-  const place = (x, y) => {
+  const place = (px, py) => {
     if (!dot) return;
+    // A point in view is drawn exactly there, even right at an edge; only one out of view is pulled in.
+    const [x, y] = inside(px, py) ? [px, py] : keep(px, py);
     dot.style.transform = `translate(${x}px, ${y}px)`;
     // The label sits down and to the right of the dot, and flips at the edges.
-    const w = tagW;
-    const left = x + 16 + w > innerWidth - 6 ? x - 16 - w : x + 16;
-    const top = y + 14 + 26 > innerHeight - 6 ? y - 14 - 26 : y + 14;
-    tag.style.transform = `translate(${Math.max(6, left)}px, ${Math.max(6, top)}px)`;
+    const v = view(), w = tagW;
+    const left = x + 16 + w > v.r - 6 ? x - 16 - w : x + 16;
+    const top = y + 14 + 26 > v.b - 6 ? y - 14 - 26 : y + 14;
+    tag.style.transform = `translate(${Math.max(v.l + 6, left)}px, ${Math.max(v.t + 6, top)}px)`;
   };
+  // Zooming, resizing or the keyboard moves what is visible: pull the cursor back in.
+  let settling = 0;
+  const resettle = () => {
+    if (settling) return;
+    settling = requestAnimationFrame(() => { settling = 0; place(fx.x, fx.y); });
+  };
+  addEventListener("resize", resettle);
+  if (window.visualViewport) { visualViewport.addEventListener("resize", resettle); visualViewport.addEventListener("scroll", resettle); }
 
   // Reading a width forces layout, so it is done when the words change, not on every frame.
   const label = (text) => {
@@ -110,7 +144,7 @@
     dur: 0, // how long the last move or click takes, in ms, for a caller that waits on its own clock
 
     /** Where the cursor was left by the last step, so the next one starts there. */
-    at(x, y) { if (this.x < 0 && x >= 0) { this.x = x; this.y = y; } },
+    at(x, y) { if (this.x < 0 && x >= 0) { const k = keep(x, y); this.x = k[0]; this.y = k[1]; } },
 
     say(text) {
       try {
@@ -137,11 +171,12 @@
         if (!mount()) return;
         clearTimeout(ringTimer);
         if (!r) { ring.classList.remove("on"); return; }
-        const pad = 3;
-        Object.assign(ring.style, {
-          left: r.x - pad + "px", top: r.y - pad + "px",
-          width: r.width + pad * 2 + "px", height: r.height + pad * 2 + "px",
-        });
+        // Only the part that is in view is outlined.
+        const v = view(), pad = 3;
+        const l = Math.max(r.x - pad, v.l + 2), t = Math.max(r.y - pad, v.t + 2);
+        const rt = Math.min(r.x + r.width + pad, v.r - 2), bt = Math.min(r.y + r.height + pad, v.b - 2);
+        if (rt <= l || bt <= t) { ring.classList.remove("on"); return; }
+        Object.assign(ring.style, { left: l + "px", top: t + "px", width: rt - l + "px", height: bt - t + "px" });
         ring.classList.add("on");
         ringTimer = setTimeout(() => ring.classList.remove("on"), 2400);
       } catch (e) {}
@@ -153,8 +188,11 @@
       return new Promise((done) => {
         try {
           if (!wake()) return done();
-          if (this.x < 0) { this.x = Math.min(innerWidth - 40, x + 220); this.y = Math.max(40, y - 140); place(this.x, this.y); }
-          if (text !== undefined && text !== null) label(text);
+          // A target out of view sends the cursor to the nearest edge, labelled with the way to it.
+          const out = where(x, y);
+          if (out) [x, y] = keep(x, y);
+          if (this.x < 0) { const k = keep(x + 220, y - 140); this.x = k[0]; this.y = k[1]; place(this.x, this.y); }
+          if (text !== undefined && text !== null) label(text && out ? text + " " + out : text);
           const fx0 = this.x, fy0 = this.y;
           const dist = Math.hypot(x - fx0, y - fy0);
           const dur = still ? 0 : ms || Math.max(220, Math.min(720, 160 + dist * 0.55));
