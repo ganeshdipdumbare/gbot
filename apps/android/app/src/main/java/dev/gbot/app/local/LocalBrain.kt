@@ -51,6 +51,9 @@ import java.util.concurrent.ConcurrentHashMap
 internal fun usesComputer(name: String) = name in COMPUTER_TOOLS
 
 /** Tools that work in the phone's one browser window (open_in_chrome hands off to Chrome instead). */
+/** How much of a browser step's result a remote model gets: a whole page read, like the computer's (30k). */
+internal const val BROWSER_RESULT_CAP = 24_000
+
 internal fun usesBrowserWindow(name: String) = name.startsWith("browser_") || name == "vault_type"
 
 private val COMPUTER_TOOLS = setOf(
@@ -155,6 +158,8 @@ class LocalBrain(
         val proof = RunBook()
         @Volatile var hasBrowser = false
         @Volatile var onComputer = false
+        // A remote model has room for a whole page read; the phone's own model (8k tokens) does not.
+        @Volatile var remote = false
         // Cards by default (CardNudge): whether the run read facts, drew a
         // card, and was already asked once to show one.
         @Volatile var cards = true
@@ -490,6 +495,7 @@ class LocalBrain(
             // with the result instead of spending a step choosing the tool.
             // Only when a model will read it, and within the run's time limit;
             // a request it already looked up needs no plan either.
+            rs.remote = model is BrainModel.Remote
             val lookup = if (model == null) "" else {
                 withTimeoutOrNull(RUN_TIMEOUT_MS) { needleHead(bot, group, w, rs, prompt, tools, model is BrainModel.Remote, ::stage) }.orEmpty()
             }
@@ -900,7 +906,8 @@ class LocalBrain(
             } else if (api.isMcpTool(name)) {
                 api.callMcp(name, args) { bytes, mime, from -> keepPicture(bot, group, bytes, mime, from) }.take(4000)
             } else {
-                tools.run(name, args).take(4000)
+                // A page read is what the model acts on: cut short, it loses the products below a long menu.
+                tools.run(name, args).take(if (rs.remote && usesBrowserWindow(name)) BROWSER_RESULT_CAP else 4000)
             }
         }.getOrElse { "The tool failed: ${it.message}" }
         if (name in RunTaint.SOURCES || api.isMcpTool(name)) tools.taint.mark(name)
@@ -1091,7 +1098,7 @@ class LocalBrain(
             }
             appendLine()
             appendLine("Tools (the schemas say the rest):")
-            appendLine("- browser_*: your own browser window, which the person can watch. Use it when the job needs a sign-in, a form or a click — applying, booking, buying, checking their account. browser_read before you act, then use the numbered ids it gives you; one read per action, not two.")
+            appendLine("- browser_*: your own browser window, which the person can watch. Use it when the job needs a sign-in, a form or a click — applying, booking, buying, checking their account. every browser step returns the page as it is afterwards (its tree, with a number in [brackets] on what you can act on), so act, read what came back, act again; browser_read only when the page may have changed on its own. Pick an element by where it sits in the tree, not only its words: the Add to cart inside the product you want. When a read says a popup or banner is on top, deal with it first with its own buttons, in whatever language: accept a cookie banner, close app, newsletter and location popups; for any other consent, terms, sign-up or payment prompt, ask the person.")
             appendLine("- web_search first for anything current or on the web (one fast step; run several together), then web_fetch on one or two results (or a link the person gave) when a snippet isn't enough: a page's title, main picture and text, nothing on screen. No sign-ins, no clicking. The browser is slower; use it only for sign-ins, forms and pages that need clicks.")
             appendLine("- open_in_chrome when a site needs their own browser; vault_type for a saved secret, never a password you typed.")
             appendLine("- calendar_* and contact_search: if the phone has several accounts the answer lists them; ask the person which with ask_user (give the accounts as options), then call again with account. They are remembered after that.")
