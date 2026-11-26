@@ -164,37 +164,37 @@ fun choiceLines(raw: String, max: Int): List<String> {
     val schemas: List<ToolSchema> = listOf(
         ToolSchema(
             "browser_open",
-            "Open a web address in the bot's own browser, which the person can watch. Use it for anything that needs a sign-in, a form, a click, or where the person should see it happen.",
+            "Open a web address in the bot's own browser, which the person can watch. Use it for anything that needs a sign-in, a form, a click, or where the person should see it happen. Returns the page as it is then, the same as browser_read.",
             params("url", "string", "Full web address, e.g. https://example.com", required = listOf("url")),
         ),
         ToolSchema(
-            "browser_read", "Read the page that is open: its text, its address, and a numbered list of things you can click or fill.",
+            "browser_read", "Read the page again: its accessibility tree (headings, text, lists, cards, dialogs, in page order) with a number in [brackets] on everything you can click or fill, and any popup or banner on top of it. Every other browser step already returns this, so call it only when the page may have changed on its own.",
             params(),
         ),
         ToolSchema(
-            "browser_click", "Click one of the numbered elements from browser_read.",
-            params("id", "integer", "The element id from browser_read", required = listOf("id")),
+            "browser_click", "Click a numbered element from the latest page read. Pick it by what the tree shows around it (the product, row or dialog it sits in), not by its wording alone. Returns the page afterwards.",
+            params("id", "integer", "The element's number from the latest page read", required = listOf("id")),
         ),
         ToolSchema(
-            "browser_fill", "Type into one of the numbered fields from browser_read. This replaces what is there.",
+            "browser_fill", "Type into a numbered field from the latest page read. This replaces what is there. Returns the page afterwards.",
             params(
-                "id", "integer", "The field id from browser_read",
+                "id", "integer", "The field's number from the latest page read",
                 "value", "string", "What to type", required = listOf("id", "value"),
             ),
         ),
         ToolSchema(
-            "browser_enter", "Press Enter in a numbered field, to submit a search or form.",
-            params("id", "integer", "The field id from browser_read", required = listOf("id")),
+            "browser_enter", "Press Enter in a numbered field, to submit a search or form. Returns the page afterwards.",
+            params("id", "integer", "The field's number from the latest page read", required = listOf("id")),
         ),
-        ToolSchema("browser_back", "Go back to the previous page.", params()),
-        ToolSchema("browser_forward", "Go forward again after browser_back.", params()),
-        ToolSchema("browser_reload", "Reload the page that is open.", params()),
+        ToolSchema("browser_back", "Go back to the previous page. Returns the page.", params()),
+        ToolSchema("browser_forward", "Go forward again after browser_back. Returns the page.", params()),
+        ToolSchema("browser_reload", "Reload the page that is open. Returns the page.", params()),
         ToolSchema(
-            "browser_scroll", "Scroll the page, then read it again. Use it when what you need is further down or loads as you scroll.",
+            "browser_scroll", "Scroll the page. Returns the page as it is then. Use it when what you need is further down or loads as you scroll.",
             params("direction", "string", "down (default) or up"),
         ),
         ToolSchema(
-            "browser_wait", "Wait for a slow page to finish, then read it again.",
+            "browser_wait", "Wait for a slow page to finish. Returns the page as it is then.",
             params("seconds", "integer", "1 to 10, default 3"),
         ),
         ToolSchema(
@@ -298,10 +298,10 @@ fun choiceLines(raw: String, max: Int): List<String> {
         ),
         ToolSchema(
             "vault_type",
-            "Type one of the person's saved secrets into a password field from browser_read. The value is never shown to you. Only works on the sites saved with that secret; submit presses Enter.",
+            "Type one of the person's saved secrets into a numbered password field from the latest page read. The value is never shown to you. Only works on the sites saved with that secret; submit presses Enter.",
             params(
                 "name", "string", "The secret's name, e.g. LinkedIn",
-                "id", "integer", "The field id from browser_read",
+                "id", "integer", "The field's number from the latest page read",
                 "submit", "boolean", "true to press Enter after typing", required = listOf("name", "id"),
             ),
         ),
@@ -580,24 +580,22 @@ fun choiceLines(raw: String, max: Int): List<String> {
 
     /** Click, fill or press Enter on a numbered element from the last read. */
     private suspend fun element(name: String, args: JsonObject): String = when (name) {
-        "browser_click" -> {
-            val out = browser.click(args.int("id"))
-            val snap = browser.snapshot()
-            noteLabels(snap)
-            out + "\n" + snap.take(6000)
-        }
+        "browser_click" -> withPage(browser.click(args.int("id")))
         "browser_fill" -> {
             val out = browser.fill(args.int("id"), args.str("value"))
             // The server's browser_type can submit in the same step.
-            if (args.str("submit") != "true" || !out.contains("\"ok\":true")) out
-            else out + "\n" + element("browser_enter", args)
+            if (args.str("submit") == "true" && out.contains("\"ok\":true")) out + "\n" + element("browser_enter", args)
+            else withPage(out)
         }
-        else -> {
-            val out = browser.pressEnter(args.int("id"))
-            val done = runCatching { browser.snapshot() }.getOrElse { "" }
-            noteLabels(done)
-            out + if (done.isBlank()) "" else "\n" + done.take(6000)
-        }
+        else -> withPage(browser.pressEnter(args.int("id")))
+    }
+
+    /** An action's result followed by the page as it is now, so acting and reading are one step. */
+    private suspend fun withPage(out: String): String {
+        if (!out.contains("\"ok\":true")) return out
+        val page = runCatching { browser.snapshot() }.getOrElse { "" }
+        noteLabels(page)
+        return out + if (page.isBlank()) "" else "\n" + page
     }
 
     /** Types a saved secret without ever returning its value to the model. */
@@ -614,14 +612,12 @@ fun choiceLines(raw: String, max: Int): List<String> {
         return out
     }
 
+    /** Keeps the latest read's element names, so approvals name the button, not a number. */
+    @Suppress("UNUSED_PARAMETER")
     private fun noteLabels(snapshot: String) {
-        runCatching {
-            val o = kotlinx.serialization.json.Json.parseToJsonElement(snapshot).jsonObject
-            (o["elements"] as? kotlinx.serialization.json.JsonArray).orEmpty().forEach { e ->
-                val el = e.jsonObject
-                val id = el["id"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return@forEach
-                lastLabels[id] = el["label"]?.jsonPrimitive?.contentOrNull.orEmpty().ifBlank { el["tag"]?.jsonPrimitive?.contentOrNull.orEmpty() }
-            }
+        if (browser.labels.isNotEmpty()) {
+            lastLabels.clear()
+            lastLabels.putAll(browser.labels)
         }
     }
 

@@ -355,12 +355,12 @@ func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=gbotframe")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	// Each frame costs one exec inside the computer, so don't also wait a
-	// long fixed interval; let the capture set the pace. A still screen
-	// sends nothing: the browser keeps the last frame.
-	// Native 1280x800 frames: sharp text matters more than the last few
-	// frames a second. Input batching is what made it feel fast.
-	const interval = 60 * time.Millisecond
+	// Each frame costs one exec inside the computer, so the wait after a
+	// capture is only what is left of the frame time: the capture itself sets
+	// the pace, up to about 25 frames a second, which keeps the bot's cursor
+	// gliding instead of jumping. A still screen sends nothing: the browser
+	// keeps the last frame. Native 1280x800 frames: sharp text matters.
+	const frame = 40 * time.Millisecond
 	fails, sent := 0, 0
 	var last []byte
 	lastSent := time.Time{}
@@ -374,6 +374,7 @@ func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
 			}
 			checked = time.Now()
 		}
+		began := time.Now()
 		img, err := s.Computer.Screenshot(r.Context(), o)
 		if err == nil {
 			fails = 0
@@ -401,10 +402,15 @@ func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
 		} else if fails++; fails > 30 {
 			return // the computer went away; let the browser stop asking
 		}
+		// A slow capture still yields a moment; a failed one backs off a whole frame.
+		wait := max(frame-time.Since(began), 5*time.Millisecond)
+		if err != nil {
+			wait = frame
+		}
 		select {
 		case <-r.Context().Done():
 			return
-		case <-time.After(interval):
+		case <-time.After(wait):
 		}
 	}
 }

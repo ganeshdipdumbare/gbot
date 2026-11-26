@@ -67,6 +67,9 @@
   // zoomed or the keyboard is up), else the window. Everything is kept inside it, with
   // a margin, so the cursor is never somewhere nobody can see.
   const M = 14; // screen pixels
+  // A glide advances by at most this much per drawn frame (about one), in ms, so a stalled frame
+  // pauses it instead of making it jump; it ends by dur + SLACK whatever happens (see move).
+  const MAX_FRAME = 20, SLACK = 600;
   // Page pixels per screen pixel: 1 on a desktop, about 2.5 on a phone showing a page shrunk to fit.
   const unit = () => { const v = window.visualViewport; const k = v && v.scale > 0 ? 1 / v.scale : 1; return Math.min(4, Math.max(0.5, k)); };
   const view = () => {
@@ -171,6 +174,7 @@
     x: -1,
     y: -1,
     dur: 0, // how long the last move or click takes, in ms, for a caller that waits on its own clock
+    moving: false, // a glide is under way; it can run past dur when frames stall, by SLACK at most
 
     /** Where the cursor was left by the last step, so the next one starts there. */
     at(x, y) { if (this.x < 0 && x >= 0) { const k = keep(x, y); this.x = k[0]; this.y = k[1]; } },
@@ -231,12 +235,20 @@
           const bend = Math.min(60, dist * 0.12) * (x >= fx0 ? -1 : 1);
           const cx = (fx0 + x) / 2 + (-(y - fy0) / dist) * bend;
           const cy = (fy0 + y) / 2 + ((x - fx0) / dist) * bend;
-          const t0 = performance.now();
+          // The glide plays by the frames that are drawn, not by the wall clock. A page busy
+          // laying out (the first drawing of the cursor, a big page, a slow phone) can stall a
+          // frame for 100 ms or more; on a wall clock the cursor would cover most of its path
+          // unseen and appear to jump. Here a stalled frame advances it by about one frame,
+          // so a stall only pauses it. `moving` says when it has really arrived.
+          let played = 0, last = 0;
           let finished = false;
-          const end = () => { if (finished) return; finished = true; this.x = x; this.y = y; place(x, y); done(); };
+          this.moving = true;
+          const end = () => { if (finished) return; finished = true; this.moving = false; this.x = x; this.y = y; place(x, y); done(); };
           const step = (now) => {
             if (finished) return;
-            const k = Math.min(1, (now - t0) / dur), e = ease(k), u = 1 - e;
+            played += last ? Math.min(now - last, MAX_FRAME) : 0;
+            last = now;
+            const k = Math.min(1, played / dur), e = ease(k), u = 1 - e;
             this.x = u * u * fx0 + 2 * u * e * cx + e * e * x;
             this.y = u * u * fy0 + 2 * u * e * cy + e * e * y;
             place(this.x, this.y);
@@ -244,7 +256,7 @@
           };
           requestAnimationFrame(step);
           // A background tab pauses animation frames; never hold the bot's step for it.
-          setTimeout(end, dur + 150);
+          setTimeout(end, dur + SLACK);
         } catch (e) { done(); }
       });
     },
