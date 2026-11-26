@@ -207,6 +207,95 @@ def source_line(page):
     return f"Source: {title} — {url}"
 
 
+# ---- The bot's visible hand ----
+# While the bot works, a cursor glides to what it is about to use, rings it,
+# ripples on a click and says what it is doing, so the person watching sees
+# the work, not just a page changing. It is drawn inside the page by fx.js
+# (the phone's browser uses the same file) and never blocks an action: if
+# anything about it fails, the action goes ahead without it.
+# GBOT_FX=off turns it off.
+FX_FILE = os.environ.get("GBOT_FX_JS", "/usr/local/share/gbot/fx.js")
+FX_POS = "/tmp/gbot/web-cursor.json"
+try:
+    FX_JS = "" if os.environ.get("GBOT_FX", "on").lower() == "off" else open(FX_FILE).read()
+except OSError:
+    FX_JS = ""
+
+
+def fx_run(page, js, arg=None):
+    """Run one effect in the page, first putting the cursor where the last
+    step left it. Returns the script's result, or None when there is none."""
+    if not FX_JS:
+        return None
+    try:
+        page.evaluate(FX_JS)
+        try:
+            with open(FX_POS) as f:
+                x, y = json.load(f)
+            page.evaluate("([x, y]) => window.__gbotFx.at(x, y)", [x, y])
+        except (OSError, ValueError, TypeError):
+            pass
+        out = page.evaluate(js, arg)
+        if isinstance(out, list) and len(out) == 2:
+            try:
+                with open(FX_POS, "w") as f:
+                    json.dump(out, f)
+            except OSError:
+                pass
+        return out
+    except Exception:
+        return None
+
+
+def fx_go(page, el, text):
+    """Ring an element and glide the cursor to its middle."""
+    if not FX_JS:
+        return
+    try:
+        b = el.bounding_box()
+    except Exception:
+        b = None
+    if not b or b["width"] <= 0 or b["height"] <= 0:
+        return
+    fx_run(page, """async ([b, t]) => { const f = window.__gbotFx; f.ring(b);
+      await f.move(b.x + b.width / 2, b.y + b.height / 2, t); return [f.x, f.y]; }""", [b, text])
+
+
+def fx_press(page):
+    fx_run(page, "async () => { await window.__gbotFx.click(); return [window.__gbotFx.x, window.__gbotFx.y]; }")
+
+
+def fx_say(page, text):
+    fx_run(page, "t => { window.__gbotFx.say(t); return null; }", text)
+
+
+def fx_note(page, text):
+    fx_run(page, "t => { window.__gbotFx.note(t); return null; }", text)
+
+
+def fx_reveal(el):
+    """Scroll an element into view smoothly, so the person watching sees the
+    page move to it instead of jumping. Waits until it stops moving."""
+    if not FX_JS:
+        return
+    try:
+        el.evaluate("""async (e) => {
+          const r = e.getBoundingClientRect(), vh = innerHeight;
+          if (r.top >= 70 && r.bottom <= vh - 70) return;
+          e.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          let last = -1, still = 0;
+          const t0 = performance.now();
+          while (performance.now() - t0 < 1800 && still < 3) {
+            await new Promise((ok) => setTimeout(ok, 50));
+            const top = e.getBoundingClientRect().top;
+            still = Math.abs(top - last) < 0.5 ? still + 1 : 0;
+            last = top;
+          }
+        }""", timeout=4000)
+    except Exception:
+        pass
+
+
 # GBOT_ALLOWED_HOSTS is set by gbot for a bot whose owner chose a site
 # list. Empty means no restriction. A host also allows its subdomains.
 ALLOWED = tuple(h.strip().lower() for h in os.environ.get("GBOT_ALLOWED_HOSTS", "").split(",") if h.strip())
@@ -371,6 +460,7 @@ def element(page, ref):
                     same = False
                 if not same:
                     fail(f"[{ref}] changed since the snapshot. Take a new browser_snapshot.")
+                fx_reveal(found)
                 try:
                     found.scroll_into_view_if_needed(timeout=ACTION_TIMEOUT)
                 except Exception:
@@ -743,6 +833,7 @@ def cmd_navigate(page, url):
     # Banners often arrive a moment after the page; wait for them first.
     cleared = clear_banners(page, first_wait=1.0)
     guard_context(ctx_of(page))
+    fx_note(page, f"Opened {urlparse(page.url).hostname or 'the page'}")
     print(f"Opened {shown(page.url)}. Title: {page.title()}.{banner_note(cleared)} Take a browser_snapshot to read it.")
     print(source_line(page))
 
@@ -859,6 +950,8 @@ def cmd_snapshot(page):
 def cmd_click(page, ref, accept):
     el = pinned_handle(page, ref)
     box, handler = arm_dialog(page, accept)
+    fx_go(page, el, "Clicking")
+    fx_press(page)
     try:
         el.click(timeout=ACTION_TIMEOUT)
     except Exception as e:
@@ -876,6 +969,21 @@ def cmd_click(page, ref, accept):
 def origin_allowed(url, origins):
     host = (urlparse(url).hostname or "").lower()
     return any(host == o or host.endswith("." + o) for o in origins)
+
+
+def type_visibly(page, el, text):
+    """Type into a field one key at a time, so the person watching sees the
+    words appear. The field ends up holding exactly the text, as with fill."""
+    el.fill("", timeout=ACTION_TIMEOUT)
+    el.focus()
+    # About two seconds at most, however long the text.
+    page.keyboard.type(text, delay=max(8, min(45, 2000 // max(1, len(text)))))
+    try:
+        now = el.evaluate("e => ('value' in e ? e.value : (e.innerText || ''))")
+    except Exception:
+        return
+    if now != text:
+        el.fill(text, timeout=ACTION_TIMEOUT)
 
 
 def cmd_type(page, ref, text, submit, accept, secret=False, allow_origins=""):
@@ -904,8 +1012,12 @@ def cmd_type(page, ref, text, submit, accept, secret=False, allow_origins=""):
             fail("saved secrets can only be typed into the sites they are saved for")
     box, handler = arm_dialog(page, accept)
     try:
-        if not secret and el.evaluate("e => e.tagName.toLowerCase()") == "select":
+        is_select = not secret and el.evaluate("e => e.tagName.toLowerCase()") == "select"
+        fx_go(page, el, "Choosing" if is_select else "Typing")
+        if is_select:
             el.select_option(label=text, timeout=ACTION_TIMEOUT)
+        elif not secret and FX_JS and 0 < len(text) <= 240 and "\n" not in text and "\r" not in text and "\t" not in text:
+            type_visibly(page, el, text)
         else:
             el.fill(text, timeout=ACTION_TIMEOUT)
         if submit:
@@ -929,6 +1041,7 @@ def cmd_press(page, key, accept):
     if not KEY.match(key):
         fail("use a key name like Enter, Tab, Escape, ArrowDown or Control+a")
     box, handler = arm_dialog(page, accept)
+    fx_say(page, f"Pressing {key}")
     try:
         page.keyboard.press(key)
     except Exception as e:
@@ -945,6 +1058,7 @@ def cmd_press(page, key, accept):
 
 def cmd_hover(page, ref):
     el = pinned_handle(page, ref)
+    fx_go(page, el, "Looking")
     try:
         el.hover(timeout=ACTION_TIMEOUT)
     except Exception as e:
@@ -955,6 +1069,8 @@ def cmd_hover(page, ref):
 
 def cmd_check(page, ref, off):
     el = pinned_handle(page, ref)
+    fx_go(page, el, "Unchecking" if off else "Checking")
+    fx_press(page)
     try:
         if off:
             el.uncheck(timeout=ACTION_TIMEOUT)
@@ -967,18 +1083,37 @@ def cmd_check(page, ref, off):
 
 
 def cmd_scroll(page, direction, amount):
+    arrows = {"up": "↑", "down": "↓", "top": "↑", "bottom": "↓"}
     try:
-        if direction == "top":
-            page.evaluate("() => window.scrollTo(0, 0)")
-        elif direction == "bottom":
-            page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+        size = page.viewport_size or {"width": 1280, "height": 800}
+    except Exception:
+        size = {"width": 1280, "height": 800}
+    fx_run(page, """async ([x, y, t]) => { const f = window.__gbotFx; f.ring(null);
+      await f.move(x, y, t); return [f.x, f.y]; }""", [size["width"] * 0.62, size["height"] * 0.55, f"Scrolling {arrows[direction]}"])
+    try:
+        if direction in ("top", "bottom"):
+            page.evaluate("""async (top) => {
+              const r = document.scrollingElement || document.documentElement;
+              window.scrollTo({ top: top ? 0 : r.scrollHeight, behavior: 'smooth' });
+              let last = -1, still = 0;
+              const t0 = performance.now();
+              while (performance.now() - t0 < 2500 && still < 4) {
+                await new Promise((ok) => setTimeout(ok, 60));
+                still = Math.abs(r.scrollTop - last) < 1 ? still + 1 : 0;
+                last = r.scrollTop;
+              }
+            }""", direction == "top")
         else:
             delta = amount or 600
             if direction == "up":
                 delta = -delta
-            size = page.viewport_size or {"width": 1280, "height": 800}
             page.mouse.move(size["width"] / 2, size["height"] / 2)
-            page.mouse.wheel(0, delta)
+            # A wheel turned a few notches, not one jump.
+            steps = 8 if FX_JS else 1
+            for _ in range(steps):
+                page.mouse.wheel(0, delta / steps)
+                if steps > 1:
+                    time.sleep(0.035)
     except Exception as e:
         fail(f"Couldn't scroll: {str(e).splitlines()[0]}")
     settle(page)
