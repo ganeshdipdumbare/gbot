@@ -306,7 +306,7 @@ def fx_reveal(page, el):
         try:
             # Which axes need scrolling.
             way = el.evaluate("""e => {
-              // Out of view means not fully visible (a tall or wide one only has to overlap the view).
+              // Out of view means not fully visible (one bigger than the view only needs its middle in view).
               // A header or footer target that is on screen is never "scrolled to".
               const r = e.getBoundingClientRect(), vw = innerWidth, vh = innerHeight;
               // One bigger than the view only needs its middle in view, since that is where the cursor
