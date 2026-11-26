@@ -302,16 +302,16 @@ def fx_reveal(el):
         return
     try:
         el.evaluate("""async (e) => {
-          const r = e.getBoundingClientRect(), vh = innerHeight;
-          if (r.top >= 70 && r.bottom <= vh - 70) return;
-          e.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          const r = e.getBoundingClientRect(), vh = innerHeight, vw = innerWidth;
+          if (r.top >= 70 && r.bottom <= vh - 70 && r.left >= 0 && r.right <= vw) return;
+          e.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
           let last = -1, still = 0;
           const t0 = performance.now();
           while (performance.now() - t0 < 1800 && still < 3) {
             await new Promise((ok) => setTimeout(ok, 50));
-            const top = e.getBoundingClientRect().top;
-            still = Math.abs(top - last) < 0.5 ? still + 1 : 0;
-            last = top;
+            const b = e.getBoundingClientRect(), pos = b.top * 10000 + b.left;
+            still = Math.abs(pos - last) < 0.5 ? still + 1 : 0;
+            last = pos;
           }
         }""", timeout=4000)
     except Exception:

@@ -424,8 +424,8 @@ class BrowserController(private val ctx: Context) {
     var el = byId(id);
     if (!el) return '';
     var r = el.getBoundingClientRect();
-    if (r.top >= 70 && r.bottom <= innerHeight - 70) return '';
-    el.scrollIntoView({block:'center', behavior:'smooth'});
+    if (r.top >= 70 && r.bottom <= innerHeight - 70 && r.left >= 0 && r.right <= innerWidth) return '';
+    el.scrollIntoView({block:'center', inline:'center', behavior:'smooth'});
     return '1';
   };
   window.__gbotFxTo = function(id, text){
