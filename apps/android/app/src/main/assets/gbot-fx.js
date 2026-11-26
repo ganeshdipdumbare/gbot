@@ -5,7 +5,8 @@
 //
 // The same file runs on the computer (injected by gbot-web) and on the phone
 // (injected by the Android browser), so both look alike. It matches the
-// website's pointer: a round dot in the live colour with a white ring.
+// website's pointer: a round dot in the live colour with a ring in the card colour
+// (white, or dark in dark mode).
 //
 // Everything lives in a closed shadow root under one fixed host that ignores
 // the mouse, so the page can't style it, read its insides, or have a click land
@@ -40,10 +41,10 @@
     .dot.on { opacity: 1; }
     .dot.dim { opacity: .35; }
     .dot.press { scale: .8; }
-    .tag, .toast { display: inline-flex; align-items: center; gap: calc(7px * var(--u)); background: var(--card); color: var(--live);
-      font: 600 calc(12.5px * var(--u))/1.2 var(--sans); white-space: nowrap; box-shadow: var(--pop-shadow); }
+    .tag, .toast { background: var(--card); color: var(--live); font: 600 calc(12.5px * var(--u))/1.2 var(--sans); white-space: nowrap; box-shadow: var(--pop-shadow); }
     .tag::before, .toast::before { content: ""; flex: none; width: calc(7px * var(--u)); height: calc(7px * var(--u)); border-radius: 50%;
       background: var(--live); animation: live 1.8s ease-in-out infinite; }
+    .tag { display: inline-flex; align-items: center; gap: calc(7px * var(--u)); }
     .tag { position: fixed; left: 0; top: 0; padding: calc(4px * var(--u)) calc(10px * var(--u)) calc(4px * var(--u)) calc(9px * var(--u)); border-radius: 999px;
       opacity: 0; transition: opacity .2s; will-change: transform; }
     .tag.on { opacity: 1; }
@@ -54,9 +55,11 @@
       border: calc(2px * var(--u)) solid var(--live); opacity: .9; animation: ripple .55s cubic-bezier(.2, .7, .2, 1) forwards; }
     @keyframes ripple { to { transform: scale(3.4); opacity: 0; } }
     @keyframes live { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.72); opacity: .75; } }
-    .toast { position: fixed; left: 50%; bottom: calc(22px * var(--u)); translate: -50% 0; padding: calc(7px * var(--u)) calc(14px * var(--u)) calc(7px * var(--u)) calc(12px * var(--u));
+    /* A block, not a flex box, so a long note ends in an ellipsis. */
+    .toast { display: block; position: fixed; left: 50%; bottom: calc(22px * var(--u)); translate: -50% 0; padding: calc(7px * var(--u)) calc(14px * var(--u)) calc(7px * var(--u)) calc(12px * var(--u));
       border-radius: 999px; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .3s; max-width: 80vw;
       overflow: hidden; text-overflow: ellipsis; }
+    .toast::before { display: inline-block; vertical-align: middle; margin-right: calc(7px * var(--u)); }
     .toast.on { opacity: 1; transform: none; }
   `;
 

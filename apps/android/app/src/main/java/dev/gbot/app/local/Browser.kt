@@ -137,7 +137,7 @@ class BrowserController(private val ctx: Context) {
                     // First show the pointer going to the button and pressing it, then click it.
                     val peek = eval("window.__gbotBanners ? __gbotBanners(true) : ''")
                     if (peek.isBlank()) return
-                    kotlinx.coroutines.delay(650)
+                    kotlinx.coroutines.delay(glideMs() + 120)
                     eval("__gbotFxClick()")
                     kotlinx.coroutines.delay(150)
                 }
@@ -212,6 +212,9 @@ class BrowserController(private val ctx: Context) {
         return raw.ifBlank { """{"url":"${json(url.value)}","text":"the page has not finished loading","elements":[]}""" }
     }
 
+    /** How long the pointer's last glide takes, in ms (the page reports it), capped. */
+    private suspend fun glideMs(): Long = (eval("__gbotFxDur()").trim().toLongOrNull() ?: 400L).coerceIn(0L, 1000L)
+
     /** Scroll to the element, glide the cursor to it and ring it, so the step can be watched. */
     private suspend fun fxStep(id: Int, text: String, press: Boolean) {
         if (fxJs.isEmpty()) return
@@ -222,7 +225,7 @@ class BrowserController(private val ctx: Context) {
             kotlinx.coroutines.delay(750)
         }
         if (!eval("__gbotFxTo($id, ${quote(text)})").contains("1")) return
-        kotlinx.coroutines.delay(520)
+        kotlinx.coroutines.delay(glideMs() + 120)
         if (press) {
             eval("__gbotFxClick()")
             kotlinx.coroutines.delay(150)
@@ -427,11 +430,13 @@ class BrowserController(private val ctx: Context) {
       for (var k = 0; k < cands.length; k++) if (re.test(cands[k].label)) return cands[k];
       return null;
     }
-    var pick = firstAccept() || first(LEAST) || first(CLOSE);
+    var accept = firstAccept(), least = accept ? null : first(LEAST);
+    var pick = accept || least || first(CLOSE);
     if (!pick) return '';
     // look: only glide the pointer to the button (so the person sees it), without clicking.
     if (look) {
-      if (window.__gbotFx) window.__gbotFx.toElement(pick.el, 'Accepting cookies');
+      // Say what the button really is: accepting, declining, or just closing.
+      if (window.__gbotFx) window.__gbotFx.toElement(pick.el, accept ? 'Accepting cookies' : least ? 'Declining optional cookies' : 'Closing');
       return pick.label;
     }
     pick.el.click();
@@ -472,6 +477,10 @@ class BrowserController(private val ctx: Context) {
     if (!el || !window.__gbotFx) return '';
     window.__gbotFx.toElement(el, text);
     return '1';
+  };
+  // How long the last glide takes, so the caller waits for it instead of a guess.
+  window.__gbotFxDur = function(){
+    return String(window.__gbotFx ? Math.round(window.__gbotFx.dur) : 0);
   };
   window.__gbotFxClick = function(){
     if (window.__gbotFx) window.__gbotFx.click();
