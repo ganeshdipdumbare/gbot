@@ -665,6 +665,11 @@ def consent_candidates(page):
     return found
 
 
+def c_accept(label):
+    """Whether a banner button's label is an accept (not a reject or close)."""
+    return bool(ACCEPT.match(label.strip(" .!")))
+
+
 def dismiss_consent(page, retry=False):
     """Clicks the accept option of a cookie prompt if one is showing, else
     its reject or close option. retry waits briefly for a banner that is
@@ -689,6 +694,9 @@ def dismiss_consent(page, retry=False):
         try:
             # Pin the node before clicking, so the click cannot land elsewhere.
             handle = loc.element_handle(timeout=500)
+            # Show the pointer going to the button and pressing it, so the person sees it accepted.
+            fx_go(page, handle, "Accepting cookies" if c_accept(label) else "Closing")
+            fx_press(page)
             handle.click(timeout=1500)
         except Exception:
             continue

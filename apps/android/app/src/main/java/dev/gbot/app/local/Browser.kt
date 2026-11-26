@@ -44,6 +44,8 @@ class BrowserController(private val ctx: Context) {
     fun view(): WebView {
         web?.let { return it }
         val w = WebView(ctx)
+        // Debug builds only: lets chrome://inspect (and adb) look inside the bot's browser.
+        if (ctx.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) WebView.setWebContentsDebuggingEnabled(true)
         // AndroidView won't size a view that has no layout params for us.
         w.layoutParams = android.view.ViewGroup.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
@@ -131,7 +133,15 @@ class BrowserController(private val ctx: Context) {
         var clicked = false
         try {
             repeat(3) {
-                val label = eval("window.__gbotBanners ? __gbotBanners() : ''")
+                if (fxJs.isNotEmpty()) {
+                    // First show the pointer going to the button and pressing it, then click it.
+                    val peek = eval("window.__gbotBanners ? __gbotBanners(true) : ''")
+                    if (peek.isBlank()) return
+                    kotlinx.coroutines.delay(650)
+                    eval("__gbotFxClick()")
+                    kotlinx.coroutines.delay(150)
+                }
+                val label = eval("window.__gbotBanners ? __gbotBanners(false) : ''")
                 if (label.isBlank()) return
                 clicked = true
                 kotlinx.coroutines.delay(400)
@@ -339,7 +349,7 @@ class BrowserController(private val ctx: Context) {
   };
   // Accepts a cookie or consent banner (reject or close only when nothing
   // accepts), so the page underneath is visible. Marketing copy is never clicked.
-  window.__gbotBanners = function(){
+  window.__gbotBanners = function(look){
     // Accept only whole cookie-accept labels, and only in a banner that says
     // "cookie". Substring matches would press "Disagree" or "OK" on a terms
     // or confirm dialog, which agrees for the person.
@@ -419,6 +429,11 @@ class BrowserController(private val ctx: Context) {
     }
     var pick = firstAccept() || first(LEAST) || first(CLOSE);
     if (!pick) return '';
+    // look: only glide the pointer to the button (so the person sees it), without clicking.
+    if (look) {
+      if (window.__gbotFx) window.__gbotFx.toElement(pick.el, 'Accepting cookies');
+      return pick.label;
+    }
     pick.el.click();
     markBanner(pick.el);
     return pick.label;
