@@ -428,12 +428,21 @@ class BrowserController(private val ctx: Context) {
     var el = byId(id);
     if (!el) return '';
     var r = el.getBoundingClientRect();
-    var way = (r.top < 70 ? '\u2191' : r.bottom > innerHeight - 70 ? '\u2193' : '') + (r.left < 0 ? '\u2190' : r.right > innerWidth ? '\u2192' : '');
+    // What the person sees is the visual viewport (smaller and offset when zoomed).
+    var vv = window.visualViewport;
+    var vl = vv ? vv.offsetLeft : 0, vt = vv ? vv.offsetTop : 0;
+    var vr = vl + (vv ? vv.width : innerWidth), vb = vt + (vv ? vv.height : innerHeight);
+    var up = r.top < vt + 70, down = r.bottom > vb - 70;
+    var wide = r.width > vr - vl;
+    var left = wide ? r.right <= vl : r.left < vl, right = wide ? r.left >= vr : r.right > vr;
+    var way = (up ? '\u2191' : down ? '\u2193' : '') + (left ? '\u2190' : right ? '\u2192' : '');
     if (!way) return '';
-    if (window.__gbotFx) { window.__gbotFx.ring(null); window.__gbotFx.move(innerWidth * 0.62, innerHeight * 0.55, 'Scrolling ' + way); }
-    el.scrollIntoView({block:'center', inline:'center', behavior:'smooth'});
+    if (window.__gbotFx) { window.__gbotFx.ring(null); window.__gbotFx.move(vl + (vr - vl) * 0.62, vt + (vb - vt) * 0.55, 'Scrolling ' + way); }
+    // Only the axis that needs it is centred, so carousels and tab strips aren't shifted needlessly.
+    el.scrollIntoView({block: (up || down) ? 'center' : 'nearest', inline: (left || right) ? 'center' : 'nearest', behavior:'smooth'});
     return '1';
   };
+
   window.__gbotFxTo = function(id, text){
     var el = byId(id);
     if (!el || !window.__gbotFx) return '';

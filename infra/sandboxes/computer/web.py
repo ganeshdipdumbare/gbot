@@ -304,10 +304,13 @@ def fx_reveal(page, el):
         return
     for _ in range(3):
         try:
+            # Which axes need scrolling. A wide element only needs to overlap the view sideways.
             way = el.evaluate("""e => {
               const r = e.getBoundingClientRect(), vw = innerWidth, vh = innerHeight, m = 70;
               const v = r.top < m ? '↑' : r.bottom > vh - m ? '↓' : '';
-              const h = r.left < 0 ? '←' : r.right > vw ? '→' : '';
+              const wide = r.width > vw;
+              const h = wide ? (r.right <= 0 ? '←' : r.left >= vw ? '→' : '')
+                : (r.left < 0 ? '←' : r.right > vw ? '→' : '');
               return v + h;
             }""", timeout=4000)
         except Exception:
@@ -321,7 +324,10 @@ def fx_reveal(page, el):
         try:
             where = "e => { const b = e.getBoundingClientRect(); return b.top * 10000 + b.left; }"
             first = el.evaluate(where, timeout=2000)
-            el.evaluate("e => e.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' })", timeout=4000)
+            # Only the axis that needs it is centred; the other stays where it is, so a page's
+            # carousels and tab strips aren't shifted for a step that only needed to go down.
+            el.evaluate("""(e, w) => e.scrollIntoView({
+              block: /[↑↓]/.test(w) ? 'center' : 'nearest', inline: /[←→]/.test(w) ? 'center' : 'nearest', behavior: 'smooth' })""", way, timeout=4000)
             last, still = None, 0
             for _ in range(36):
                 time.sleep(0.05)

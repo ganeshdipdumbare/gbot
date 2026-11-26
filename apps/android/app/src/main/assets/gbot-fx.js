@@ -63,10 +63,12 @@
       Math.min(Math.max(y, v.t + M), Math.max(v.t + M, v.b - M)),
     ];
   };
-  // Which way a point that is out of view lies, to say so in the label.
+  const inside = (x, y) => { const v = view(); return x >= v.l && x <= v.r && y >= v.t && y <= v.b; };
+  // Which way a point that is out of view lies, to say so in the label: both
+  // directions when it is off diagonally.
   const where = (x, y) => {
     const v = view();
-    return y > v.b ? "↓" : y < v.t ? "↑" : x > v.r ? "→" : x < v.l ? "←" : "";
+    return (y > v.b ? "↓" : y < v.t ? "↑" : "") + (x > v.r ? "→" : x < v.l ? "←" : "");
   };
 
   const mount = () => {
@@ -92,7 +94,8 @@
 
   const place = (px, py) => {
     if (!dot) return;
-    const [x, y] = keep(px, py);
+    // A point in view is drawn exactly there, even right at an edge; only one out of view is pulled in.
+    const [x, y] = inside(px, py) ? [px, py] : keep(px, py);
     dot.style.transform = `translate(${x}px, ${y}px)`;
     // The label sits down and to the right of the dot, and flips at the edges.
     const v = view(), w = tagW;
@@ -187,7 +190,7 @@
           if (!wake()) return done();
           // A target out of view sends the cursor to the nearest edge, labelled with the way to it.
           const out = where(x, y);
-          [x, y] = keep(x, y);
+          if (out) [x, y] = keep(x, y);
           if (this.x < 0) { const k = keep(x + 220, y - 140); this.x = k[0]; this.y = k[1]; place(this.x, this.y); }
           if (text !== undefined && text !== null) label(text && out ? text + " " + out : text);
           const fx0 = this.x, fy0 = this.y;
