@@ -44,6 +44,8 @@ class BrowserController(private val ctx: Context) {
     fun view(): WebView {
         web?.let { return it }
         val w = WebView(ctx)
+        // Debug builds only: lets chrome://inspect (and adb) look inside the bot's browser.
+        if (ctx.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) WebView.setWebContentsDebuggingEnabled(true)
         // AndroidView won't size a view that has no layout params for us.
         w.layoutParams = android.view.ViewGroup.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
@@ -131,7 +133,15 @@ class BrowserController(private val ctx: Context) {
         var clicked = false
         try {
             repeat(3) {
-                val label = eval("window.__gbotBanners ? __gbotBanners() : ''")
+                if (fxJs.isNotEmpty()) {
+                    // First show the pointer going to the button and pressing it, then click it.
+                    val peek = eval("window.__gbotBanners ? __gbotBanners(true) : ''")
+                    if (peek.isBlank()) return
+                    kotlinx.coroutines.delay(glideMs() + 120)
+                    eval("__gbotFxClick()")
+                    kotlinx.coroutines.delay(150)
+                }
+                val label = eval("window.__gbotBanners ? __gbotBanners(false) : ''")
                 if (label.isBlank()) return
                 clicked = true
                 kotlinx.coroutines.delay(400)
@@ -202,6 +212,9 @@ class BrowserController(private val ctx: Context) {
         return raw.ifBlank { """{"url":"${json(url.value)}","text":"the page has not finished loading","elements":[]}""" }
     }
 
+    /** How long the pointer's last glide takes, in ms (the page reports it), capped. */
+    private suspend fun glideMs(): Long = (eval("__gbotFxDur()").trim().toLongOrNull() ?: 400L).coerceIn(0L, 1000L)
+
     /** Scroll to the element, glide the cursor to it and ring it, so the step can be watched. */
     private suspend fun fxStep(id: Int, text: String, press: Boolean) {
         if (fxJs.isEmpty()) return
@@ -212,7 +225,7 @@ class BrowserController(private val ctx: Context) {
             kotlinx.coroutines.delay(750)
         }
         if (!eval("__gbotFxTo($id, ${quote(text)})").contains("1")) return
-        kotlinx.coroutines.delay(520)
+        kotlinx.coroutines.delay(glideMs() + 120)
         if (press) {
             eval("__gbotFxClick()")
             kotlinx.coroutines.delay(150)
@@ -339,7 +352,7 @@ class BrowserController(private val ctx: Context) {
   };
   // Accepts a cookie or consent banner (reject or close only when nothing
   // accepts), so the page underneath is visible. Marketing copy is never clicked.
-  window.__gbotBanners = function(){
+  window.__gbotBanners = function(look){
     // Accept only whole cookie-accept labels, and only in a banner that says
     // "cookie". Substring matches would press "Disagree" or "OK" on a terms
     // or confirm dialog, which agrees for the person.
@@ -417,8 +430,15 @@ class BrowserController(private val ctx: Context) {
       for (var k = 0; k < cands.length; k++) if (re.test(cands[k].label)) return cands[k];
       return null;
     }
-    var pick = firstAccept() || first(LEAST) || first(CLOSE);
+    var accept = firstAccept(), least = accept ? null : first(LEAST);
+    var pick = accept || least || first(CLOSE);
     if (!pick) return '';
+    // look: only glide the pointer to the button (so the person sees it), without clicking.
+    if (look) {
+      // Say what the button really is: accepting, declining, or just closing.
+      if (window.__gbotFx) window.__gbotFx.toElement(pick.el, accept ? 'Accepting cookies' : least ? 'Declining optional cookies' : 'Closing');
+      return pick.label;
+    }
     pick.el.click();
     markBanner(pick.el);
     return pick.label;
@@ -457,6 +477,10 @@ class BrowserController(private val ctx: Context) {
     if (!el || !window.__gbotFx) return '';
     window.__gbotFx.toElement(el, text);
     return '1';
+  };
+  // How long the last glide takes, so the caller waits for it instead of a guess.
+  window.__gbotFxDur = function(){
+    return String(window.__gbotFx ? Math.round(window.__gbotFx.dur) : 0);
   };
   window.__gbotFxClick = function(){
     if (window.__gbotFx) window.__gbotFx.click();

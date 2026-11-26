@@ -685,10 +685,14 @@ def dismiss_consent(page, retry=False):
     accept = [c for c in candidates if c[2] == "cookie" and ACCEPT.match(c[1].strip(" .!"))]
     least = [c for c in candidates if LEAST.search(c[1])]
     close = [c for c in candidates if CLOSE.search(c[1])]
-    for loc, label, _ in accept + least + close:
+    said = {"accept": "Accepting cookies", "least": "Declining optional cookies", "close": "Closing"}
+    for kind, (loc, label, _) in [(k, c) for k, group in (("accept", accept), ("least", least), ("close", close)) for c in group]:
         try:
             # Pin the node before clicking, so the click cannot land elsewhere.
             handle = loc.element_handle(timeout=500)
+            # Show the pointer going to the button and pressing it, so the person sees it accepted.
+            fx_go(page, handle, said[kind])
+            fx_press(page)
             handle.click(timeout=1500)
         except Exception:
             continue
