@@ -206,6 +206,7 @@ class BrowserController(private val ctx: Context) {
     private suspend fun fxStep(id: Int, text: String, press: Boolean) {
         if (fxJs.isEmpty()) return
         // Out of view: scroll to it (the label says which way), and check again, up to three times.
+        eval("window.__gbotFxTry = null")  // each step starts fresh: only a scroll made in this step counts
         for (attempt in 0 until 3) {
             if (!eval("__gbotFxReveal($id)").contains("1")) break
             kotlinx.coroutines.delay(750)
@@ -432,14 +433,15 @@ class BrowserController(private val ctx: Context) {
     var vv = window.visualViewport;
     var vl = vv ? vv.offsetLeft : 0, vt = vv ? vv.offsetTop : 0;
     var vr = vl + (vv ? vv.width : innerWidth), vb = vt + (vv ? vv.height : innerHeight);
-    // Out of view means not fully visible (a tall or wide one only has to overlap the view),
-    // so a header or footer target that is on screen is never "scrolled to".
-    var tall = r.height > vb - vt;
-    var up = tall ? r.bottom <= vt : r.top < vt, down = tall ? r.top >= vb : r.bottom > vb;
-    var wide = r.width > vr - vl;
-    var left = wide ? r.right <= vl : r.left < vl, right = wide ? r.left >= vr : r.right > vr;
+    // Out of view means not fully visible, so a header or footer target that is on screen is never
+    // "scrolled to". One bigger than the view only needs its middle in view: that is where the
+    // cursor goes and where the tap lands.
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var tall = r.height > vb - vt, wide = r.width > vr - vl;
+    var up = tall ? cy < vt : r.top < vt, down = tall ? cy > vb : r.bottom > vb;
+    var left = wide ? cx < vl : r.left < vl, right = wide ? cx > vr : r.right > vr;
     var way = (up ? '\u2191' : down ? '\u2193' : '') + (left ? '\u2190' : right ? '\u2192' : '');
-    if (!way) return '';
+    if (!way) { window.__gbotFxTry = null; return ''; }
     // The last scroll to this element changed nothing (it can't go further): don't announce another.
     var pos = r.top * 10000 + r.left, now = Date.now(), last = window.__gbotFxTry;
     window.__gbotFxTry = {id: id, pos: pos, at: now};

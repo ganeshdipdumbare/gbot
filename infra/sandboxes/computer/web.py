@@ -304,15 +304,17 @@ def fx_reveal(page, el):
         return
     for _ in range(3):
         try:
-            # Which axes need scrolling. A wide element only needs to overlap the view sideways.
+            # Which axes need scrolling.
             way = el.evaluate("""e => {
               // Out of view means not fully visible (a tall or wide one only has to overlap the view).
               // A header or footer target that is on screen is never "scrolled to".
               const r = e.getBoundingClientRect(), vw = innerWidth, vh = innerHeight;
-              const tall = r.height > vh;
-              const v = tall ? (r.bottom <= 0 ? '↑' : r.top >= vh ? '↓' : '') : (r.top < 0 ? '↑' : r.bottom > vh ? '↓' : '');
-              const wide = r.width > vw;
-              const h = wide ? (r.right <= 0 ? '←' : r.left >= vw ? '→' : '')
+              // One bigger than the view only needs its middle in view, since that is where the cursor
+              // goes and where the click lands.
+              const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+              const tall = r.height > vh, wide = r.width > vw;
+              const v = tall ? (cy < 0 ? '↑' : cy > vh ? '↓' : '') : (r.top < 0 ? '↑' : r.bottom > vh ? '↓' : '');
+              const h = wide ? (cx < 0 ? '←' : cx > vw ? '→' : '')
                 : (r.left < 0 ? '←' : r.right > vw ? '→' : '');
               return v + h;
             }""", timeout=4000)
