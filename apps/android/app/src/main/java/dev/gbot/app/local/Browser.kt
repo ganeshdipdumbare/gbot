@@ -206,8 +206,8 @@ class BrowserController(private val ctx: Context) {
     private suspend fun fxStep(id: Int, text: String, press: Boolean) {
         if (fxJs.isEmpty()) return
         // Out of view: scroll to it (the label says which way), and check again, up to three times.
-        repeat(3) {
-            if (!eval("__gbotFxReveal($id)").contains("1")) return@repeat
+        for (attempt in 0 until 3) {
+            if (!eval("__gbotFxReveal($id)").contains("1")) break
             kotlinx.coroutines.delay(750)
         }
         if (!eval("__gbotFxTo($id, ${quote(text)})").contains("1")) return
@@ -432,11 +432,18 @@ class BrowserController(private val ctx: Context) {
     var vv = window.visualViewport;
     var vl = vv ? vv.offsetLeft : 0, vt = vv ? vv.offsetTop : 0;
     var vr = vl + (vv ? vv.width : innerWidth), vb = vt + (vv ? vv.height : innerHeight);
-    var up = r.top < vt + 70, down = r.bottom > vb - 70;
+    // Out of view means not fully visible (a tall or wide one only has to overlap the view),
+    // so a header or footer target that is on screen is never "scrolled to".
+    var tall = r.height > vb - vt;
+    var up = tall ? r.bottom <= vt : r.top < vt, down = tall ? r.top >= vb : r.bottom > vb;
     var wide = r.width > vr - vl;
     var left = wide ? r.right <= vl : r.left < vl, right = wide ? r.left >= vr : r.right > vr;
     var way = (up ? '\u2191' : down ? '\u2193' : '') + (left ? '\u2190' : right ? '\u2192' : '');
     if (!way) return '';
+    // The last scroll to this element changed nothing (it can't go further): don't announce another.
+    var pos = r.top * 10000 + r.left, now = Date.now(), last = window.__gbotFxTry;
+    window.__gbotFxTry = {id: id, pos: pos, at: now};
+    if (last && last.id === id && last.pos === pos && now - last.at < 4000) return '';
     if (window.__gbotFx) { window.__gbotFx.ring(null); window.__gbotFx.move(vl + (vr - vl) * 0.62, vt + (vb - vt) * 0.55, 'Scrolling ' + way); }
     // Only the axis that needs it is centred, so carousels and tab strips aren't shifted needlessly.
     el.scrollIntoView({block: (up || down) ? 'center' : 'nearest', inline: (left || right) ? 'center' : 'nearest', behavior:'smooth'});

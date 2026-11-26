@@ -306,8 +306,11 @@ def fx_reveal(page, el):
         try:
             # Which axes need scrolling. A wide element only needs to overlap the view sideways.
             way = el.evaluate("""e => {
-              const r = e.getBoundingClientRect(), vw = innerWidth, vh = innerHeight, m = 70;
-              const v = r.top < m ? '↑' : r.bottom > vh - m ? '↓' : '';
+              // Out of view means not fully visible (a tall or wide one only has to overlap the view).
+              // A header or footer target that is on screen is never "scrolled to".
+              const r = e.getBoundingClientRect(), vw = innerWidth, vh = innerHeight;
+              const tall = r.height > vh;
+              const v = tall ? (r.bottom <= 0 ? '↑' : r.top >= vh ? '↓' : '') : (r.top < 0 ? '↑' : r.bottom > vh ? '↓' : '');
               const wide = r.width > vw;
               const h = wide ? (r.right <= 0 ? '←' : r.left >= vw ? '→' : '')
                 : (r.left < 0 ? '←' : r.right > vw ? '→' : '');
