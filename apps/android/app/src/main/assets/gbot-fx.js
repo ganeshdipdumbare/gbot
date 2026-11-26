@@ -9,9 +9,10 @@
 //
 // Everything lives in a closed shadow root under one fixed host that ignores
 // the mouse, so the page can't style it, read its insides, or have a click land
-// on it. The page can see the global's name, so on the computer gbot-web gives
-// it a fresh random name for each step (a page can't claim a name it can't
-// guess). Calls never throw: a page that is odd must not stop the bot's work.
+// on it. The page can still see the global and the timers this uses, so a hostile
+// page can switch the effects off or garble them. It can never hold the bot up:
+// gbot-web starts an effect, takes the duration it reports (clamped), and waits
+// that long itself instead of waiting on anything in the page. Calls never throw.
 (() => {
   if (window.__gbotFx) return;
   const LIVE = "#8b5cf6";
@@ -106,6 +107,7 @@
   const fx = {
     x: -1,
     y: -1,
+    dur: 0, // how long the last move or click takes, in ms, for a caller that waits on its own clock
 
     /** Where the cursor was left by the last step, so the next one starts there. */
     at(x, y) { if (this.x < 0 && x >= 0) { this.x = x; this.y = y; } },
@@ -147,6 +149,7 @@
 
     /** Glide to a point; resolves when it arrives. */
     move(x, y, text, ms) {
+      this.dur = 0;
       return new Promise((done) => {
         try {
           if (!wake()) return done();
@@ -156,6 +159,7 @@
           const dist = Math.hypot(x - fx0, y - fy0);
           const dur = still ? 0 : ms || Math.max(220, Math.min(720, 160 + dist * 0.55));
           if (dur === 0 || dist < 1) { this.x = x; this.y = y; place(x, y); return done(); }
+          this.dur = dur;
           // A slight arc, like a hand, not a ruler.
           const bend = Math.min(60, dist * 0.12) * (x >= fx0 ? -1 : 1);
           const cx = (fx0 + x) / 2 + (-(y - fy0) / dist) * bend;
@@ -180,6 +184,7 @@
 
     /** Press: the dot squishes and a ring spreads from it. */
     click() {
+      this.dur = still ? 0 : 140;
       return new Promise((done) => {
         try {
           if (!wake()) return done();

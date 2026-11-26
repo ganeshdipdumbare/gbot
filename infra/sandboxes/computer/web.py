@@ -218,8 +218,11 @@ def source_line(page):
 FX_FILE = os.environ.get("GBOT_FX_JS", "/usr/local/share/gbot/fx.js")
 FX_POS = "/tmp/gbot/web-cursor.json"
 # The page can see a global's name and claim it first, so each step names
-# the cursor's global something a page can't guess. Every script and call
-# below says __gbotFx; fx_name() swaps in this step's name.
+# the cursor's global something a page can't guess. That only makes a stand-in
+# harder; what keeps a hostile page from holding the bot up is that nothing here
+# waits on the page: an effect is started, returns at once, and gbot-web waits
+# out its (clamped) duration on its own clock. Every script and call below says
+# __gbotFx; fx_name() swaps in this step's name.
 FX_NAME = "__gbotFx_" + secrets.token_hex(8)
 
 
@@ -234,8 +237,10 @@ except OSError:
 
 
 def fx_run(page, js, arg=None):
-    """Run one effect in the page, first putting the cursor where the last
-    step left it. Returns the script's result, or None when there is none."""
+    """Start one effect in the page, first putting the cursor where the last
+    step left it, then wait out its duration here. The script returns
+    [x, y, ms] (x and y worked out by the script itself, or null when the
+    cursor didn't move); nothing the page controls is awaited."""
     if not FX_JS:
         return None
     try:
@@ -248,12 +253,17 @@ def fx_run(page, js, arg=None):
         except (OSError, ValueError, TypeError):
             pass
         out = page.evaluate(js, arg)
-        if isinstance(out, list) and len(out) == 2:
-            try:
-                with open(FX_POS, "w") as f:
-                    json.dump(out, f)
-            except OSError:
-                pass
+        if isinstance(out, list) and len(out) == 3:
+            x, y, ms = out
+            num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) < 1e6
+            if num(x) and num(y):
+                try:
+                    with open(FX_POS, "w") as f:
+                        json.dump([x, y], f)
+                except OSError:
+                    pass
+            if num(ms):
+                time.sleep(min(max(ms, 0), 1000) / 1000 + 0.05)
         return out
     except Exception:
         return None
@@ -269,12 +279,12 @@ def fx_go(page, el, text):
         b = None
     if not b or b["width"] <= 0 or b["height"] <= 0:
         return
-    fx_run(page, """async ([b, t]) => { const f = window.__gbotFx; f.ring(b);
-      await f.move(b.x + b.width / 2, b.y + b.height / 2, t); return [f.x, f.y]; }""", [b, text])
+    fx_run(page, """([b, t]) => { const f = window.__gbotFx, x = b.x + b.width / 2, y = b.y + b.height / 2;
+      f.ring(b); f.move(x, y, t); return [x, y, f.dur]; }""", [b, text])
 
 
 def fx_press(page):
-    fx_run(page, "async () => { await window.__gbotFx.click(); return [window.__gbotFx.x, window.__gbotFx.y]; }")
+    fx_run(page, "() => { const f = window.__gbotFx; f.click(); return [null, null, f.dur]; }")
 
 
 def fx_say(page, text):
@@ -1100,8 +1110,8 @@ def cmd_scroll(page, direction, amount):
         size = page.viewport_size or {"width": 1280, "height": 800}
     except Exception:
         size = {"width": 1280, "height": 800}
-    fx_run(page, """async ([x, y, t]) => { const f = window.__gbotFx; f.ring(null);
-      await f.move(x, y, t); return [f.x, f.y]; }""", [size["width"] * 0.62, size["height"] * 0.55, f"Scrolling {arrows[direction]}"])
+    fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [x, y, f.dur]; }""",
+           [size["width"] * 0.62, size["height"] * 0.55, f"Scrolling {arrows[direction]}"])
     try:
         if direction in ("top", "bottom"):
             page.evaluate("""async (top) => {
