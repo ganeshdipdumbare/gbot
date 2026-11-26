@@ -219,10 +219,14 @@ class BrowserController(private val ctx: Context) {
         return eval("__gbotClick($id)")
     }
 
-    suspend fun fill(id: Int, value: String): String {
+    /**
+     * Fills a field. With [watch], short text is typed a key at a time so the person
+     * sees it; saved secrets never are (they are set in one step, as on the computer).
+     */
+    suspend fun fill(id: Int, value: String, watch: Boolean = true): String {
         fxStep(id, "Typing", false)
-        // Short text is typed a key at a time; the fill below makes sure it ends up exact.
-        if (fxJs.isNotEmpty() && value.length in 1..240 && '\n' !in value) {
+        // The fill below makes sure the field ends up exact, and stops any typing still going.
+        if (watch && fxJs.isNotEmpty() && value.length in 1..240 && '\n' !in value) {
             val ms = (1800 / value.length).coerceIn(8, 30)
             eval("__gbotFxType($id, ${quote(value)}, $ms)")
             kotlinx.coroutines.delay(value.length * ms + 80L)
@@ -434,19 +438,26 @@ class BrowserController(private val ctx: Context) {
     if (window.__gbotFx) window.__gbotFx.click();
     return '';
   };
+  window.__gbotFxStop = function(){
+    if (window.__gbotFxTimer) { clearInterval(window.__gbotFxTimer); window.__gbotFxTimer = 0; }
+  };
   window.__gbotFxType = function(id, text, ms){
+    window.__gbotFxStop();
     var el = byId(id);
-    if (!el || el.tagName === 'SELECT') return '';
+    // Only real text fields are typed into; anything else is filled in one step.
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return '';
     el.focus();
     var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     var set = Object.getOwnPropertyDescriptor(proto, 'value');
     var i = 0;
-    var timer = setInterval(function(){
+    window.__gbotFxTimer = setInterval(function(){
       i++;
-      var v = text.slice(0, i);
-      if (set && set.set) set.set.call(el, v); else el.value = v;
-      el.dispatchEvent(new Event('input', {bubbles:true}));
-      if (i >= text.length) clearInterval(timer);
+      try {
+        var v = text.slice(0, i);
+        if (set && set.set) set.set.call(el, v); else el.value = v;
+        el.dispatchEvent(new Event('input', {bubbles:true}));
+      } catch (e) { i = text.length; }
+      if (i >= text.length) window.__gbotFxStop();
     }, ms);
     return '';
   };
@@ -458,6 +469,7 @@ class BrowserController(private val ctx: Context) {
     return JSON.stringify({ok:true, clicked:id});
   };
   window.__gbotFill = function(id, v){
+    if (window.__gbotFxStop) window.__gbotFxStop();
     var el = document.querySelector('[data-gbot="'+id+'"]');
     if (!el) return JSON.stringify({ok:false, error:'no element '+id});
     el.scrollIntoView({block:'center'});

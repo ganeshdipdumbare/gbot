@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -216,8 +217,18 @@ def source_line(page):
 # GBOT_FX=off turns it off.
 FX_FILE = os.environ.get("GBOT_FX_JS", "/usr/local/share/gbot/fx.js")
 FX_POS = "/tmp/gbot/web-cursor.json"
+# The page can see a global's name and claim it first, so each step names
+# the cursor's global something a page can't guess. Every script and call
+# below says __gbotFx; fx_name() swaps in this step's name.
+FX_NAME = "__gbotFx_" + secrets.token_hex(8)
+
+
+def fx_name(js):
+    return js.replace("__gbotFx", FX_NAME)
+
+
 try:
-    FX_JS = "" if os.environ.get("GBOT_FX", "on").lower() == "off" else open(FX_FILE).read()
+    FX_JS = "" if os.environ.get("GBOT_FX", "on").lower() == "off" else fx_name(open(FX_FILE).read())
 except OSError:
     FX_JS = ""
 
@@ -229,10 +240,11 @@ def fx_run(page, js, arg=None):
         return None
     try:
         page.evaluate(FX_JS)
+        js = fx_name(js)
         try:
             with open(FX_POS) as f:
                 x, y = json.load(f)
-            page.evaluate("([x, y]) => window.__gbotFx.at(x, y)", [x, y])
+            page.evaluate(fx_name("([x, y]) => window.__gbotFx.at(x, y)"), [x, y])
         except (OSError, ValueError, TypeError):
             pass
         out = page.evaluate(js, arg)

@@ -8,8 +8,10 @@
 // website's pointer: a round dot in the live colour with a white ring.
 //
 // Everything lives in a closed shadow root under one fixed host that ignores
-// the mouse, so the page can't style it, read it, or have a click land on it.
-// Calls never throw: a page that is odd must not stop the bot's work.
+// the mouse, so the page can't style it, read its insides, or have a click land
+// on it. The page can see the global's name, so on the computer gbot-web gives
+// it a fresh random name for each step (a page can't claim a name it can't
+// guess). Calls never throw: a page that is odd must not stop the bot's work.
 (() => {
   if (window.__gbotFx) return;
   const LIVE = "#8b5cf6";
@@ -48,6 +50,8 @@
     const parent = document.documentElement;
     if (!parent) return false;
     if (host && host.isConnected) return true;
+    // A step run earlier left its own cursor in the page; this one takes over from it.
+    document.querySelectorAll("[data-gbot-fx]").forEach((h) => h.remove());
     host = document.createElement("div");
     host.setAttribute("data-gbot-fx", "");
     root = host.attachShadow({ mode: "closed" });
@@ -81,7 +85,14 @@
   };
 
   const wake = () => {
+    const fresh = !host || !host.isConnected;
     if (!mount()) return false;
+    if (fresh) {
+      // Taking over from an earlier cursor: appear at once instead of fading in.
+      dot.style.transition = "none";
+      dot.classList.add("on");
+      requestAnimationFrame(() => requestAnimationFrame(() => { dot.style.transition = ""; }));
+    }
     dot.classList.add("on");
     dot.classList.remove("dim");
     clearTimeout(idle);
