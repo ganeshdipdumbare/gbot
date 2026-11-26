@@ -205,7 +205,11 @@ class BrowserController(private val ctx: Context) {
     /** Scroll to the element, glide the cursor to it and ring it, so the step can be watched. */
     private suspend fun fxStep(id: Int, text: String, press: Boolean) {
         if (fxJs.isEmpty()) return
-        if (eval("__gbotFxReveal($id)").contains("1")) kotlinx.coroutines.delay(550)
+        // Out of view: scroll to it (the label says which way), and check again, up to three times.
+        repeat(3) {
+            if (!eval("__gbotFxReveal($id)").contains("1")) return@repeat
+            kotlinx.coroutines.delay(750)
+        }
         if (!eval("__gbotFxTo($id, ${quote(text)})").contains("1")) return
         kotlinx.coroutines.delay(520)
         if (press) {
@@ -424,7 +428,9 @@ class BrowserController(private val ctx: Context) {
     var el = byId(id);
     if (!el) return '';
     var r = el.getBoundingClientRect();
-    if (r.top >= 70 && r.bottom <= innerHeight - 70 && r.left >= 0 && r.right <= innerWidth) return '';
+    var way = (r.top < 70 ? '\u2191' : r.bottom > innerHeight - 70 ? '\u2193' : '') + (r.left < 0 ? '\u2190' : r.right > innerWidth ? '\u2192' : '');
+    if (!way) return '';
+    if (window.__gbotFx) { window.__gbotFx.ring(null); window.__gbotFx.move(innerWidth * 0.62, innerHeight * 0.55, 'Scrolling ' + way); }
     el.scrollIntoView({block:'center', inline:'center', behavior:'smooth'});
     return '1';
   };
