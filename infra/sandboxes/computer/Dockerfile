@@ -33,6 +33,7 @@ COPY focus.sh /usr/local/bin/gbot-focus
 COPY terminal.sh /usr/local/bin/gbot-terminal
 COPY wallpaper.sh /usr/local/bin/gbot-wallpaper
 COPY web.py /usr/local/bin/gbot-web
+COPY fx.js /usr/local/share/gbot/fx.js
 COPY terminal.bashrc /usr/local/share/gbot/terminal.bashrc
 COPY dock/ /usr/local/share/gbot/dock/
 COPY dock/icons/ /usr/local/share/gbot/icons/

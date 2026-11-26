@@ -28,6 +28,11 @@ class BrowserController(private val ctx: Context) {
     private var web: WebView? = null
     private var page: CompletableDeferred<Unit>? = null
 
+    /** The bot's visible hand: the cursor, ring and labels. Same file as on the computer. */
+    private val fxJs: String by lazy {
+        runCatching { ctx.assets.open("gbot-fx.js").bufferedReader().use { it.readText() } }.getOrDefault("")
+    }
+
     val url = MutableStateFlow("")
     val title = MutableStateFlow("")
     val loading = MutableStateFlow(false)
@@ -69,6 +74,7 @@ class BrowserController(private val ctx: Context) {
                 loading.value = false
                 if (!u.isNullOrEmpty()) url.value = u
                 title.value = view.title.orEmpty()
+                if (fxJs.isNotEmpty()) view.evaluateJavascript(fxJs, null)
                 view.evaluateJavascript(HELPER, null)
                 page?.complete(Unit)
             }
@@ -111,6 +117,7 @@ class BrowserController(private val ctx: Context) {
         }
         // Banners often arrive a moment after the page; give them time to show.
         kotlinx.coroutines.delay(1000)
+        eval("window.__gbotFx && window.__gbotFx.note('Opened ' + (location.hostname || 'the page'))")
         return snapshot()
     }
 
@@ -165,8 +172,13 @@ class BrowserController(private val ctx: Context) {
     /** Scroll most of a screen, let lazy content load, then read again. */
     suspend fun scroll(down: Boolean): String {
         ensure()
-        eval("window.scrollBy(0, ${if (down) "" else "-"}Math.round(window.innerHeight * 0.85))")
-        kotlinx.coroutines.delay(600)
+        if (fxJs.isNotEmpty()) {
+            eval("window.__gbotFx && window.__gbotFx.ring(null)")
+            eval("window.__gbotFx && window.__gbotFx.move(innerWidth * 0.62, innerHeight * 0.55, 'Scrolling ${if (down) "↓" else "↑"}')")
+        }
+        // Smooth, so the person watching sees the page move instead of jump.
+        eval("window.scrollBy({top: ${if (down) "" else "-"}Math.round(window.innerHeight * 0.85), behavior: 'smooth'})")
+        kotlinx.coroutines.delay(if (fxJs.isNotEmpty()) 900 else 600)
         return snapshot()
     }
 
@@ -190,9 +202,42 @@ class BrowserController(private val ctx: Context) {
         return raw.ifBlank { """{"url":"${json(url.value)}","text":"the page has not finished loading","elements":[]}""" }
     }
 
-    suspend fun click(id: Int): String = eval("__gbotClick($id)")
-    suspend fun fill(id: Int, value: String): String = eval("__gbotFill($id, ${quote(value)})")
-    suspend fun pressEnter(id: Int): String = eval("__gbotEnter($id)")
+    /** Scroll to the element, glide the cursor to it and ring it, so the step can be watched. */
+    private suspend fun fxStep(id: Int, text: String, press: Boolean) {
+        if (fxJs.isEmpty()) return
+        if (eval("__gbotFxReveal($id)").contains("1")) kotlinx.coroutines.delay(550)
+        if (!eval("__gbotFxTo($id, ${quote(text)})").contains("1")) return
+        kotlinx.coroutines.delay(520)
+        if (press) {
+            eval("__gbotFxClick()")
+            kotlinx.coroutines.delay(150)
+        }
+    }
+
+    suspend fun click(id: Int): String {
+        fxStep(id, "Clicking", true)
+        return eval("__gbotClick($id)")
+    }
+
+    /**
+     * Fills a field. With [watch], short text is typed a key at a time so the person
+     * sees it; saved secrets never are (they are set in one step, as on the computer).
+     */
+    suspend fun fill(id: Int, value: String, watch: Boolean = true): String {
+        fxStep(id, "Typing", false)
+        // The fill below makes sure the field ends up exact, and stops any typing still going.
+        if (watch && fxJs.isNotEmpty() && value.length in 1..240 && '\n' !in value) {
+            val ms = (1800 / value.length).coerceIn(8, 30)
+            eval("__gbotFxType($id, ${quote(value)}, $ms)")
+            kotlinx.coroutines.delay(value.length * ms + 80L)
+        }
+        return eval("__gbotFill($id, ${quote(value)})")
+    }
+
+    suspend fun pressEnter(id: Int): String {
+        eval("window.__gbotFx && window.__gbotFx.say('Pressing Enter')")
+        return eval("__gbotEnter($id)")
+    }
 
     private suspend fun ensure() {
         if (web != null) return
@@ -373,6 +418,49 @@ class BrowserController(private val ctx: Context) {
     markBanner(pick.el);
     return pick.label;
   };
+  // The bot's visible hand (gbot-fx.js): scroll to an element, glide to it, type into it.
+  function byId(id){ return document.querySelector('[data-gbot="'+id+'"]'); }
+  window.__gbotFxReveal = function(id){
+    var el = byId(id);
+    if (!el) return '';
+    var r = el.getBoundingClientRect();
+    if (r.top >= 70 && r.bottom <= innerHeight - 70) return '';
+    el.scrollIntoView({block:'center', behavior:'smooth'});
+    return '1';
+  };
+  window.__gbotFxTo = function(id, text){
+    var el = byId(id);
+    if (!el || !window.__gbotFx) return '';
+    window.__gbotFx.toElement(el, text);
+    return '1';
+  };
+  window.__gbotFxClick = function(){
+    if (window.__gbotFx) window.__gbotFx.click();
+    return '';
+  };
+  window.__gbotFxStop = function(){
+    if (window.__gbotFxTimer) { clearInterval(window.__gbotFxTimer); window.__gbotFxTimer = 0; }
+  };
+  window.__gbotFxType = function(id, text, ms){
+    window.__gbotFxStop();
+    var el = byId(id);
+    // Only real text fields are typed into; anything else is filled in one step.
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return '';
+    el.focus();
+    var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    var set = Object.getOwnPropertyDescriptor(proto, 'value');
+    var i = 0;
+    window.__gbotFxTimer = setInterval(function(){
+      i++;
+      try {
+        var v = text.slice(0, i);
+        if (set && set.set) set.set.call(el, v); else el.value = v;
+        el.dispatchEvent(new Event('input', {bubbles:true}));
+      } catch (e) { i = text.length; }
+      if (i >= text.length) window.__gbotFxStop();
+    }, ms);
+    return '';
+  };
   window.__gbotClick = function(id){
     var el = document.querySelector('[data-gbot="'+id+'"]');
     if (!el) return JSON.stringify({ok:false, error:'no element '+id});
@@ -381,6 +469,7 @@ class BrowserController(private val ctx: Context) {
     return JSON.stringify({ok:true, clicked:id});
   };
   window.__gbotFill = function(id, v){
+    if (window.__gbotFxStop) window.__gbotFxStop();
     var el = document.querySelector('[data-gbot="'+id+'"]');
     if (!el) return JSON.stringify({ok:false, error:'no element '+id});
     el.scrollIntoView({block:'center'});

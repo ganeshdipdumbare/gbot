@@ -609,7 +609,7 @@ fun choiceLines(raw: String, max: Int): List<String> {
             clean.isNotEmpty() && (host == clean || host.endsWith(".$clean"))
         }
         if (host.isEmpty() || !allowed) return "That secret isn't saved for this site, so I won't type it here."
-        val out = browser.fill(args.int("id"), found.second)
+        val out = browser.fill(args.int("id"), found.second, watch = false)
         if (args.bool("submit")) browser.pressEnter(args.int("id"))
         return out
     }
