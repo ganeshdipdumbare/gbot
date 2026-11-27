@@ -58,6 +58,13 @@ export function upsertBot(bot: Bot) {
   });
 }
 
+export function removeBot(botId: string) {
+  set((s) => {
+    const bots = s.bots.filter((b) => b.id !== botId);
+    return { bots, activeId: s.activeId === botId ? bots[0]?.id ?? null : s.activeId };
+  });
+}
+
 export function upsertGroup(g: Group) {
   set((s) => {
     const old = s.groups.find((x) => x.id === g.id);
@@ -262,10 +269,7 @@ function handle(e: LiveEvent) {
       upsertBot(e.data);
       break;
     case "bot_removed":
-      set((s) => {
-        const bots = s.bots.filter((b) => b.id !== e.botId);
-        return { bots, activeId: s.activeId === e.botId ? bots[0]?.id ?? null : s.activeId };
-      });
+      removeBot(e.botId);
       break;
     case "cleared":
       clearChat(e.botId);

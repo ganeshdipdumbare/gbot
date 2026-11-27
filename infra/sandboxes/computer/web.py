@@ -53,20 +53,34 @@ STATE_DIR = "/tmp/gbot"
 # reject or close is the fallback when no accept option is offered.
 CONSENT = re.compile(
     r"(cookie|consent|privacy|accept|agree|allow|reject|decline|deny|refuse|"
-    r"necessary|essential|got it|okay|\bok\b|continue|close|dismiss)", re.I)
-# Accept only when the whole label is a cookie-accept phrase. Substring
-# matching would press "Disagree", "I don't accept" or a bare "OK" on a
-# terms or confirm dialog, which is agreeing for the person.
-ACCEPT = re.compile(r"^(accept( all)?( cookies?)?|allow( all)?( cookies?)?|got it)$", re.I)
+    r"necessary|essential|got it|no thanks|not now|close|dismiss|×|✕|"
+    r"akzeptieren|ablehnen|accepter|refuser|aceptar|rechazar|"
+    r"accetta|rifiuta|accepteren|weigeren)", re.I)
+# Accept only when the whole label is an unambiguous cookie-accept phrase.
+# Substring matching or bare words like "OK", "Continue" or "Agree" could
+# press a terms, age-gate or checkout dialog, which is agreeing for the person.
+ACCEPT = re.compile(
+    r"^("
+    r"(i )?(accept|allow)( all)?( cookies?)?(\s*(&|and)\s*(continue|close))?"
+    r"|got it"
+    r"|(alle )?(cookies? )?akzeptieren"
+    r"|(tout )?accepter(\s+et\s+continuer)?"
+    r"|aceptar( todo)?"
+    r"|accetta( tutto)?"
+    r"|(alles )?accepteren"
+    r")$", re.I)
 LEAST = re.compile(
     r"(reject|decline|deny|refuse|only necessary|necessary only|essential only|"
-    r"use necessary|continue without)", re.I)
+    r"use necessary|continue without|ablehnen|nur notwendige|refuser|rechazar|rifiuta|weigeren)", re.I)
 # Marketing copy often says "Reject all and subscribe" or "Accept all offers";
 # those are not consent controls and must never be clicked.
 MARKETING = re.compile(
     r"(subscribe|subscription|donate|donation|support us|membership|newsletter|"
     r"offer|deal|trial|shop|buy|upgrade|premium)", re.I)
-CLOSE = re.compile(r"(close|dismiss|×|✕)", re.I)
+CLOSE = re.compile(r"(close|dismiss|no thanks|not now|×|✕)", re.I)
+# Never let a button containing an agreement word ("Agree and close",
+# "Consent and close") slip through the close fallback.
+AGREE_WORD = re.compile(r"\b(agree|consent|accept|allow|confirm|submit)", re.I)
 
 # ---- Reading the page ----
 # The page is read as Playwright's accessibility snapshot (the "ai" mode its
@@ -265,21 +279,27 @@ def fx_go(page, el, text):
     except Exception:
         b = None
     if not b or b["width"] <= 0 or b["height"] <= 0:
+        fx_show(page, text)
         return
     fx_run(page, """([b, t]) => { const f = window.__gbotFx, x = b.x + b.width / 2, y = b.y + b.height / 2;
-      f.ring(b); f.move(x, y, t); return [x, y, f.dur]; }""", [b, text])
+      f.ring(b); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""", [b, text])
 
 
 def fx_press(page):
     fx_run(page, "() => { const f = window.__gbotFx; f.click(); return [null, null, f.dur]; }")
 
 
+def fx_show(page, text=None):
+    """Ensure the cursor is mounted and visible on the page, with an optional label."""
+    fx_run(page, "t => { const f = window.__gbotFx; f.show(t); return [f.tx, f.ty, 0]; }", text)
+
+
 def fx_say(page, text):
-    fx_run(page, "t => { window.__gbotFx.say(t); return null; }", text)
+    fx_run(page, "t => { const f = window.__gbotFx; f.say(t); return [f.tx, f.ty, 0]; }", text)
 
 
 def fx_note(page, text):
-    fx_run(page, "t => { window.__gbotFx.note(t); return null; }", text)
+    fx_run(page, "t => { const f = window.__gbotFx; f.show(); f.note(t); return [f.tx, f.ty, 0]; }", text)
 
 
 def fx_reveal(page, el):
@@ -291,40 +311,43 @@ def fx_reveal(page, el):
         return
     for _ in range(3):
         try:
-            # Which axes need scrolling.
-            way = el.evaluate("""e => {
-              // Out of view means not fully visible (one bigger than the view only needs its middle in view).
-              // A header or footer target that is on screen is never "scrolled to".
-              const r = e.getBoundingClientRect(), vw = innerWidth, vh = innerHeight;
-              // One bigger than the view only needs its middle in view, since that is where the cursor
-              // goes and where the click lands.
-              const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-              const tall = r.height > vh, wide = r.width > vw;
-              const v = tall ? (cy < 0 ? '↑' : cy > vh ? '↓' : '') : (r.top < 0 ? '↑' : r.bottom > vh ? '↓' : '');
-              const h = wide ? (cx < 0 ? '←' : cx > vw ? '→' : '')
-                : (r.left < 0 ? '←' : r.right > vw ? '→' : '');
-              return v + h;
-            }""", timeout=4000)
+            # Check in main-viewport coordinates so elements inside iframes are
+            # measured against what the person actually sees.
+            b = el.bounding_box()
+            if not b:
+                return
+            vp = page.evaluate("() => ({ w: document.documentElement.clientWidth || innerWidth, h: document.documentElement.clientHeight || innerHeight })")
+            vw, vh = vp["w"], vp["h"]
+            cx, cy = b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
+            tall, wide = b["height"] > vh, b["width"] > vw
+            v = ("↑" if cy < 0 else "↓" if cy > vh else "") if tall else ("↑" if b["y"] < 0 else "↓" if b["y"] + b["height"] > vh else "")
+            h = ("←" if cx < 0 else "→" if cx > vw else "") if wide else ("←" if b["x"] < 0 else "→" if b["x"] + b["width"] > vw else "")
+            way = v + h
         except Exception:
             return
         if not way:
             return
-        fx_run(page, """([t]) => { const f = window.__gbotFx, x = innerWidth * 0.62, y = innerHeight * 0.55;
-          f.ring(null); f.move(x, y, t); return [x, y, f.dur]; }""", ["Scrolling " + way])
+        fx_run(page, """([t]) => { const f = window.__gbotFx, x = (document.documentElement.clientWidth || innerWidth) * 0.62, y = (document.documentElement.clientHeight || innerHeight) * 0.55;
+          f.ring(null); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""", ["Scrolling " + way])
         # Start the smooth scroll, then watch it from here until the element stops
         # moving; nothing waits on the page's own timers.
         try:
-            where = "e => { const b = e.getBoundingClientRect(); return b.top * 10000 + b.left; }"
-            first = el.evaluate(where, timeout=2000)
+            first = b["y"] * 10000 + b["x"]
             # Only the axis that needs it is centred; the other stays where it is, so a page's
             # carousels and tab strips aren't shifted for a step that only needed to go down.
             el.evaluate("""(e, w) => e.scrollIntoView({
               block: /[↑↓]/.test(w) ? 'center' : 'nearest', inline: /[←→]/.test(w) ? 'center' : 'nearest', behavior: 'smooth' })""", way, timeout=4000)
             last, still = None, 0
-            for _ in range(36):
+            for i in range(40):
                 time.sleep(0.05)
-                pos = el.evaluate(where, timeout=2000)
-                still = still + 1 if last is not None and abs(pos - last) < 0.5 else 0
+                nb = el.bounding_box()
+                if not nb:
+                    break
+                pos = nb["y"] * 10000 + nb["x"]
+                # Give Chromium a couple of frames to start the smooth scroll before
+                # counting motionless polls as finished.
+                if i >= 3:
+                    still = still + 1 if last is not None and abs(pos - last) < 0.5 else 0
                 last = pos
                 if still >= 3:
                     break
@@ -610,11 +633,21 @@ def consent_candidates(page):
                 if not label or len(label) > 80 or MARKETING.search(label):
                     continue
                 # A link or a form button can navigate or submit; a banner's
-                # plain button only changes the banner. Read the type attribute,
-                # not el.type: a button with no type attribute reports "submit"
-                # there, which would exclude nearly every banner button.
+                # plain button (or ARIA role=button without a real href) only
+                # changes the banner. Read the type attribute, not el.type: a
+                # button with no type attribute reports "submit" there, which
+                # would exclude nearly every banner button.
                 try:
-                    plain = loc.evaluate("el => { const t = (el.getAttribute('type') || '').toLowerCase(); return el.tagName === 'BUTTON' && t !== 'submit' && !el.hasAttribute('href') && (t === 'button' || !el.closest('form')); }")
+                    plain = loc.evaluate("""el => {
+                      const tag = el.tagName;
+                      const t = (el.getAttribute('type') || '').toLowerCase();
+                      const href = (el.getAttribute('href') || '').trim();
+                      const hasRealHref = href && href !== '#' && !href.toLowerCase().startsWith('javascript:');
+                      if (hasRealHref) return false;
+                      if (tag === 'BUTTON') return t !== 'submit' && (t === 'button' || !el.closest('form'));
+                      if (tag === 'INPUT') return t === 'button';
+                      return el.getAttribute('role') === 'button';
+                    }""")
                 except Exception:
                     plain = False
                 if not plain:
@@ -660,7 +693,7 @@ def dismiss_consent(page, retry=False):
     # dialog never gets agreed to. Reject or close is the fallback.
     accept = [c for c in candidates if c[2] == "cookie" and ACCEPT.match(c[1].strip(" .!"))]
     least = [c for c in candidates if LEAST.search(c[1])]
-    close = [c for c in candidates if CLOSE.search(c[1])]
+    close = [c for c in candidates if CLOSE.search(c[1]) and not AGREE_WORD.search(c[1])]
     said = {"accept": "Accepting cookies", "least": "Declining optional cookies", "close": "Closing"}
     for kind, (loc, label, _) in [(k, c) for k, group in (("accept", accept), ("least", least), ("close", close)) for c in group]:
         try:
@@ -897,8 +930,8 @@ def page_state(page):
     if STUCK["count"] >= 3:
         lines.append(f"The page looks unchanged after {STUCK['count']} reads. Don't repeat the same action: scroll, go back, wait, or try another element.")
     for text in layers[:3]:
-        lines.append(f'On top of the page: a popup or banner showing "{text}". It can block clicks, so use its own buttons first. '
-                     "For a cookie banner, accept it. For any other consent, terms, sign-up or payment prompt, ask the person before agreeing.")
+        lines.append(f'On top of the page: a popup or banner showing "{text}". It covers the visible page and can block clicks — clear it FIRST using its own buttons before reading or acting behind it. '
+                     "Accept cookie banners; close newsletter, app-install, notification, location or promo popups. For any other consent, terms, sign-up or payment prompt, ask the person before agreeing.")
     lines.append("Page (numbers in [brackets] are what browser_click, browser_type, browser_hover and browser_check take):")
     lines.append(tree or "(the page is empty)")
     if cut:
@@ -909,10 +942,12 @@ def page_state(page):
 
 def after_step(page, said):
     """Every action ends the same way: let the page settle, enforce the
-    allowlist, then say what happened and show the page as it is now."""
+    allowlist, keep the cursor visible on the resulting page, then say what
+    happened and show the page as it is now."""
     settle(page)
     guard_page(page)
     guard_context(ctx_of(page))
+    fx_show(page)
     print(said)
     print(page_state(page))
 
@@ -922,16 +957,22 @@ def cmd_navigate(page, url):
         fail("use a full http(s) URL")
     if not host_allowed(url):
         fail(f"{urlparse(url).hostname} isn't on this bot's allowed list")
-    fx_note(page, f"Opening {urlparse(url).hostname or 'the page'}")
+    host = urlparse(url).hostname or "the page"
+    fx_show(page, f"Opening {host}")
+    fx_note(page, f"Opening {host}")
     page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
     guard_page(page)
     page.bring_to_front()
     forget_snapshot()
-    fx_note(page, f"Opened {urlparse(page.url).hostname or 'the page'}")
-    after_step(page, f"Opened {shown(page.url)}.")
+    landed = urlparse(page.url).hostname or "the page"
+    fx_show(page, f"Reading {landed}")
+    fx_note(page, f"Opened {landed}")
+    labels = clear_banners(page, first_wait=0.4)
+    after_step(page, f"Opened {shown(page.url)}.{banner_note(labels)}")
 
 
 def cmd_history(page, direction):
+    fx_show(page, "Going back" if direction == "back" else "Going forward")
     try:
         if direction == "back":
             page.go_back(wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
@@ -944,6 +985,7 @@ def cmd_history(page, direction):
 
 
 def cmd_reload(page):
+    fx_show(page, "Reloading")
     box, handler = arm_dialog(page, False)
     try:
         page.reload(wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
@@ -959,6 +1001,7 @@ def cmd_snapshot(page):
     settle(page, max_ms=1000)
     guard_page(page)
     guard_context(ctx_of(page))
+    fx_show(page, "Reading page")
     print(page_state(page))
 
 
@@ -1086,33 +1129,113 @@ def cmd_scroll(page, direction, amount):
         size = page.viewport_size or {"width": 1280, "height": 800}
     except Exception:
         size = {"width": 1280, "height": 800}
-    fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [x, y, f.dur]; }""",
+    fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""",
            [size["width"] * 0.62, size["height"] * 0.55, f"Scrolling {arrows[direction]}"])
+    note = f"Scrolled {direction}."
     try:
-        if direction in ("top", "bottom"):
+        root_info = page.evaluate("""() => {
+          const r = document.scrollingElement || document.documentElement;
+          if (!r) return { y: 0, max: 0, locked: true };
+          const s = getComputedStyle(r).overflowY;
+          const bs = document.body ? getComputedStyle(document.body).overflowY : '';
+          const locked = s === 'hidden' || s === 'clip' || (bs === 'hidden' && s !== 'auto' && s !== 'scroll');
+          return { y: r.scrollTop, max: Math.max(0, r.scrollHeight - r.clientHeight), locked };
+        }""")
+        before_y, root_max, root_locked = root_info["y"], root_info["max"], root_info["locked"]
+        delta = amount or 600
+        if direction == "up":
+            delta = -delta
+        if root_locked:
+            # Programmatic window.scrollBy/scrollTo can still scroll an overflow:hidden root
+            # (shifting clipped content or a page behind a modal) without moving the inner
+            # scroll container. Drive the inner scroller (for top/bottom) or wheel (for up/down).
+            if direction in ("top", "bottom"):
+                scroll_key = "__gbotScroll_" + secrets.token_hex(6)
+                found = page.evaluate("""([top, key]) => {
+                  const scrollable = (el) => {
+                    if (!el || el === document.documentElement || el === document.body) return false;
+                    const s = getComputedStyle(el);
+                    if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+                    return (s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 2;
+                  };
+                  let target = null;
+                  let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+                  while (el) {
+                    if (scrollable(el)) { target = el; break; }
+                    el = el.parentElement;
+                  }
+                  if (!target) {
+                    const vw = innerWidth, vh = innerHeight;
+                    let bestArea = 0;
+                    for (const n of document.querySelectorAll('*')) {
+                      if (!scrollable(n)) continue;
+                      const r = n.getBoundingClientRect();
+                      const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+                      const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+                      const area = w * h;
+                      if (area > bestArea) { bestArea = area; target = n; }
+                    }
+                  }
+                  if (!target) return false;
+                  window[key] = target;
+                  target.scrollTo({ top: top ? 0 : target.scrollHeight, behavior: 'smooth' });
+                  return true;
+                }""", [direction == "top", scroll_key])
+                if found:
+                    last, still, started, polls = None, 0, time.time(), 0
+                    while time.time() - started < 2.5 and still < 3:
+                        time.sleep(0.05)
+                        polls += 1
+                        y = page.evaluate("(k) => window[k] ? window[k].scrollTop : null", scroll_key)
+                        if y is None:
+                            break
+                        if polls >= 3:
+                            still = still + 1 if last is not None and abs(y - last) < 1 else 0
+                        last = y
+                    page.evaluate("(k) => { delete window[k]; }", scroll_key)
+                else:
+                    note = f"No scrollable container found to scroll {direction}."
+            else:
+                page.mouse.move(size["width"] / 2, size["height"] / 2)
+                page.mouse.wheel(0, delta)
+                time.sleep(0.25)
+        elif direction in ("top", "bottom"):
             page.evaluate("(top) => { const r = document.scrollingElement || document.documentElement;"
                           " window.scrollTo({ top: top ? 0 : r.scrollHeight, behavior: 'smooth' }); }", direction == "top")
         else:
-            delta = amount or 600
-            if direction == "up":
-                delta = -delta
             page.mouse.move(size["width"] / 2, size["height"] / 2)
             page.evaluate("(d) => window.scrollBy({ top: d, behavior: 'smooth' })", delta)
-        # Watch the smooth scroll from here until it stops; nothing waits on the page's timers.
-        last, still, started = None, 0, time.time()
-        while time.time() - started < 2.5 and still < 3:
-            time.sleep(0.05)
-            y = page.evaluate("() => (document.scrollingElement || document.documentElement).scrollTop")
-            still = still + 1 if last is not None and abs(y - last) < 1 else 0
-            last = y
+        if not root_locked:
+            # Watch the smooth scroll from here until it stops; nothing waits on the page's timers.
+            last, still, started, polls = None, 0, time.time(), 0
+            while time.time() - started < 2.5 and still < 3:
+                time.sleep(0.05)
+                polls += 1
+                y = page.evaluate("() => (document.scrollingElement || document.documentElement).scrollTop")
+                if polls >= 3:
+                    still = still + 1 if last is not None and abs(y - last) < 1 else 0
+                last = y
+            # Fall back to a wheel event when the root didn't move because it has no scroll
+            # range (inner container) or still had room in the requested direction — never
+            # when a normal page is already at its top or bottom.
+            can_fallback = (
+                root_max <= 2
+                or (direction == "down" and before_y < root_max - 1)
+                or (direction == "up" and before_y > 1)
+            )
+            if direction in ("up", "down") and can_fallback and last is not None and abs(last - before_y) < 1:
+                page.mouse.move(size["width"] / 2, size["height"] / 2)
+                page.mouse.wheel(0, delta)
+                time.sleep(0.25)
     except Exception as e:
         fail(f"Couldn't scroll: {str(e).splitlines()[0]}")
-    after_step(page, f"Scrolled {direction}.")
+    after_step(page, note)
 
 
 def cmd_wait(page, text, selector, ms, seconds):
     timeout = int((seconds or 10) * 1000)
     started = time.time()
+    fx_show(page, f"Waiting for {text[:24]}" if text else "Waiting")
     try:
         if text:
             page.get_by_text(text, exact=False).first.wait_for(state="visible", timeout=timeout)

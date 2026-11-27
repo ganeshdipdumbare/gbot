@@ -130,35 +130,38 @@ class BrowserController(private val ctx: Context) {
         error.value?.let { e ->
             return """{"ok":false,"url":"${json(target)}","error":"${json(e)}"}"""
         }
-        eval("window.__gbotFx && window.__gbotFx.note('Opened ' + (location.hostname || 'the page'))")
-        return snapshot()
+        eval("window.__gbotFx && (window.__gbotFx.show('Reading ' + (location.hostname || 'page')), window.__gbotFx.note('Opened ' + (location.hostname || 'the page')))")
+        return snapshot(label = null)
     }
 
     suspend fun back(): String {
         ensure()
+        eval("window.__gbotFx && window.__gbotFx.show('Going back')")
         eval("history.back()")
         val done = CompletableDeferred<Unit>()
         page = done
         withTimeoutOrNull(15_000) { done.await() }
-        return snapshot()
+        return snapshot(label = null)
     }
 
     suspend fun forward(): String {
         ensure()
+        eval("window.__gbotFx && window.__gbotFx.show('Going forward')")
         eval("history.forward()")
         val done = CompletableDeferred<Unit>()
         page = done
         withTimeoutOrNull(15_000) { done.await() }
-        return snapshot()
+        return snapshot(label = null)
     }
 
     suspend fun reload(): String {
         ensure()
+        eval("window.__gbotFx && window.__gbotFx.show('Reloading')")
         val done = CompletableDeferred<Unit>()
         page = done
         main.post { web?.reload() }
         withTimeoutOrNull(30_000) { done.await() }
-        return snapshot()
+        return snapshot(label = null)
     }
 
     /** Scroll most of a screen, let lazy content load, then read again. */
@@ -171,12 +174,14 @@ class BrowserController(private val ctx: Context) {
         // Smooth, so the person watching sees the page move instead of jump.
         eval("window.scrollBy({top: ${if (down) "" else "-"}Math.round(window.innerHeight * 0.85), behavior: 'smooth'})")
         untilStill("(document.scrollingElement || document.documentElement).scrollTop")
-        return snapshot()
+        return snapshot(label = null)
     }
 
     suspend fun waitFor(seconds: Int): String {
+        ensure()
+        if (fxJs.isNotEmpty()) eval("window.__gbotFx && window.__gbotFx.show('Waiting')")
         kotlinx.coroutines.delay(seconds.coerceIn(1, 10) * 1000L)
-        return snapshot()
+        return snapshot(label = null)
     }
 
     /**
@@ -184,7 +189,7 @@ class BrowserController(private val ctx: Context) {
      * its accessibility tree with a number on what can be acted on. The same
      * format as the computer's browser, so a bot reads both alike.
      */
-    suspend fun snapshot(): String {
+    suspend fun snapshot(label: String? = "Reading page"): String {
         ensure()
         error.value?.let { e ->
             return """{"ok":false,"url":"${json(url.value)}","error":"${json(e)}"}"""
@@ -194,7 +199,12 @@ class BrowserController(private val ctx: Context) {
             return """{"ok":false,"url":"","error":"Nothing is open in the browser yet. Use browser_open with a web address first."}"""
         }
         settle()
-        if (readJs.isNotEmpty() && eval("typeof window.__gbotRead === 'function' ? '1' : ''") != "1") eval(readJs)
+        if (fxJs.isNotEmpty() && eval("typeof window.__gbotFx === 'object' ? '1' : ''") != "1") evalScript(fxJs)
+        if (fxJs.isNotEmpty()) {
+            if (label != null) eval("window.__gbotFx && window.__gbotFx.show(${quote(label)})")
+            else eval("window.__gbotFx && window.__gbotFx.show()")
+        }
+        if (readJs.isNotEmpty() && eval("typeof window.__gbotRead === 'function' ? '1' : ''") != "1") evalScript(readJs)
         val raw = eval("window.__gbotRead ? __gbotRead() : ''")
         val o = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()
             ?: return """{"url":"${json(url.value)}","text":"the page has not finished loading","elements":[]}"""
@@ -212,8 +222,8 @@ class BrowserController(private val ctx: Context) {
             lines += "Scroll: $place (viewport ${n("viewport")}px)."
         }
         (o["layers"] as? JsonArray)?.take(3)?.forEach { l ->
-            lines += "On top of the page: a popup or banner showing \"${l.jsonPrimitive.contentOrNull.orEmpty()}\". It can block taps, so use its own buttons first. " +
-                "For a cookie banner, accept it. For any other consent, terms, sign-up or payment prompt, ask the person before agreeing."
+            lines += "On top of the page: a popup or banner showing \"${l.jsonPrimitive.contentOrNull.orEmpty()}\". It covers the visible page and can block taps — clear it FIRST using its own buttons before reading or acting behind it. " +
+                "Accept cookie banners; close newsletter, app-install, notification, location or promo popups. For any other consent, terms, sign-up or payment prompt, ask the person before agreeing."
         }
         lines += "Page (numbers in [brackets] are what browser_click and browser_fill take):"
         lines += str("tree").ifBlank { "(the page is empty)" }
@@ -324,12 +334,16 @@ class BrowserController(private val ctx: Context) {
         ready.await()
     }
 
-    private suspend fun eval(js: String): String = withTimeoutOrNull(20_000) {
+    private suspend fun eval(js: String): String =
+        evalScript(if (js.startsWith("(") || js.startsWith("window.")) js else "($js)")
+
+    /** Runs a raw JS script (such as a whole-file IIFE) without wrapping it in parentheses. */
+    private suspend fun evalScript(js: String): String = withTimeoutOrNull(20_000) {
         suspendCancellableCoroutine { cont ->
             main.post {
                 val w = web
                 if (w == null) { cont.resume(""); return@post }
-                w.evaluateJavascript(if (js.startsWith("(") || js.startsWith("window.")) js else "($js)") { result ->
+                w.evaluateJavascript(js) { result ->
                     if (cont.isActive) cont.resume(unquote(result))
                 }
             }
