@@ -53,17 +53,17 @@ STATE_DIR = "/tmp/gbot"
 # reject or close is the fallback when no accept option is offered.
 CONSENT = re.compile(
     r"(cookie|consent|privacy|accept|agree|allow|reject|decline|deny|refuse|"
-    r"necessary|essential|got it|okay|\bok\b|continue|understand|close|dismiss|"
-    r"akzeptieren|zustimmen|einverstanden|ablehnen|accepter|refuser|aceptar|rechazar|"
+    r"necessary|essential|got it|no thanks|not now|close|dismiss|×|✕|"
+    r"akzeptieren|ablehnen|accepter|refuser|aceptar|rechazar|"
     r"accetta|rifiuta|accepteren|weigeren)", re.I)
-# Accept only when the whole label is a cookie-accept phrase. Substring
-# matching would press "Disagree", "I don't accept" or a bare "OK" on a
-# terms or confirm dialog, which is agreeing for the person.
+# Accept only when the whole label is an unambiguous cookie-accept phrase.
+# Substring matching or bare words like "OK", "Continue" or "Agree" could
+# press a terms, age-gate or checkout dialog, which is agreeing for the person.
 ACCEPT = re.compile(
     r"^("
-    r"(i |yes,?\s*i\s*)?(accept|agree|allow)( all)?( cookies?)?(\s*(&|and)\s*(continue|close|proceed))?"
-    r"|got it|i understand|okay|ok|consent|continue"
-    r"|(alle )?akzeptieren|zustimmen|einverstanden"
+    r"(i )?(accept|allow)( all)?( cookies?)?(\s*(&|and)\s*(continue|close))?"
+    r"|got it"
+    r"|(alle )?(cookies? )?akzeptieren"
     r"|(tout )?accepter(\s+et\s+continuer)?"
     r"|aceptar( todo)?"
     r"|accetta( tutto)?"
@@ -77,7 +77,7 @@ LEAST = re.compile(
 MARKETING = re.compile(
     r"(subscribe|subscription|donate|donation|support us|membership|newsletter|"
     r"offer|deal|trial|shop|buy|upgrade|premium)", re.I)
-CLOSE = re.compile(r"^(close|dismiss|no thanks|not now|skip|×|✕|x)$", re.I)
+CLOSE = re.compile(r"(close|dismiss|no thanks|not now|×|✕)", re.I)
 
 # ---- Reading the page ----
 # The page is read as Playwright's accessibility snapshot (the "ai" mode its
@@ -592,8 +592,7 @@ def cookie_overlay(loc):
           };
           const keyword = (n) => {
             const t = (n.innerText || '').toLowerCase();
-            if (['cookie', 'datenschutz', 'einwilligung', 'gdpr', 'dsgvo'].some((k) => t.includes(k))) return 'cookie';
-            return ['consent', 'privacy', 'confidentialit', 'privacidad'].find((k) => t.includes(k)) || '';
+            return ['cookie', 'consent', 'privacy'].find((k) => t.includes(k)) || '';
           };
           let n = el;
           while (n) {
@@ -1147,18 +1146,49 @@ def cmd_scroll(page, direction, amount):
             # (shifting clipped content or a page behind a modal) without moving the inner
             # scroll container. Drive the inner scroller (for top/bottom) or wheel (for up/down).
             if direction in ("top", "bottom"):
-                page.evaluate("""(top) => {
-                  let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
-                  while (el && el !== document.documentElement && el !== document.body) {
+                scroll_key = "__gbotScroll_" + secrets.token_hex(6)
+                found = page.evaluate("""([top, key]) => {
+                  const scrollable = (el) => {
+                    if (!el || el === document.documentElement || el === document.body) return false;
                     const s = getComputedStyle(el).overflowY;
-                    if ((s === 'auto' || s === 'scroll') && el.scrollHeight > el.clientHeight + 2) {
-                      el.scrollTo({ top: top ? 0 : el.scrollHeight, behavior: 'smooth' });
-                      return;
-                    }
+                    return (s === 'auto' || s === 'scroll') && el.scrollHeight > el.clientHeight + 2;
+                  };
+                  let target = null;
+                  let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+                  while (el) {
+                    if (scrollable(el)) { target = el; break; }
                     el = el.parentElement;
                   }
-                }""", direction == "top")
-                time.sleep(0.3)
+                  if (!target) {
+                    let bestArea = 0;
+                    for (const n of document.querySelectorAll('*')) {
+                      if (!scrollable(n)) continue;
+                      const r = n.getBoundingClientRect();
+                      const area = Math.max(0, r.width) * Math.max(0, r.height);
+                      if (area > bestArea) { bestArea = area; target = n; }
+                    }
+                  }
+                  if (!target) return false;
+                  window[key] = target;
+                  target.scrollTo({ top: top ? 0 : target.scrollHeight, behavior: 'smooth' });
+                  return true;
+                }""", [direction == "top", scroll_key])
+                if found:
+                    last, still, started, polls = None, 0, time.time(), 0
+                    while time.time() - started < 2.5 and still < 3:
+                        time.sleep(0.05)
+                        polls += 1
+                        y = page.evaluate("(k) => window[k] ? window[k].scrollTop : null", scroll_key)
+                        if y is None:
+                            break
+                        if polls >= 3:
+                            still = still + 1 if last is not None and abs(y - last) < 1 else 0
+                        last = y
+                    page.evaluate("(k) => { delete window[k]; }", scroll_key)
+                else:
+                    page.mouse.move(size["width"] / 2, size["height"] / 2)
+                    page.keyboard.press("Home" if direction == "top" else "End")
+                    time.sleep(0.25)
             else:
                 page.mouse.move(size["width"] / 2, size["height"] / 2)
                 page.mouse.wheel(0, delta)
