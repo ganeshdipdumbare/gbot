@@ -78,6 +78,9 @@ MARKETING = re.compile(
     r"(subscribe|subscription|donate|donation|support us|membership|newsletter|"
     r"offer|deal|trial|shop|buy|upgrade|premium)", re.I)
 CLOSE = re.compile(r"(close|dismiss|no thanks|not now|×|✕)", re.I)
+# Never let a button containing an agreement word ("Agree and close",
+# "Consent and close") slip through the close fallback.
+AGREE_WORD = re.compile(r"\b(agree|consent|accept|allow|confirm|submit)\b", re.I)
 
 # ---- Reading the page ----
 # The page is read as Playwright's accessibility snapshot (the "ai" mode its
@@ -690,7 +693,7 @@ def dismiss_consent(page, retry=False):
     # dialog never gets agreed to. Reject or close is the fallback.
     accept = [c for c in candidates if c[2] == "cookie" and ACCEPT.match(c[1].strip(" .!"))]
     least = [c for c in candidates if LEAST.search(c[1])]
-    close = [c for c in candidates if CLOSE.search(c[1])]
+    close = [c for c in candidates if CLOSE.search(c[1]) and not AGREE_WORD.search(c[1])]
     said = {"accept": "Accepting cookies", "least": "Declining optional cookies", "close": "Closing"}
     for kind, (loc, label, _) in [(k, c) for k, group in (("accept", accept), ("least", least), ("close", close)) for c in group]:
         try:
@@ -1128,6 +1131,7 @@ def cmd_scroll(page, direction, amount):
         size = {"width": 1280, "height": 800}
     fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""",
            [size["width"] * 0.62, size["height"] * 0.55, f"Scrolling {arrows[direction]}"])
+    note = f"Scrolled {direction}."
     try:
         root_info = page.evaluate("""() => {
           const r = document.scrollingElement || document.documentElement;
@@ -1150,8 +1154,9 @@ def cmd_scroll(page, direction, amount):
                 found = page.evaluate("""([top, key]) => {
                   const scrollable = (el) => {
                     if (!el || el === document.documentElement || el === document.body) return false;
-                    const s = getComputedStyle(el).overflowY;
-                    return (s === 'auto' || s === 'scroll') && el.scrollHeight > el.clientHeight + 2;
+                    const s = getComputedStyle(el);
+                    if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+                    return (s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 2;
                   };
                   let target = null;
                   let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
@@ -1160,11 +1165,14 @@ def cmd_scroll(page, direction, amount):
                     el = el.parentElement;
                   }
                   if (!target) {
+                    const vw = innerWidth, vh = innerHeight;
                     let bestArea = 0;
                     for (const n of document.querySelectorAll('*')) {
                       if (!scrollable(n)) continue;
                       const r = n.getBoundingClientRect();
-                      const area = Math.max(0, r.width) * Math.max(0, r.height);
+                      const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+                      const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+                      const area = w * h;
                       if (area > bestArea) { bestArea = area; target = n; }
                     }
                   }
@@ -1186,9 +1194,7 @@ def cmd_scroll(page, direction, amount):
                         last = y
                     page.evaluate("(k) => { delete window[k]; }", scroll_key)
                 else:
-                    page.mouse.move(size["width"] / 2, size["height"] / 2)
-                    page.keyboard.press("Home" if direction == "top" else "End")
-                    time.sleep(0.25)
+                    note = f"No scrollable container found to scroll {direction}."
             else:
                 page.mouse.move(size["width"] / 2, size["height"] / 2)
                 page.mouse.wheel(0, delta)
@@ -1223,7 +1229,7 @@ def cmd_scroll(page, direction, amount):
                 time.sleep(0.25)
     except Exception as e:
         fail(f"Couldn't scroll: {str(e).splitlines()[0]}")
-    after_step(page, f"Scrolled {direction}.")
+    after_step(page, note)
 
 
 def cmd_wait(page, text, selector, ms, seconds):
