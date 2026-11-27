@@ -253,6 +253,9 @@ var alwaysAsk = map[string]bool{
 	// a stored prompt that later runs unattended.
 	"routine_update": true,
 	"routine_run":    true,
+	// Deleting one stops work the person set up to run on its own; the
+	// phone asks for it too.
+	"routine_delete": true,
 	"task_contract":  true,
 	"vault_type":     true,
 	// Opening a page leaves the bot's own state (the person's IP, cookies,
