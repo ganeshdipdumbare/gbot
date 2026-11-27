@@ -1107,7 +1107,11 @@ def cmd_scroll(page, direction, amount):
     fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""",
            [size["width"] * 0.62, size["height"] * 0.55, f"Scrolling {arrows[direction]}"])
     try:
-        before_y = page.evaluate("() => (document.scrollingElement || document.documentElement).scrollTop")
+        root_info = page.evaluate("""() => {
+          const r = document.scrollingElement || document.documentElement;
+          return r ? { y: r.scrollTop, max: Math.max(0, r.scrollHeight - r.clientHeight) } : { y: 0, max: 0 };
+        }""")
+        before_y, root_max = root_info["y"], root_info["max"]
         delta = amount or 600
         if direction == "up":
             delta = -delta
@@ -1126,8 +1130,10 @@ def cmd_scroll(page, direction, amount):
             if polls >= 3:
                 still = still + 1 if last is not None and abs(y - last) < 1 else 0
             last = y
-        # SPAs often scroll an inner container rather than window: fall back to a wheel event.
-        if direction in ("up", "down") and last is not None and abs(last - before_y) < 1:
+        # SPAs whose scrolling lives in an inner container have a non-scrollable root
+        # (root_max <= 2): only then fall back to a wheel event, never when a normal
+        # page is simply already at its top or bottom.
+        if direction in ("up", "down") and root_max <= 2 and last is not None and abs(last - before_y) < 1:
             page.mouse.move(size["width"] / 2, size["height"] / 2)
             page.mouse.wheel(0, delta)
             time.sleep(0.25)

@@ -46,10 +46,11 @@
     .dot.dim { opacity: .72; }
     .dot.press { scale: .8; }
     .tag, .toast { background: var(--card); color: var(--live); font: 600 calc(12.5px * var(--u))/1.2 var(--sans); white-space: nowrap; box-shadow: var(--pop-shadow); }
-    .tag::before, .toast::before { content: ""; flex: none; width: calc(7px * var(--u)); height: calc(7px * var(--u)); border-radius: 50%;
+    .tag::before, .toast::before { content: ""; display: inline-block; vertical-align: middle; margin-right: calc(7px * var(--u)); width: calc(7px * var(--u)); height: calc(7px * var(--u)); border-radius: 50%;
       background: var(--live); animation: live 1.8s ease-in-out infinite; }
-    .tag { display: inline-flex; align-items: center; gap: calc(7px * var(--u)); max-width: min(calc(260px * var(--u)), 70vw); overflow: hidden; text-overflow: ellipsis; }
-    .tag { position: fixed; left: 0; top: 0; padding: calc(4px * var(--u)) calc(10px * var(--u)) calc(4px * var(--u)) calc(9px * var(--u)); border-radius: 999px;
+    /* Blocks, not flex boxes, so long labels and notes end in an ellipsis. */
+    .tag { display: block; position: fixed; left: 0; top: 0; max-width: min(calc(260px * var(--u)), 70vw); overflow: hidden; text-overflow: ellipsis;
+      padding: calc(4px * var(--u)) calc(10px * var(--u)) calc(4px * var(--u)) calc(9px * var(--u)); border-radius: 999px;
       opacity: 0; transition: opacity .2s; will-change: transform; }
     .tag.on { opacity: 1; }
     .ring { position: fixed; border: calc(2px * var(--u)) solid var(--live); background: var(--live-soft); border-radius: calc(8px * var(--u)); opacity: 0;
@@ -59,11 +60,9 @@
       border: calc(2px * var(--u)) solid var(--live); opacity: .9; animation: ripple .55s cubic-bezier(.2, .7, .2, 1) forwards; }
     @keyframes ripple { to { scale: 3.4; opacity: 0; } }
     @keyframes live { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.72); opacity: .75; } }
-    /* A block, not a flex box, so a long note ends in an ellipsis. */
     .toast { display: block; position: fixed; left: 50%; bottom: calc(22px * var(--u)); translate: -50% 0; padding: calc(7px * var(--u)) calc(14px * var(--u)) calc(7px * var(--u)) calc(12px * var(--u));
       border-radius: 999px; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .3s; max-width: 80vw;
       overflow: hidden; text-overflow: ellipsis; }
-    .toast::before { display: inline-block; vertical-align: middle; margin-right: calc(7px * var(--u)); }
     .toast.on { opacity: 1; transform: none; }
   `;
 
@@ -103,18 +102,21 @@
     return (y > v.b ? "↓" : y < v.t ? "↑" : "") + (x > v.r ? "→" : x < v.l ? "←" : "");
   };
 
-  const ensureTopLayer = () => {
+  const ensureTopLayer = (promote = false) => {
     try {
-      if (host && typeof host.showPopover === "function" && !host.matches(":popover-open")) {
-        host.showPopover();
+      if (!host || typeof host.showPopover !== "function") return;
+      if (host.matches(":popover-open")) {
+        if (!promote) return;
+        host.hidePopover();
       }
+      host.showPopover();
     } catch (e) {}
   };
 
-  const mount = () => {
+  const mount = (promote = false) => {
     const parent = document.documentElement;
     if (!parent) return false;
-    if (host && host.isConnected) { ensureTopLayer(); return true; }
+    if (host && host.isConnected) { ensureTopLayer(promote); return true; }
     // A step run earlier left its own cursor in the page; this one takes over from it.
     document.querySelectorAll("[data-gbot-fx]").forEach((h) => h.remove());
     host = document.createElement("div");
@@ -174,7 +176,7 @@
 
   const wake = () => {
     const fresh = !host || !host.isConnected;
-    if (!mount()) return false;
+    if (!mount(true)) return false;
     if (fx.x < 0 || fx.y < 0) {
       const h = home();
       fx.x = h[0]; fx.y = h[1];
