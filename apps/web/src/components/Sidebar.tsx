@@ -402,7 +402,7 @@ function BotMenu({ bot, x, y, onClose, onPin, onUnread, onRename, onCopy, onHide
   // Keep the menu on screen; it is fixed to the pointer.
   const left = Math.max(8, Math.min(x, window.innerWidth - 252));
   const top = Math.max(8, Math.min(y, window.innerHeight - 360));
-  return (
+  return createPortal(
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
       <div ref={ref} style={{ left, top }} className="fixed z-50 w-[240px] rounded-2xl bg-bg shadow-pop hairline p-1.5 text-[14px] pop-in">
@@ -417,7 +417,8 @@ function BotMenu({ bot, x, y, onClose, onPin, onUnread, onRename, onCopy, onHide
         <MenuItem icon={<Icon.eyeOff />} onClick={onHide}>Hide from sidebar</MenuItem>
         {owner && !bot.main && <MenuItem icon={<Icon.trash />} danger onClick={onDelete}>Delete</MenuItem>}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 

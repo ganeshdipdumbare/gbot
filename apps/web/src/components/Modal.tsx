@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { fade, Icon, IconButton, leave, spring } from "./ui";
 
@@ -51,7 +52,7 @@ export function Modal({ open, onClose, children, title, width = 520, side }: {
     };
   }, [open]);
 
-  return (
+  const content = (
     <AnimatePresence>
       {open && (
         <div className={`fixed inset-0 z-50 flex ${side ? "justify-end" : "items-end sm:items-center justify-center"}`}>
@@ -81,4 +82,6 @@ export function Modal({ open, onClose, children, title, width = 520, side }: {
       )}
     </AnimatePresence>
   );
+
+  return typeof document === "undefined" ? content : createPortal(content, document.body);
 }
