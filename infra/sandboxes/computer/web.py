@@ -80,7 +80,7 @@ MARKETING = re.compile(
 CLOSE = re.compile(r"(close|dismiss|no thanks|not now|×|✕)", re.I)
 # Never let a button containing an agreement word ("Agree and close",
 # "Consent and close") slip through the close fallback.
-AGREE_WORD = re.compile(r"\b(agree|consent|accept|allow|confirm|submit)\b", re.I)
+AGREE_WORD = re.compile(r"\b(agree|consent|accept|allow|confirm|submit)", re.I)
 
 # ---- Reading the page ----
 # The page is read as Playwright's accessibility snapshot (the "ai" mode its
