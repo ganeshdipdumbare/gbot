@@ -53,20 +53,31 @@ STATE_DIR = "/tmp/gbot"
 # reject or close is the fallback when no accept option is offered.
 CONSENT = re.compile(
     r"(cookie|consent|privacy|accept|agree|allow|reject|decline|deny|refuse|"
-    r"necessary|essential|got it|okay|\bok\b|continue|close|dismiss)", re.I)
+    r"necessary|essential|got it|okay|\bok\b|continue|understand|close|dismiss|"
+    r"akzeptieren|zustimmen|einverstanden|ablehnen|accepter|refuser|aceptar|rechazar|"
+    r"accetta|rifiuta|accepteren|weigeren)", re.I)
 # Accept only when the whole label is a cookie-accept phrase. Substring
 # matching would press "Disagree", "I don't accept" or a bare "OK" on a
 # terms or confirm dialog, which is agreeing for the person.
-ACCEPT = re.compile(r"^(accept( all)?( cookies?)?|allow( all)?( cookies?)?|got it)$", re.I)
+ACCEPT = re.compile(
+    r"^("
+    r"(i |yes,?\s*i\s*)?(accept|agree|allow)( all)?( cookies?)?(\s*(&|and)\s*(continue|close|proceed))?"
+    r"|got it|i understand|okay|ok|consent|continue"
+    r"|(alle )?akzeptieren|zustimmen|einverstanden"
+    r"|(tout )?accepter(\s+et\s+continuer)?"
+    r"|aceptar( todo)?"
+    r"|accetta( tutto)?"
+    r"|(alles )?accepteren"
+    r")$", re.I)
 LEAST = re.compile(
     r"(reject|decline|deny|refuse|only necessary|necessary only|essential only|"
-    r"use necessary|continue without)", re.I)
+    r"use necessary|continue without|ablehnen|nur notwendige|refuser|rechazar|rifiuta|weigeren)", re.I)
 # Marketing copy often says "Reject all and subscribe" or "Accept all offers";
 # those are not consent controls and must never be clicked.
 MARKETING = re.compile(
     r"(subscribe|subscription|donate|donation|support us|membership|newsletter|"
     r"offer|deal|trial|shop|buy|upgrade|premium)", re.I)
-CLOSE = re.compile(r"(close|dismiss|×|✕)", re.I)
+CLOSE = re.compile(r"^(close|dismiss|no thanks|not now|skip|×|✕|x)$", re.I)
 
 # ---- Reading the page ----
 # The page is read as Playwright's accessibility snapshot (the "ai" mode its
@@ -581,7 +592,8 @@ def cookie_overlay(loc):
           };
           const keyword = (n) => {
             const t = (n.innerText || '').toLowerCase();
-            return ['cookie', 'consent', 'privacy'].find((k) => t.includes(k)) || '';
+            if (['cookie', 'datenschutz', 'einwilligung', 'gdpr', 'dsgvo'].some((k) => t.includes(k))) return 'cookie';
+            return ['consent', 'privacy', 'confidentialit', 'privacidad'].find((k) => t.includes(k)) || '';
           };
           let n = el;
           while (n) {
@@ -619,11 +631,21 @@ def consent_candidates(page):
                 if not label or len(label) > 80 or MARKETING.search(label):
                     continue
                 # A link or a form button can navigate or submit; a banner's
-                # plain button only changes the banner. Read the type attribute,
-                # not el.type: a button with no type attribute reports "submit"
-                # there, which would exclude nearly every banner button.
+                # plain button (or ARIA role=button without a real href) only
+                # changes the banner. Read the type attribute, not el.type: a
+                # button with no type attribute reports "submit" there, which
+                # would exclude nearly every banner button.
                 try:
-                    plain = loc.evaluate("el => { const t = (el.getAttribute('type') || '').toLowerCase(); return el.tagName === 'BUTTON' && t !== 'submit' && !el.hasAttribute('href') && (t === 'button' || !el.closest('form')); }")
+                    plain = loc.evaluate("""el => {
+                      const tag = el.tagName;
+                      const t = (el.getAttribute('type') || '').toLowerCase();
+                      const href = (el.getAttribute('href') || '').trim();
+                      const hasRealHref = href && href !== '#' && !href.toLowerCase().startsWith('javascript:');
+                      if (hasRealHref) return false;
+                      if (tag === 'BUTTON') return t !== 'submit' && (t === 'button' || !el.closest('form'));
+                      if (tag === 'INPUT') return t === 'button';
+                      return el.getAttribute('role') === 'button';
+                    }""")
                 except Exception:
                     plain = False
                 if not plain:
@@ -906,8 +928,8 @@ def page_state(page):
     if STUCK["count"] >= 3:
         lines.append(f"The page looks unchanged after {STUCK['count']} reads. Don't repeat the same action: scroll, go back, wait, or try another element.")
     for text in layers[:3]:
-        lines.append(f'On top of the page: a popup or banner showing "{text}". It can block clicks, so use its own buttons first. '
-                     "For a cookie banner, accept it. For any other consent, terms, sign-up or payment prompt, ask the person before agreeing.")
+        lines.append(f'On top of the page: a popup or banner showing "{text}". It covers the visible page and can block clicks — clear it FIRST using its own buttons before reading or acting behind it. '
+                     "Accept cookie banners; close newsletter, app-install, notification, location or promo popups. For any other consent, terms, sign-up or payment prompt, ask the person before agreeing.")
     lines.append("Page (numbers in [brackets] are what browser_click, browser_type, browser_hover and browser_check take):")
     lines.append(tree or "(the page is empty)")
     if cut:
@@ -943,7 +965,8 @@ def cmd_navigate(page, url):
     landed = urlparse(page.url).hostname or "the page"
     fx_show(page, f"Reading {landed}")
     fx_note(page, f"Opened {landed}")
-    after_step(page, f"Opened {shown(page.url)}.")
+    labels = clear_banners(page, first_wait=0.4)
+    after_step(page, f"Opened {shown(page.url)}.{banner_note(labels)}")
 
 
 def cmd_history(page, direction):
@@ -1119,19 +1142,34 @@ def cmd_scroll(page, direction, amount):
         delta = amount or 600
         if direction == "up":
             delta = -delta
-        if direction in ("top", "bottom"):
+        if root_locked:
+            # Programmatic window.scrollBy/scrollTo can still scroll an overflow:hidden root
+            # (shifting clipped content or a page behind a modal) without moving the inner
+            # scroll container. Drive the inner scroller (for top/bottom) or wheel (for up/down).
+            if direction in ("top", "bottom"):
+                page.evaluate("""(top) => {
+                  let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+                  while (el && el !== document.documentElement && el !== document.body) {
+                    const s = getComputedStyle(el).overflowY;
+                    if ((s === 'auto' || s === 'scroll') && el.scrollHeight > el.clientHeight + 2) {
+                      el.scrollTo({ top: top ? 0 : el.scrollHeight, behavior: 'smooth' });
+                      return;
+                    }
+                    el = el.parentElement;
+                  }
+                }""", direction == "top")
+                time.sleep(0.3)
+            else:
+                page.mouse.move(size["width"] / 2, size["height"] / 2)
+                page.mouse.wheel(0, delta)
+                time.sleep(0.25)
+        elif direction in ("top", "bottom"):
             page.evaluate("(top) => { const r = document.scrollingElement || document.documentElement;"
                           " window.scrollTo({ top: top ? 0 : r.scrollHeight, behavior: 'smooth' }); }", direction == "top")
-        elif root_locked:
-            # Programmatic window.scrollBy can still scroll an overflow:hidden root (shifting
-            # clipped content or a page behind a modal) without moving the inner scroll container.
-            page.mouse.move(size["width"] / 2, size["height"] / 2)
-            page.mouse.wheel(0, delta)
-            time.sleep(0.25)
         else:
             page.mouse.move(size["width"] / 2, size["height"] / 2)
             page.evaluate("(d) => window.scrollBy({ top: d, behavior: 'smooth' })", delta)
-        if not (root_locked and direction in ("up", "down")):
+        if not root_locked:
             # Watch the smooth scroll from here until it stops; nothing waits on the page's timers.
             last, still, started, polls = None, 0, time.time(), 0
             while time.time() - started < 2.5 and still < 3:

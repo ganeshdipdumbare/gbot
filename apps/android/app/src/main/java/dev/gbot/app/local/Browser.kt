@@ -222,8 +222,8 @@ class BrowserController(private val ctx: Context) {
             lines += "Scroll: $place (viewport ${n("viewport")}px)."
         }
         (o["layers"] as? JsonArray)?.take(3)?.forEach { l ->
-            lines += "On top of the page: a popup or banner showing \"${l.jsonPrimitive.contentOrNull.orEmpty()}\". It can block taps, so use its own buttons first. " +
-                "For a cookie banner, accept it. For any other consent, terms, sign-up or payment prompt, ask the person before agreeing."
+            lines += "On top of the page: a popup or banner showing \"${l.jsonPrimitive.contentOrNull.orEmpty()}\". It covers the visible page and can block taps — clear it FIRST using its own buttons before reading or acting behind it. " +
+                "Accept cookie banners; close newsletter, app-install, notification, location or promo popups. For any other consent, terms, sign-up or payment prompt, ask the person before agreeing."
         }
         lines += "Page (numbers in [brackets] are what browser_click and browser_fill take):"
         lines += str("tree").ifBlank { "(the page is empty)" }
