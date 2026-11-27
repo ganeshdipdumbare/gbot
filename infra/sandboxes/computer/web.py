@@ -1122,31 +1122,37 @@ def cmd_scroll(page, direction, amount):
         if direction in ("top", "bottom"):
             page.evaluate("(top) => { const r = document.scrollingElement || document.documentElement;"
                           " window.scrollTo({ top: top ? 0 : r.scrollHeight, behavior: 'smooth' }); }", direction == "top")
-        else:
-            page.mouse.move(size["width"] / 2, size["height"] / 2)
-            page.evaluate("(d) => window.scrollBy({ top: d, behavior: 'smooth' })", delta)
-        # Watch the smooth scroll from here until it stops; nothing waits on the page's timers.
-        last, still, started, polls = None, 0, time.time(), 0
-        while time.time() - started < 2.5 and still < 3:
-            time.sleep(0.05)
-            polls += 1
-            y = page.evaluate("() => (document.scrollingElement || document.documentElement).scrollTop")
-            if polls >= 3:
-                still = still + 1 if last is not None and abs(y - last) < 1 else 0
-            last = y
-        # Fall back to a wheel event when the root didn't move because scrolling lives in
-        # an inner container (locked/non-scrollable root) or the root still had room in
-        # the requested direction — never when a normal page is already at its top/bottom.
-        can_fallback = (
-            root_locked
-            or root_max <= 2
-            or (direction == "down" and before_y < root_max - 1)
-            or (direction == "up" and before_y > 1)
-        )
-        if direction in ("up", "down") and can_fallback and last is not None and abs(last - before_y) < 1:
+        elif root_locked:
+            # Programmatic window.scrollBy can still scroll an overflow:hidden root (shifting
+            # clipped content or a page behind a modal) without moving the inner scroll container.
             page.mouse.move(size["width"] / 2, size["height"] / 2)
             page.mouse.wheel(0, delta)
             time.sleep(0.25)
+        else:
+            page.mouse.move(size["width"] / 2, size["height"] / 2)
+            page.evaluate("(d) => window.scrollBy({ top: d, behavior: 'smooth' })", delta)
+        if not (root_locked and direction in ("up", "down")):
+            # Watch the smooth scroll from here until it stops; nothing waits on the page's timers.
+            last, still, started, polls = None, 0, time.time(), 0
+            while time.time() - started < 2.5 and still < 3:
+                time.sleep(0.05)
+                polls += 1
+                y = page.evaluate("() => (document.scrollingElement || document.documentElement).scrollTop")
+                if polls >= 3:
+                    still = still + 1 if last is not None and abs(y - last) < 1 else 0
+                last = y
+            # Fall back to a wheel event when the root didn't move because it has no scroll
+            # range (inner container) or still had room in the requested direction — never
+            # when a normal page is already at its top or bottom.
+            can_fallback = (
+                root_max <= 2
+                or (direction == "down" and before_y < root_max - 1)
+                or (direction == "up" and before_y > 1)
+            )
+            if direction in ("up", "down") and can_fallback and last is not None and abs(last - before_y) < 1:
+                page.mouse.move(size["width"] / 2, size["height"] / 2)
+                page.mouse.wheel(0, delta)
+                time.sleep(0.25)
     except Exception as e:
         fail(f"Couldn't scroll: {str(e).splitlines()[0]}")
     after_step(page, f"Scrolled {direction}.")
