@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Gbot, type Look } from "@gbot/characters";
 import { api, type Bot } from "../lib/api";
-import { clearChat, upsertBot, useStore } from "../lib/store";
+import { clearChat, removeBot, upsertBot, useStore } from "../lib/store";
 import { attempt, toast } from "../lib/toast";
 import { Modal } from "./Modal";
 import { LookPicker, SurpriseButton } from "./LookPicker";
@@ -202,7 +202,7 @@ export function BotSettings({ open, botId, onClose }: { open: boolean; botId: st
             <div className="flex items-center gap-2">
               <span className="text-[14px] flex-1">Archive {bot.name}? Their chat is kept.</span>
               <Button variant="ghost" onClick={() => setConfirm(false)}>Keep</Button>
-              <Button variant="danger" onClick={async () => { if (await attempt(() => api.archiveBot(bot.id), `${bot.name} archived`) !== undefined) onClose(); }}>Archive</Button>
+              <Button variant="danger" onClick={async () => { if (await attempt(() => api.archiveBot(bot.id), `${bot.name} archived`) !== undefined) { removeBot(bot.id); onClose(); } }}>Archive</Button>
             </div>
           ) : (
             <Button variant="danger" onClick={() => setConfirm(true)}>Archive bot</Button>

@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEv
 import { createPortal } from "react-dom";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type Presence } from "../lib/api";
-import { groupKey, set as setStore, upsertBot, useStore } from "../lib/store";
+import { groupKey, removeBot, set as setStore, upsertBot, useStore } from "../lib/store";
 import { Stack } from "./Chat";
 import { moodOf, presenceText, timeAgo } from "../lib/hooks";
 import { Button, Icon, IconButton, Input, Label } from "./ui";
@@ -37,6 +37,8 @@ export function Sidebar({ activeId, compact, onSelect, onHatch, onSettings, onSe
   const [menu, setMenu] = useState<{ bot: Bot; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<Bot | null>(null);
   const [renameText, setRenameText] = useState("");
+  const [deleting, setDeleting] = useState<Bot | null>(null);
+  const [deletingBusy, setDeletingBusy] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [tip, setTip] = useState<{ name: string; job: string; x: number; y: number } | null>(null);
 
@@ -115,6 +117,26 @@ export function Sidebar({ activeId, compact, onSelect, onHatch, onSettings, onSe
       toast("Renamed");
       setRenaming(null);
     } catch (err) { toastError(err, "Couldn't rename"); }
+  }
+
+  async function confirmDelete() {
+    if (!deleting || deletingBusy) return;
+    setDeletingBusy(true);
+    try {
+      await api.archiveBot(deleting.id);
+      removeBot(deleting.id);
+      if (hidden.has(deleting.id)) {
+        const next = new Set(hidden);
+        next.delete(deleting.id);
+        saveHidden(next);
+      }
+      toast(`${deleting.name} deleted`);
+      setDeleting(null);
+    } catch (err) {
+      toastError(err, "Couldn't delete");
+    } finally {
+      setDeletingBusy(false);
+    }
   }
 
   return (
@@ -258,13 +280,19 @@ export function Sidebar({ activeId, compact, onSelect, onHatch, onSettings, onSe
             setMenu(null);
           }}
           onHide={() => hide(menu.bot)}
-          onDelete={async () => {
-            if (!confirm(`Delete ${menu.bot.name}? Their chat is kept.`)) return;
-            try { await api.archiveBot(menu.bot.id); toast(`${menu.bot.name} deleted`); } catch (e) { toastError(e, "Couldn't delete"); }
-            setMenu(null);
-          }}
+          onDelete={() => { setDeleting(menu.bot); setMenu(null); }}
         />
       )}
+
+      <Modal open={!!deleting} onClose={() => { if (!deletingBusy) setDeleting(null); }} title={deleting ? `Delete ${deleting.name}?` : "Delete bot"} width={420}>
+        <div className="px-5 pb-5 space-y-4">
+          <p className="text-[14px] text-ink-2">Their chat is kept.</p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="soft" disabled={deletingBusy} onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button type="button" variant="danger" disabled={deletingBusy} onClick={confirmDelete}>{deletingBusy ? "Deleting…" : "Delete"}</Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={!!renaming} onClose={() => setRenaming(null)} title="Rename bot" width={420}>
         <form onSubmit={saveRename} className="px-5 pb-5 space-y-4">

@@ -265,21 +265,27 @@ def fx_go(page, el, text):
     except Exception:
         b = None
     if not b or b["width"] <= 0 or b["height"] <= 0:
+        fx_show(page, text)
         return
     fx_run(page, """([b, t]) => { const f = window.__gbotFx, x = b.x + b.width / 2, y = b.y + b.height / 2;
-      f.ring(b); f.move(x, y, t); return [x, y, f.dur]; }""", [b, text])
+      f.ring(b); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""", [b, text])
 
 
 def fx_press(page):
     fx_run(page, "() => { const f = window.__gbotFx; f.click(); return [null, null, f.dur]; }")
 
 
+def fx_show(page, text=None):
+    """Ensure the cursor is mounted and visible on the page, with an optional label."""
+    fx_run(page, "t => { const f = window.__gbotFx; f.show(t); return [f.tx, f.ty, 0]; }", text)
+
+
 def fx_say(page, text):
-    fx_run(page, "t => { window.__gbotFx.say(t); return null; }", text)
+    fx_run(page, "t => { const f = window.__gbotFx; f.say(t); return [f.tx, f.ty, 0]; }", text)
 
 
 def fx_note(page, text):
-    fx_run(page, "t => { window.__gbotFx.note(t); return null; }", text)
+    fx_run(page, "t => { const f = window.__gbotFx; f.show(); f.note(t); return [f.tx, f.ty, 0]; }", text)
 
 
 def fx_reveal(page, el):
@@ -291,40 +297,43 @@ def fx_reveal(page, el):
         return
     for _ in range(3):
         try:
-            # Which axes need scrolling.
-            way = el.evaluate("""e => {
-              // Out of view means not fully visible (one bigger than the view only needs its middle in view).
-              // A header or footer target that is on screen is never "scrolled to".
-              const r = e.getBoundingClientRect(), vw = innerWidth, vh = innerHeight;
-              // One bigger than the view only needs its middle in view, since that is where the cursor
-              // goes and where the click lands.
-              const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-              const tall = r.height > vh, wide = r.width > vw;
-              const v = tall ? (cy < 0 ? '↑' : cy > vh ? '↓' : '') : (r.top < 0 ? '↑' : r.bottom > vh ? '↓' : '');
-              const h = wide ? (cx < 0 ? '←' : cx > vw ? '→' : '')
-                : (r.left < 0 ? '←' : r.right > vw ? '→' : '');
-              return v + h;
-            }""", timeout=4000)
+            # Check in main-viewport coordinates so elements inside iframes are
+            # measured against what the person actually sees.
+            b = el.bounding_box()
+            if not b:
+                return
+            vp = page.evaluate("() => ({ w: document.documentElement.clientWidth || innerWidth, h: document.documentElement.clientHeight || innerHeight })")
+            vw, vh = vp["w"], vp["h"]
+            cx, cy = b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
+            tall, wide = b["height"] > vh, b["width"] > vw
+            v = ("↑" if cy < 0 else "↓" if cy > vh else "") if tall else ("↑" if b["y"] < 0 else "↓" if b["y"] + b["height"] > vh else "")
+            h = ("←" if cx < 0 else "→" if cx > vw else "") if wide else ("←" if b["x"] < 0 else "→" if b["x"] + b["width"] > vw else "")
+            way = v + h
         except Exception:
             return
         if not way:
             return
-        fx_run(page, """([t]) => { const f = window.__gbotFx, x = innerWidth * 0.62, y = innerHeight * 0.55;
-          f.ring(null); f.move(x, y, t); return [x, y, f.dur]; }""", ["Scrolling " + way])
+        fx_run(page, """([t]) => { const f = window.__gbotFx, x = (document.documentElement.clientWidth || innerWidth) * 0.62, y = (document.documentElement.clientHeight || innerHeight) * 0.55;
+          f.ring(null); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""", ["Scrolling " + way])
         # Start the smooth scroll, then watch it from here until the element stops
         # moving; nothing waits on the page's own timers.
         try:
-            where = "e => { const b = e.getBoundingClientRect(); return b.top * 10000 + b.left; }"
-            first = el.evaluate(where, timeout=2000)
+            first = b["y"] * 10000 + b["x"]
             # Only the axis that needs it is centred; the other stays where it is, so a page's
             # carousels and tab strips aren't shifted for a step that only needed to go down.
             el.evaluate("""(e, w) => e.scrollIntoView({
               block: /[↑↓]/.test(w) ? 'center' : 'nearest', inline: /[←→]/.test(w) ? 'center' : 'nearest', behavior: 'smooth' })""", way, timeout=4000)
             last, still = None, 0
-            for _ in range(36):
+            for i in range(40):
                 time.sleep(0.05)
-                pos = el.evaluate(where, timeout=2000)
-                still = still + 1 if last is not None and abs(pos - last) < 0.5 else 0
+                nb = el.bounding_box()
+                if not nb:
+                    break
+                pos = nb["y"] * 10000 + nb["x"]
+                # Give Chromium a couple of frames to start the smooth scroll before
+                # counting motionless polls as finished.
+                if i >= 3:
+                    still = still + 1 if last is not None and abs(pos - last) < 0.5 else 0
                 last = pos
                 if still >= 3:
                     break
@@ -909,10 +918,12 @@ def page_state(page):
 
 def after_step(page, said):
     """Every action ends the same way: let the page settle, enforce the
-    allowlist, then say what happened and show the page as it is now."""
+    allowlist, keep the cursor visible on the resulting page, then say what
+    happened and show the page as it is now."""
     settle(page)
     guard_page(page)
     guard_context(ctx_of(page))
+    fx_show(page)
     print(said)
     print(page_state(page))
 
@@ -922,16 +933,21 @@ def cmd_navigate(page, url):
         fail("use a full http(s) URL")
     if not host_allowed(url):
         fail(f"{urlparse(url).hostname} isn't on this bot's allowed list")
-    fx_note(page, f"Opening {urlparse(url).hostname or 'the page'}")
+    host = urlparse(url).hostname or "the page"
+    fx_show(page, f"Opening {host}")
+    fx_note(page, f"Opening {host}")
     page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
     guard_page(page)
     page.bring_to_front()
     forget_snapshot()
-    fx_note(page, f"Opened {urlparse(page.url).hostname or 'the page'}")
+    landed = urlparse(page.url).hostname or "the page"
+    fx_show(page, f"Reading {landed}")
+    fx_note(page, f"Opened {landed}")
     after_step(page, f"Opened {shown(page.url)}.")
 
 
 def cmd_history(page, direction):
+    fx_show(page, "Going back" if direction == "back" else "Going forward")
     try:
         if direction == "back":
             page.go_back(wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
@@ -944,6 +960,7 @@ def cmd_history(page, direction):
 
 
 def cmd_reload(page):
+    fx_show(page, "Reloading")
     box, handler = arm_dialog(page, False)
     try:
         page.reload(wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
@@ -959,6 +976,7 @@ def cmd_snapshot(page):
     settle(page, max_ms=1000)
     guard_page(page)
     guard_context(ctx_of(page))
+    fx_show(page, "Reading page")
     print(page_state(page))
 
 
@@ -1086,25 +1104,33 @@ def cmd_scroll(page, direction, amount):
         size = page.viewport_size or {"width": 1280, "height": 800}
     except Exception:
         size = {"width": 1280, "height": 800}
-    fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [x, y, f.dur]; }""",
+    fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""",
            [size["width"] * 0.62, size["height"] * 0.55, f"Scrolling {arrows[direction]}"])
     try:
+        before_y = page.evaluate("() => (document.scrollingElement || document.documentElement).scrollTop")
+        delta = amount or 600
+        if direction == "up":
+            delta = -delta
         if direction in ("top", "bottom"):
             page.evaluate("(top) => { const r = document.scrollingElement || document.documentElement;"
                           " window.scrollTo({ top: top ? 0 : r.scrollHeight, behavior: 'smooth' }); }", direction == "top")
         else:
-            delta = amount or 600
-            if direction == "up":
-                delta = -delta
             page.mouse.move(size["width"] / 2, size["height"] / 2)
             page.evaluate("(d) => window.scrollBy({ top: d, behavior: 'smooth' })", delta)
         # Watch the smooth scroll from here until it stops; nothing waits on the page's timers.
-        last, still, started = None, 0, time.time()
+        last, still, started, polls = None, 0, time.time(), 0
         while time.time() - started < 2.5 and still < 3:
             time.sleep(0.05)
+            polls += 1
             y = page.evaluate("() => (document.scrollingElement || document.documentElement).scrollTop")
-            still = still + 1 if last is not None and abs(y - last) < 1 else 0
+            if polls >= 3:
+                still = still + 1 if last is not None and abs(y - last) < 1 else 0
             last = y
+        # SPAs often scroll an inner container rather than window: fall back to a wheel event.
+        if direction in ("up", "down") and last is not None and abs(last - before_y) < 1:
+            page.mouse.move(size["width"] / 2, size["height"] / 2)
+            page.mouse.wheel(0, delta)
+            time.sleep(0.25)
     except Exception as e:
         fail(f"Couldn't scroll: {str(e).splitlines()[0]}")
     after_step(page, f"Scrolled {direction}.")
@@ -1113,6 +1139,7 @@ def cmd_scroll(page, direction, amount):
 def cmd_wait(page, text, selector, ms, seconds):
     timeout = int((seconds or 10) * 1000)
     started = time.time()
+    fx_show(page, f"Waiting for {text[:24]}" if text else "Waiting")
     try:
         if text:
             page.get_by_text(text, exact=False).first.wait_for(state="visible", timeout=timeout)

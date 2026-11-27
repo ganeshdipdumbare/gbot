@@ -130,12 +130,13 @@ class BrowserController(private val ctx: Context) {
         error.value?.let { e ->
             return """{"ok":false,"url":"${json(target)}","error":"${json(e)}"}"""
         }
-        eval("window.__gbotFx && window.__gbotFx.note('Opened ' + (location.hostname || 'the page'))")
+        eval("window.__gbotFx && (window.__gbotFx.show('Reading ' + (location.hostname || 'page')), window.__gbotFx.note('Opened ' + (location.hostname || 'the page')))")
         return snapshot()
     }
 
     suspend fun back(): String {
         ensure()
+        eval("window.__gbotFx && window.__gbotFx.show('Going back')")
         eval("history.back()")
         val done = CompletableDeferred<Unit>()
         page = done
@@ -145,6 +146,7 @@ class BrowserController(private val ctx: Context) {
 
     suspend fun forward(): String {
         ensure()
+        eval("window.__gbotFx && window.__gbotFx.show('Going forward')")
         eval("history.forward()")
         val done = CompletableDeferred<Unit>()
         page = done
@@ -154,6 +156,7 @@ class BrowserController(private val ctx: Context) {
 
     suspend fun reload(): String {
         ensure()
+        eval("window.__gbotFx && window.__gbotFx.show('Reloading')")
         val done = CompletableDeferred<Unit>()
         page = done
         main.post { web?.reload() }
@@ -175,6 +178,8 @@ class BrowserController(private val ctx: Context) {
     }
 
     suspend fun waitFor(seconds: Int): String {
+        ensure()
+        if (fxJs.isNotEmpty()) eval("window.__gbotFx && window.__gbotFx.show('Waiting')")
         kotlinx.coroutines.delay(seconds.coerceIn(1, 10) * 1000L)
         return snapshot()
     }
@@ -194,6 +199,8 @@ class BrowserController(private val ctx: Context) {
             return """{"ok":false,"url":"","error":"Nothing is open in the browser yet. Use browser_open with a web address first."}"""
         }
         settle()
+        if (fxJs.isNotEmpty() && eval("typeof window.__gbotFx === 'object' ? '1' : ''") != "1") eval(fxJs)
+        if (fxJs.isNotEmpty()) eval("window.__gbotFx && window.__gbotFx.show('Reading page')")
         if (readJs.isNotEmpty() && eval("typeof window.__gbotRead === 'function' ? '1' : ''") != "1") eval(readJs)
         val raw = eval("window.__gbotRead ? __gbotRead() : ''")
         val o = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()

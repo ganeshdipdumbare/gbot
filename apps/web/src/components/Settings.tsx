@@ -757,9 +757,10 @@ function Vault() {
     } catch (err) { setError((err as Error).message); }
   }
 
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
   async function remove(v: VaultSecret) {
-    if (!confirm(`Delete the ${v.name} secret?`)) return;
-    try { await api.deleteVault(v.id); load(); toast("Secret deleted"); } catch (err) { toastError(err, "Couldn't delete"); }
+    try { await api.deleteVault(v.id); setConfirmId(null); load(); toast("Secret deleted"); } catch (err) { toastError(err, "Couldn't delete"); }
   }
 
   return (
@@ -778,8 +779,17 @@ function Vault() {
             <div className="font-semibold text-[14px] truncate">{v.name}</div>
             <div className="text-[12px] text-ink-3 truncate">{v.origins.join(", ")}</div>
           </div>
-          <Button variant="ghost" onClick={() => setForm({ id: v.id, name: v.name, origins: v.origins.join("\n"), value: "" })}>Edit</Button>
-          <Button variant="danger" onClick={() => remove(v)}>Delete</Button>
+          {confirmId === v.id ? (
+            <>
+              <Button variant="ghost" onClick={() => setConfirmId(null)}>Cancel</Button>
+              <Button variant="danger" onClick={() => remove(v)}>Confirm</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={() => setForm({ id: v.id, name: v.name, origins: v.origins.join("\n"), value: "" })}>Edit</Button>
+              <Button variant="danger" onClick={() => setConfirmId(v.id)}>Delete</Button>
+            </>
+          )}
         </div>
       ))}
       {list?.length === 0 && !form && <Empty text="No saved secrets yet." />}
