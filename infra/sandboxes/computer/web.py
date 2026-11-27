@@ -1109,9 +1109,13 @@ def cmd_scroll(page, direction, amount):
     try:
         root_info = page.evaluate("""() => {
           const r = document.scrollingElement || document.documentElement;
-          return r ? { y: r.scrollTop, max: Math.max(0, r.scrollHeight - r.clientHeight) } : { y: 0, max: 0 };
+          if (!r) return { y: 0, max: 0, locked: true };
+          const s = getComputedStyle(r).overflowY;
+          const bs = document.body ? getComputedStyle(document.body).overflowY : '';
+          const locked = s === 'hidden' || s === 'clip' || (bs === 'hidden' && s !== 'auto' && s !== 'scroll');
+          return { y: r.scrollTop, max: Math.max(0, r.scrollHeight - r.clientHeight), locked };
         }""")
-        before_y, root_max = root_info["y"], root_info["max"]
+        before_y, root_max, root_locked = root_info["y"], root_info["max"], root_info["locked"]
         delta = amount or 600
         if direction == "up":
             delta = -delta
@@ -1130,10 +1134,16 @@ def cmd_scroll(page, direction, amount):
             if polls >= 3:
                 still = still + 1 if last is not None and abs(y - last) < 1 else 0
             last = y
-        # SPAs whose scrolling lives in an inner container have a non-scrollable root
-        # (root_max <= 2): only then fall back to a wheel event, never when a normal
-        # page is simply already at its top or bottom.
-        if direction in ("up", "down") and root_max <= 2 and last is not None and abs(last - before_y) < 1:
+        # Fall back to a wheel event when the root didn't move because scrolling lives in
+        # an inner container (locked/non-scrollable root) or the root still had room in
+        # the requested direction — never when a normal page is already at its top/bottom.
+        can_fallback = (
+            root_locked
+            or root_max <= 2
+            or (direction == "down" and before_y < root_max - 1)
+            or (direction == "up" and before_y > 1)
+        )
+        if direction in ("up", "down") and can_fallback and last is not None and abs(last - before_y) < 1:
             page.mouse.move(size["width"] / 2, size["height"] / 2)
             page.mouse.wheel(0, delta)
             time.sleep(0.25)
