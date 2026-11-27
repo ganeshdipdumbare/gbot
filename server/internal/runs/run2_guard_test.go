@@ -29,6 +29,8 @@ func TestRun2ApprovalRules(t *testing.T) {
 		{"search stays read-only", rc("auto", true), "web_search", false},
 		{"routine update always asks", rc("auto", false), "routine_update", true},
 		{"routine run always asks", rc("auto", false), "routine_run", true},
+		{"routine delete always asks", rc("auto", false), "routine_delete", true},
+		{"allow rule for routine delete still works", rc("auto", false, "routine_delete"), "routine_delete", false},
 		{"allow rule for bot_update is ignored", rc("auto", true, "bot_update"), "bot_update", true},
 		{"allow rule for shell is ignored", rc("ask", false, "computer_shell"), "computer_shell", true},
 		{"allow rule for a plain tool still works", rc("ask", true, "browser_click"), "browser_click", false},
