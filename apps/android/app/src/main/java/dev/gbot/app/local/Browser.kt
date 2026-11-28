@@ -109,6 +109,14 @@ class BrowserController(private val ctx: Context) {
         return w
     }
 
+    @Volatile private var closed = false
+
+    /** Gone for good: [Browsers] has let go of this window. */
+    fun close() {
+        closed = true
+        destroy()
+    }
+
     fun destroy() {
         web?.destroy()
         web = null
@@ -330,6 +338,9 @@ class BrowserController(private val ctx: Context) {
     }
 
     private suspend fun ensure() {
+        // A bot archived (or phone mode left) mid-run: its window is gone for
+        // good, so a step still running must not build an orphan WebView.
+        check(!closed) { "This bot's browser was closed." }
         if (web != null) return
         val ready = CompletableDeferred<Unit>()
         main.post { runCatching { view() }; ready.complete(Unit) }

@@ -43,5 +43,8 @@ class BrowsersTest {
         shadowOf(android.os.Looper.getMainLooper()).idle()
         assertNotSame(first, b.of("bot-a"))
         assertSame(lock, b.lock("bot-a"))
+        // A run still holding the old window can't bring it back to life.
+        val step = kotlinx.coroutines.runBlocking { runCatching { first.open("example.com") } }
+        assertTrue(step.exceptionOrNull()?.message.orEmpty().contains("closed"))
     }
 }

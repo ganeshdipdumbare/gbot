@@ -23,7 +23,7 @@ class Browsers(private val ctx: Context) {
     fun close(botId: String) {
         // A WebView is only touched on the main thread. The lock stays: a run
         // still holding it unlocks the same one.
-        windows.remove(botId)?.let { b -> main.post { runCatching { b.destroy() } } }
+        windows.remove(botId)?.let { b -> main.post { runCatching { b.close() } } }
     }
 
     fun closeAll() {
