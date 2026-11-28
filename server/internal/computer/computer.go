@@ -7,16 +7,20 @@
 package computer
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -546,6 +550,104 @@ func (m *Manager) Screenshot(ctx context.Context, o Owner) ([]byte, error) {
 		return nil, fmt.Errorf("screenshot: %s%s", strings.TrimSpace(errOut), errOrNil(err))
 	}
 	return []byte(out), nil
+}
+
+// StreamFPS is how often the screen stream looks for a change. One capture
+// process inside the computer runs for the whole stream, so this is not
+// bound by the cost of starting a command per frame.
+const StreamFPS = 30
+
+// maxFrame bounds one frame read from the capture stream; a 1280x800 JPEG
+// is well under a megabyte.
+const maxFrame = 16 << 20
+
+// ErrNoStream means the computer's image has no streaming capture (an image
+// built before it existed); the caller falls back to one capture per frame.
+var ErrNoStream = errors.New("this computer image has no screen stream")
+
+// ScreenFrames streams the screen: a frame each time it changes, up to
+// StreamFPS a second, until ctx ends. The error channel gets one value when
+// the stream stops (nil when ctx ended it).
+func (m *Manager) ScreenFrames(ctx context.Context, o Owner) (<-chan []byte, <-chan error, error) {
+	id, err := m.container(o, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	bin, args := m.d.pipe(id, "gbot", []string{"DISPLAY=:1"}, "/usr/local/bin/gbot-capture", "--stream", strconv.Itoa(StreamFPS), "72")
+	cmd := exec.CommandContext(ctx, bin, args...)
+	// Run in its own process group so cancelling the stream terminates any
+	// child processes that inherited stdout and would otherwise hold the pipe open.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Stdin stays open while the stream is watched; when it closes the capture inside ends.
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Cancel = func() error {
+		_ = stdin.Close()
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 500 * time.Millisecond
+	if err := cmd.Start(); err != nil {
+		return nil, nil, err
+	}
+	frames := make(chan []byte, 1)
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			_ = stdin.Close()
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+			_ = cmd.Wait()
+		}()
+		r := bufio.NewReaderSize(stdout, 256<<10)
+		n := 0
+		for {
+			head, err := r.ReadString('\n')
+			if err != nil {
+				if ctx.Err() != nil {
+					err = nil
+				} else if n == 0 {
+					err = ErrNoStream
+				}
+				done <- err
+				return
+			}
+			size, perr := strconv.Atoi(strings.TrimPrefix(strings.TrimSuffix(head, "\n"), "GBF "))
+			if !strings.HasPrefix(head, "GBF ") || perr != nil || size <= 0 || size > maxFrame {
+				if n == 0 {
+					done <- ErrNoStream
+				} else {
+					done <- errors.New("screen stream: bad frame")
+				}
+				return
+			}
+			img := make([]byte, size)
+			if _, err := io.ReadFull(r, img); err != nil {
+				if ctx.Err() != nil {
+					err = nil
+				}
+				done <- err
+				return
+			}
+			n++
+			// Only the newest frame matters: a viewer that falls behind skips to it.
+			select {
+			case <-frames:
+			default:
+			}
+			frames <- img
+		}
+	}()
+	return frames, done, nil
 }
 
 // TakeControl hands the screen to the person (true) or back to the bot.

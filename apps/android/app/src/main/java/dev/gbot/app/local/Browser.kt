@@ -130,7 +130,7 @@ class BrowserController(private val ctx: Context) {
         error.value?.let { e ->
             return """{"ok":false,"url":"${json(target)}","error":"${json(e)}"}"""
         }
-        eval("window.__gbotFx && (window.__gbotFx.show('Reading ' + (location.hostname || 'page')), window.__gbotFx.note('Opened ' + (location.hostname || 'the page')))")
+        eval("window.__gbotFx && (window.__gbotFx.show('Reading ' + (location.hostname || 'page')), window.__gbotFx.scan(), window.__gbotFx.note('Opened ' + (location.hostname || 'the page')))")
         return snapshot(label = null)
     }
 
@@ -172,7 +172,8 @@ class BrowserController(private val ctx: Context) {
             eval("window.__gbotFx && window.__gbotFx.move(innerWidth * 0.62, innerHeight * 0.55, 'Scrolling ${if (down) "↓" else "↑"}')")
         }
         // Smooth, so the person watching sees the page move instead of jump.
-        eval("window.scrollBy({top: ${if (down) "" else "-"}Math.round(window.innerHeight * 0.85), behavior: 'smooth'})")
+        val dy = "${if (down) "" else "-"}Math.round(window.innerHeight * 0.85)"
+        eval("window.__gbotFx && window.__gbotFx.scrollPage ? window.__gbotFx.scrollPage($dy) : window.scrollBy({top: $dy, behavior: 'smooth'})")
         untilStill("(document.scrollingElement || document.documentElement).scrollTop")
         return snapshot(label = null)
     }
@@ -201,7 +202,7 @@ class BrowserController(private val ctx: Context) {
         settle()
         if (fxJs.isNotEmpty() && eval("typeof window.__gbotFx === 'object' ? '1' : ''") != "1") evalScript(fxJs)
         if (fxJs.isNotEmpty()) {
-            if (label != null) eval("window.__gbotFx && window.__gbotFx.show(${quote(label)})")
+            if (label != null) eval("window.__gbotFx && (window.__gbotFx.show(${quote(label)}), window.__gbotFx.scan())")
             else eval("window.__gbotFx && window.__gbotFx.show()")
         }
         if (readJs.isNotEmpty() && eval("typeof window.__gbotRead === 'function' ? '1' : ''") != "1") evalScript(readJs)
@@ -236,7 +237,7 @@ class BrowserController(private val ctx: Context) {
      * finished, then no changes for a moment. The page only reports when it last
      * changed; the clock and the limit are kept here, so it can't hold a step up.
      */
-    private suspend fun settle(quietMs: Long = 250, maxMs: Long = 2000) {
+    private suspend fun settle(quietMs: Long = 200, maxMs: Long = 2000) {
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < 15_000 && loading.value) kotlinx.coroutines.delay(50)
         val t0 = System.currentTimeMillis()
@@ -244,7 +245,7 @@ class BrowserController(private val ctx: Context) {
             if (loading.value) { settle(quietMs, maxMs); return }
             val idle = eval("window.__gbotQuiet ? __gbotQuiet() : 1e9").trim().toDoubleOrNull() ?: return
             if (idle >= quietMs) return
-            kotlinx.coroutines.delay(50)
+            kotlinx.coroutines.delay(40)
         }
     }
 
@@ -261,36 +262,36 @@ class BrowserController(private val ctx: Context) {
         }
     }
 
-    /** How long the pointer's last glide takes, in ms (the page reports it), capped. */
-    private suspend fun glideMs(): Long = (eval("__gbotFxDur()").trim().toLongOrNull() ?: 400L).coerceIn(0L, 1000L)
-
     /**
-     * Waits for the pointer's glide to arrive: its planned length, then while the page says it
-     * is still moving (a stalled frame pauses it rather than making it jump), 600 ms at most.
+     * Waits for the pointer's glide to arrive: its planned length ([ms], which the page reported
+     * when the glide started), then while the page says it is still moving (a stalled frame
+     * pauses it rather than making it jump), 400 ms at most.
      */
-    private suspend fun arrive() {
-        kotlinx.coroutines.delay(glideMs())
+    private suspend fun arrive(ms: Long) {
+        kotlinx.coroutines.delay(ms.coerceIn(0L, 1000L))
         val t0 = System.currentTimeMillis()
         while (System.currentTimeMillis() - t0 < 600 && eval("window.__gbotFx && window.__gbotFx.moving ? '1' : ''") == "1") {
-            kotlinx.coroutines.delay(30)
+            kotlinx.coroutines.delay(16)
         }
-        kotlinx.coroutines.delay(60)
     }
 
     /** Scroll to the element, glide the cursor to it and ring it, so the step can be watched. */
     private suspend fun fxStep(id: Int, text: String, press: Boolean) {
         if (fxJs.isEmpty()) return
         // Out of view: scroll to it (the label says which way), and check again, up to three times.
+        // The cursor glides while the page scrolls; neither waits for the other.
         eval("window.__gbotFxTry = null")  // each step starts fresh: only a scroll made in this step counts
         for (attempt in 0 until 3) {
             if (!eval("__gbotFxReveal($id)").contains("1")) break
             untilStill("__gbotFxPos($id)")
         }
-        if (!eval("__gbotFxTo($id, ${quote(text)})").contains("1")) return
-        arrive()
+        // "ok <ms>": the glide started and takes about that long.
+        val to = eval("__gbotFxTo($id, ${quote(text)})").trim().trim('"')
+        if (!to.startsWith("ok")) return
+        arrive(to.removePrefix("ok").trim().toLongOrNull() ?: 300L)
         if (press) {
             eval("__gbotFxClick()")
-            kotlinx.coroutines.delay(150)
+            kotlinx.coroutines.delay(100)
         }
     }
 
@@ -314,9 +315,10 @@ class BrowserController(private val ctx: Context) {
         fxStep(id, "Typing", false)
         // The fill below makes sure the field ends up exact, and stops any typing still going.
         if (watch && fxJs.isNotEmpty() && value.length in 1..240 && '\n' !in value) {
-            val ms = (1800 / value.length).coerceIn(8, 30)
+            // Under a second however long the text, so it reads as quick typing, not a wait.
+            val ms = (900 / value.length).coerceIn(6, 28)
             eval("__gbotFxType($id, ${quote(value)}, $ms)")
-            kotlinx.coroutines.delay(value.length * ms + 80L)
+            kotlinx.coroutines.delay(value.length * ms + 40L)
         }
         return eval("__gbotFill($id, ${quote(value)})")
     }
@@ -427,7 +429,10 @@ class BrowserController(private val ctx: Context) {
     if (last && last.id === id && last.pos === pos && now - last.at < 4000) return '';
     if (window.__gbotFx) { window.__gbotFx.ring(null); window.__gbotFx.move(vl + (vr - vl) * 0.62, vt + (vb - vt) * 0.55, 'Scrolling ' + way); }
     // Only the axis that needs it is centred, so carousels and tab strips aren't shifted needlessly.
-    el.scrollIntoView({block: (up || down) ? 'center' : 'nearest', inline: (left || right) ? 'center' : 'nearest', behavior:'smooth'});
+    // The cursor script scrolls by its own frames, so it is smooth whatever the page or WebView does.
+    var block = (up || down) ? 'center' : 'nearest', inline = (left || right) ? 'center' : 'nearest';
+    if (window.__gbotFx && window.__gbotFx.reveal) window.__gbotFx.reveal(el, block, inline);
+    else el.scrollIntoView({block: block, inline: inline, behavior:'smooth'});
     return '1';
   };
 
@@ -435,18 +440,17 @@ class BrowserController(private val ctx: Context) {
     var el = byId(id);
     if (!el || !window.__gbotFx) return '';
     window.__gbotFx.toElement(el, text);
-    return '1';
-  };
-  // How long the last glide takes, so the caller waits for it instead of a guess.
-  window.__gbotFxDur = function(){
-    return String(window.__gbotFx ? Math.round(window.__gbotFx.dur) : 0);
+    return 'ok ' + Math.round(window.__gbotFx.dur || 0);
   };
   window.__gbotFxClick = function(){
     if (window.__gbotFx) window.__gbotFx.click();
     return '';
   };
   window.__gbotFxStop = function(){
-    if (window.__gbotFxTimer) { clearInterval(window.__gbotFxTimer); window.__gbotFxTimer = 0; }
+    if (window.__gbotFxTimer) {
+      clearInterval(window.__gbotFxTimer); window.__gbotFxTimer = 0;
+      if (window.__gbotFx) window.__gbotFx.typing(false);
+    }
   };
   window.__gbotFxType = function(id, text, ms){
     window.__gbotFxStop();
@@ -454,6 +458,7 @@ class BrowserController(private val ctx: Context) {
     // Only real text fields are typed into; anything else is filled in one step.
     if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return '';
     el.focus();
+    if (window.__gbotFx) window.__gbotFx.typing(true);
     var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     var set = Object.getOwnPropertyDescriptor(proto, 'value');
     var i = 0;

@@ -16,10 +16,21 @@
   const CAP = 30000; // characters of tree, the same as the computer's
   const els = new Map(); // number -> {el, role, name}
   let next = 0;
-  let lastChange = performance.now();
+  // Changes to the page's structure or text count; the bot's own cursor doesn't, and
+  // attribute-only churn (a carousel's timer, a ticking animation) counts only briefly.
+  // The same rule as the computer's settle (QUIET_*_JS in web.py).
+  let lastChange = performance.now(), lastTree = lastChange;
+  const armed = lastChange;
+  const ours = (n) => { for (; n; n = n.parentNode) if (n.nodeType === 1 && n.hasAttribute && n.hasAttribute("data-gbot-fx")) return true; return false; };
   try {
-    new MutationObserver(() => { lastChange = performance.now(); })
-      .observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    new MutationObserver((list) => {
+      const now = performance.now();
+      for (const m of list) {
+        if (ours(m.target)) continue;
+        lastChange = now;
+        if (m.type !== "attributes") { lastTree = now; break; }
+      }
+    }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
   } catch (e) {}
 
   const ACTION = new Set(["button", "link", "textbox", "searchbox", "combobox", "checkbox", "radio", "switch", "tab",
@@ -344,5 +355,10 @@
     return "";
   };
 
-  window.__gbotQuiet = () => Math.round(performance.now() - lastChange);
+  window.__gbotQuiet = () => {
+    const now = performance.now();
+    // Only attributes still changing, the structure quiet for a while: as good as quiet.
+    if (now - lastTree >= 300 && now - armed >= 450) return 1e9;
+    return Math.round(now - lastChange);
+  };
 })();
