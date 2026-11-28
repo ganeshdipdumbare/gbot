@@ -119,7 +119,7 @@ func TestQueueSurvivesRestart(t *testing.T) {
 	}
 }
 
-// One queued message can be paused, resumed and cancelled through the API.
+// One queued message can be steered or cancelled through the API.
 func TestQueueItemActions(t *testing.T) {
 	dsn := testDB(t)
 	ctx := context.Background()
@@ -154,11 +154,16 @@ func TestQueueItemActions(t *testing.T) {
 	if err := st.Enqueue(ctx, q); err != nil {
 		t.Fatal(err)
 	}
-	if code := c.do("POST", "/api/queue/"+q.ID, map[string]string{"action": "pause"}, nil); code != 200 {
-		t.Fatalf("pause: %d", code)
+	// Pause is gone; steer and cancel are what a waiting message offers.
+	if code := c.do("POST", "/api/queue/"+q.ID, map[string]string{"action": "pause"}, nil); code != 400 {
+		t.Fatalf("pause: %d, want 400", code)
 	}
-	if got, _ := st.QueueItem(ctx, q.ID); got.Status != "paused" {
-		t.Fatalf("after pause: %q", got.Status)
+	// Nothing is running to steer it into, so it stays where it is.
+	if code := c.do("POST", "/api/queue/"+q.ID, map[string]string{"action": "steer"}, nil); code != 409 {
+		t.Fatalf("steer with no turn running: %d, want 409", code)
+	}
+	if got, _ := st.QueueItem(ctx, q.ID); got.Status != "queued" {
+		t.Fatalf("after a refused steer: %q", got.Status)
 	}
 	if code := c.do("POST", "/api/queue/"+q.ID, map[string]string{"action": "cancel"}, nil); code != 200 {
 		t.Fatalf("cancel: %d", code)
@@ -186,5 +191,147 @@ func TestQueueItemActions(t *testing.T) {
 	}
 	if got, _ := st.QueueItem(ctx, waiting.ID); got.Status != "cancelled" {
 		t.Fatalf("clear left a waiting message: %q", got.Status)
+	}
+}
+
+// A waiting message steered into the running turn reaches it with the
+// next tool result and doesn't run again on its own. One steered while
+// the turn is only writing runs next, ahead of the rest of the line.
+func TestQueueSteer(t *testing.T) {
+	dsn := testDB(t)
+	ctx := context.Background()
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cat := models.NewCatalog("http://127.0.0.1:1")
+	cat.Extra = []models.Model{{ID: "mockscript:x", Provider: "mockscript", Tools: true}}
+	script := []any{
+		// "first": a slow step that calls a tool, then the reply.
+		map[string]any{"tool": "current_time", "wait_ms": 1500},
+		map[string]any{"text": "first reply"},
+		// "second": a slow reply with no tool to carry a steered message.
+		map[string]any{"text": "second reply", "wait_ms": 1500},
+		// Then "fourth", steered, goes ahead of "third".
+		map[string]any{"text": "fourth reply"},
+		map[string]any{"text": "third reply"},
+	}
+	hub := runs.NewHub()
+	rt, err := runs.New(runs.Config{DatabaseURL: dsn, OllamaHost: cat.OllamaHost, MaxSteps: 6, MockScript: script}, st, hub, cat, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	srv := httptest.NewServer((&api.Server{Store: st, Runtime: rt, Hub: hub, Models: cat, Log: log, AllowSignup: true}).Handler())
+	defer srv.Close()
+
+	c := newClient(t, srv.URL)
+	var me store.User
+	c.do("POST", "/api/auth/signup", map[string]string{"email": "steer@example.com", "password": "long-enough-pw"}, &me)
+	var bot store.Bot
+	c.do("POST", "/api/bots", map[string]any{"name": "Pip", "model": "mockscript:x"}, &bot)
+
+	item := func(prompt string) *store.QueueItem {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var id string
+			_ = st.DB.QueryRow(ctx, `SELECT id FROM run_queue WHERE bot_id=$1 AND prompt=$2`, bot.ID, prompt).Scan(&id)
+			if id != "" {
+				q, err := st.QueueItem(ctx, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return q
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no queue item for %q", prompt)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	until := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+	send := func(text string) {
+		t.Helper()
+		if code := c.do("POST", "/api/bots/"+bot.ID+"/messages", map[string]string{"text": text}, nil); code != 201 {
+			t.Fatalf("send %q: %d", text, code)
+		}
+	}
+	steer := func(prompt string) {
+		t.Helper()
+		var res struct{ Items []store.QueueItem }
+		if code := c.do("POST", "/api/queue/"+item(prompt).ID, map[string]string{"action": "steer"}, &res); code != 200 {
+			t.Fatalf("steer %q: %d", prompt, code)
+		}
+		for _, q := range res.Items {
+			if q.Prompt == prompt && q.Status != "steered" {
+				t.Fatalf("steered item shows %q", q.Status)
+			}
+		}
+	}
+	replies := func() []string {
+		var res struct{ Messages []store.Message }
+		c.do("GET", "/api/bots/"+bot.ID+"/messages", nil, &res)
+		var out []string
+		for _, m := range res.Messages {
+			if m.Role == "bot" && strings.TrimSpace(m.Content) != "" {
+				out = append(out, m.Content)
+			}
+		}
+		return out
+	}
+
+	send("first")
+	until("first to start", func() bool { return item("first").Status == "running" })
+	send("also check the weather")
+	steer("also check the weather")
+	until("the first reply", func() bool { return len(replies()) == 1 && item("first").Status == "done" })
+	if got := item("also check the weather").Status; got != "done" {
+		t.Fatalf("steered message: %q, want done", got)
+	}
+	sess, err := store.NewSessions(st).Load(ctx, "bot:"+bot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range sess.Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "the person sent this") && strings.Contains(m.Content, "also check the weather") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the steered message never reached the model: %+v", sess.Messages)
+	}
+
+	send("second")
+	until("second to start", func() bool { return item("second").Status == "running" })
+	send("third")
+	send("fourth")
+	steer("fourth")
+	until("every reply", func() bool { return len(replies()) == 5-1 })
+	got := replies()
+	want := []string{"first reply", "second reply", "fourth reply", "third reply"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("replies %q, want %q", got, want)
+		}
+	}
+	third, fourth := item("third"), item("fourth")
+	if fourth.StartedAt == nil || third.StartedAt == nil || !fourth.StartedAt.Before(*third.StartedAt) {
+		t.Fatalf("the steered message didn't go first: fourth %v, third %v", fourth.StartedAt, third.StartedAt)
 	}
 }

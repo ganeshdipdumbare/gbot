@@ -297,6 +297,23 @@ class LocalApi(
         next
     }
 
+    /**
+     * The person wrote instead of answering: the card is skipped, and the run
+     * waiting on it carries on (a question as unanswered, an approval as
+     * declined), as the server does.
+     */
+    fun skipCard(cardId: String) {
+        val m = db.message(cardId) ?: return
+        if (m.str("status") != "pending") return
+        val next = m.copy(data = (m.data ?: JsonObject(emptyMap())).toMutableMap().let { d ->
+            d["status"] = JsonPrimitive("skipped")
+            JsonObject(d)
+        })
+        db.patchMessage(next)
+        cards.remove(cardId)?.complete(false)
+        emit("message_update", m.botId.orEmpty(), json.encodeToJsonElement(Message.serializer(), next), m.groupId)
+    }
+
     suspend fun awaitAnswer(cardId: String): Boolean {
         // A very fast tap can land before the wait starts.
         db.message(cardId)?.str("status")?.takeIf { it != "pending" }?.let { return it == "approved" }

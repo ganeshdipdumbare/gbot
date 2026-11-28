@@ -225,13 +225,13 @@ private fun SheetAction(icon: String, label: String, onClick: () -> Unit) {
     }
 }
 
-/** Only the messages waiting behind the running turn. */
+/** Only the messages waiting behind the running turn. Steer hands one to that turn now: the bot reads it before its next step. */
 @Composable
 private fun QueueStrip(key: ChatKey, items: List<QueueItem>) {
     val app = GbotApp.instance
     val g = LocalG.current
     val scope = rememberCoroutineScope()
-    val waiting = items.filter { it.status == "queued" || it.status == "paused" }
+    val waiting = items.filter { it.status == "queued" || it.status == "steered" }
     if (waiting.isEmpty()) return
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(16.dp)).background(g.surface).border(1.dp, g.line, RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -241,10 +241,15 @@ private fun QueueStrip(key: ChatKey, items: List<QueueItem>) {
         Column(Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState())) {
             waiting.forEach { q ->
                 Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(if (q.status == "paused") g.ink3 else g.accent))
+                    val steered = q.status == "steered"
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(if (steered) g.ink3 else g.accent))
                     Spacer(Modifier.width(8.dp))
                     Text(q.prompt.ifEmpty { "(no text)" }, style = T.small, color = g.ink, maxLines = 1, modifier = Modifier.weight(1f))
-                    Text(if (q.status == "paused") "Resume" else "Pause", style = T.tiny, color = g.ink2, modifier = Modifier.tap { scope.attempt(fail = "Couldn't change the queue") { app.store.queueAction(key, q.id, if (q.status == "paused") "resume" else "pause") } }.padding(6.dp))
+                    if (steered) {
+                        Text("Steering…", style = T.tiny, color = g.ink3, modifier = Modifier.padding(6.dp))
+                    } else {
+                        Text("Steer", style = T.tiny.copy(fontWeight = FontWeight.Medium), color = g.accent, modifier = Modifier.tap { scope.attempt(fail = "Couldn't steer it") { app.store.queueAction(key, q.id, "steer") } }.padding(6.dp))
+                    }
                     Text("Cancel", style = T.tiny, color = g.ink3, modifier = Modifier.tap { scope.attempt(fail = "Couldn't change the queue") { app.store.queueAction(key, q.id, "cancel") } }.padding(6.dp))
                 }
             }

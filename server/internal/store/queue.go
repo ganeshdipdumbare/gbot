@@ -24,7 +24,7 @@ type QueueItem struct {
 	Depth      int            `json:"-"`
 	Thread     string         `json:"-"`
 	Decisions  map[string]any `json:"-"`
-	Status     string         `json:"status"` // queued | paused | running | waiting | done | stopped | error | cancelled
+	Status     string         `json:"status"` // queued | steered | running | waiting | done | stopped | error | cancelled
 	Error      string         `json:"error,omitempty"`
 	CreatedAt  time.Time      `json:"createdAt"`
 	StartedAt  *time.Time     `json:"startedAt,omitempty"`
@@ -83,9 +83,9 @@ func (s *Store) QueueItem(ctx context.Context, id string) (*QueueItem, error) {
 }
 
 // ActiveQueue lists what a chat still has to run: the current turn and
-// everything queued or paused behind it.
+// everything queued or steered behind it.
 func (s *Store) ActiveQueue(ctx context.Context, botID, chatUser, groupID string) ([]*QueueItem, error) {
-	q := `SELECT ` + queueCols + ` FROM run_queue WHERE status IN ('queued','paused','running') AND `
+	q := `SELECT ` + queueCols + ` FROM run_queue WHERE status IN ('queued','steered','running') AND `
 	args := []any{}
 	if groupID != "" {
 		q += `group_id=$1 ORDER BY created_at`
@@ -101,9 +101,10 @@ func (s *Store) ActiveQueue(ctx context.Context, botID, chatUser, groupID string
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (*QueueItem, error) { return scanQueue(r) })
 }
 
-// RecoverQueue returns the items a previous process left queued.
+// RecoverQueue returns the items a previous process left queued. A
+// message steered into a turn that never read it waits in line again.
 func (s *Store) RecoverQueue(ctx context.Context) ([]*QueueItem, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+queueCols+` FROM run_queue WHERE status='queued' ORDER BY created_at`)
+	rows, err := s.DB.Query(ctx, `SELECT `+queueCols+` FROM run_queue WHERE status IN ('queued','steered') ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -122,18 +123,18 @@ func (s *Store) FailRunningQueue(ctx context.Context) error {
 func (s *Store) CancelQueue(ctx context.Context, botID, userID, groupID string) error {
 	if groupID != "" {
 		_, err := s.DB.Exec(ctx, `UPDATE run_queue SET status='cancelled', finished_at=now()
-			WHERE group_id=$1 AND status IN ('queued','paused')`, groupID)
+			WHERE group_id=$1 AND status IN ('queued','steered')`, groupID)
 		return err
 	}
 	_, err := s.DB.Exec(ctx, `UPDATE run_queue SET status='cancelled', finished_at=now()
-		WHERE bot_id=$1 AND chat_user_id=$2 AND group_id IS NULL AND status IN ('queued','paused')`, botID, userID)
+		WHERE bot_id=$1 AND chat_user_id=$2 AND group_id IS NULL AND status IN ('queued','steered')`, botID, userID)
 	return err
 }
 
 // CancelQueueBot drops every person's waiting work with an archived bot.
 func (s *Store) CancelQueueBot(ctx context.Context, botID string) error {
 	_, err := s.DB.Exec(ctx, `UPDATE run_queue SET status='cancelled', finished_at=now()
-		WHERE bot_id=$1 AND status IN ('queued','paused','running')`, botID)
+		WHERE bot_id=$1 AND status IN ('queued','steered','running')`, botID)
 	return err
 }
 

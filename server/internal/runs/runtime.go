@@ -164,8 +164,11 @@ type agentSlot struct {
 }
 
 type worker struct {
-	queue  []Job
-	cancel context.CancelFunc
+	queue []Job
+	// steered are messages the person moved out of the line into the
+	// running turn; it reads them with its next tool result (steer.go).
+	steered []Job
+	cancel  context.CancelFunc
 }
 
 func New(cfg Config, st *store.Store, hub *Hub, cat *models.Catalog, log *slog.Logger) (*Runtime, error) {
@@ -614,6 +617,12 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 		for _, u := range linksIn(j.Prompt) {
 			rc.allowFetch(u)
 		}
+	}
+	// Messages steered into this turn reach it with its next tool result.
+	// A reply to another bot doesn't take them: it goes back to that bot.
+	if len(j.exchange) == 0 {
+		key := j.key()
+		rc.steer = func() []Job { return r.takeSteered(key) }
 	}
 	ctx = withRun(ctx, rc)
 	ctx = r.withThread(ctx, threadID(b, c.User))

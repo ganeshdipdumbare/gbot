@@ -63,9 +63,10 @@ needs you, stuck, done), and keep working while you keep chatting.
 - **Approvals and questions.** Bots ask before risky steps with a card in the
   chat (Ask, Auto or Never ask, plus allow/block lists). They ask you
   questions the same way. Cards never block the chat.
-- **A queue that survives restarts.** Messages run in order; pause, resume
-  or cancel any one. If the server restarts, what was waiting runs next
-  instead of vanishing.
+- **A queue you can steer.** Messages run in order. Steer one to hand it to
+  the bot mid-task: it reads it before its next step and can change course.
+  Or cancel it. If the server restarts, what was waiting runs next instead
+  of vanishing.
 
 ### Its own computer
 

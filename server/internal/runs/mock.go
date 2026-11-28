@@ -1,7 +1,10 @@
 package runs
 
 import (
+	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/ganeshdipdumbare/kritrim"
 )
@@ -36,4 +39,63 @@ func mockTurns(script []any) []kritrim.Turn {
 		out = append(out, turn)
 	}
 	return out
+}
+
+// mockWaits reads each turn's "wait_ms": how long the offline model takes
+// to answer it, so a test can act while a turn is under way.
+func mockWaits(script []any) []time.Duration {
+	out := make([]time.Duration, 0, len(script))
+	for _, raw := range script {
+		m, _ := raw.(map[string]any)
+		if m == nil {
+			continue
+		}
+		ms, _ := m["wait_ms"].(float64)
+		if n, ok := m["wait_ms"].(int); ok {
+			ms = float64(n)
+		}
+		out = append(out, time.Duration(ms)*time.Millisecond)
+	}
+	return out
+}
+
+// slowMock answers turn i of a script after waits[i].
+type slowMock struct {
+	kritrim.Model
+	mu    sync.Mutex
+	n     int
+	waits []time.Duration
+}
+
+func (m *slowMock) wait(ctx context.Context) error {
+	m.mu.Lock()
+	var d time.Duration
+	if m.n < len(m.waits) {
+		d = m.waits[m.n]
+	}
+	m.n++
+	m.mu.Unlock()
+	if d <= 0 {
+		return nil
+	}
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *slowMock) Generate(ctx context.Context, req kritrim.Request) (*kritrim.Response, error) {
+	if err := m.wait(ctx); err != nil {
+		return nil, err
+	}
+	return m.Model.Generate(ctx, req)
+}
+
+func (m *slowMock) Stream(ctx context.Context, req kritrim.Request, emit func(kritrim.Delta)) (*kritrim.Response, error) {
+	if err := m.wait(ctx); err != nil {
+		return nil, err
+	}
+	return m.Model.Stream(ctx, req, emit)
 }

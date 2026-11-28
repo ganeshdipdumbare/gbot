@@ -23,6 +23,9 @@ type runCtx struct {
 	// other accounts' MCP tools are hidden from this run.
 	mcpPrefix map[string]bool
 
+	// steer takes the messages steered into this turn, if it takes any.
+	steer func() []Job
+
 	mu sync.Mutex
 	// tainted is set once outside text (a webhook, a web page, an MCP
 	// result) entered the run: from then on, changes need approval.
@@ -498,6 +501,9 @@ func (r *Runtime) afterTool(ctx context.Context, e *kritrim.ToolEvent) {
 	if rc == nil || e.Call == nil {
 		return
 	}
+	// Last, so a steered message is never read as the tool's own output
+	// (a Source line in it doesn't count as a page the run opened).
+	defer r.deliverSteered(rc, e)
 	if untrustedTool(e.Call.Name) {
 		rc.taint()
 	}
