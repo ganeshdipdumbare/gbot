@@ -40,8 +40,19 @@ class BrowsersTest {
         val first = b.of("bot-a")
         val lock = b.lock("bot-a")
         b.close("bot-a")
+        // Closed at once, from any thread; the view goes on the main thread.
         shadowOf(android.os.Looper.getMainLooper()).idle()
         assertNotSame(first, b.of("bot-a"))
         assertSame(lock, b.lock("bot-a"))
+        // A run still holding the old window can't bring it back to life.
+        val steps = kotlinx.coroutines.runBlocking {
+            listOf(
+                runCatching { first.open("example.com") },
+                runCatching { first.click(1) },
+                runCatching { first.fill(1, "hi") },
+                runCatching { first.pressEnter(1) },
+            )
+        }
+        steps.forEach { assertTrue(it.exceptionOrNull()?.message.orEmpty().contains("closed")) }
     }
 }

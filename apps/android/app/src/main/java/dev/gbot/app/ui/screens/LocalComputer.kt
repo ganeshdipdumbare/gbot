@@ -98,9 +98,9 @@ fun LocalComputerScreen(nav: NavHostController, id: String) {
             { nav.popBackStack() },
             subtitle = if (expanded) "Its browser, full size" else "A browser on this phone",
             actions = {
-                IconBtn("back", "Back a page", { scope.launch { browser.back() } })
-                IconBtn("next", "Forward a page", { scope.launch { browser.forward() } })
-                IconBtn("refresh", "Reload", { browser.view().reload() })
+                IconBtn("back", "Back a page", { scope.launch { runCatching { browser.back() } } })
+                IconBtn("next", "Forward a page", { scope.launch { runCatching { browser.forward() } } })
+                IconBtn("refresh", "Reload", { browser.reloadPage() })
                 IconBtn("globe", "Open in Chrome", {
                     val target = browser.url.value
                     if (target.isNotBlank()) runCatching {
@@ -142,7 +142,7 @@ fun LocalComputerScreen(nav: NavHostController, id: String) {
                     )
                     if (error != null) {
                         Spacer(Modifier.height(10.dp))
-                        GButton("Try again", { scope.launch { browser.view().reload() } }, variant = Variant.Soft, small = true)
+                        GButton("Try again", { browser.reloadPage() }, variant = Variant.Soft, small = true)
                     }
                 }
             }

@@ -109,6 +109,27 @@ class BrowserController(private val ctx: Context) {
         return w
     }
 
+    @Volatile private var closed = false
+
+    /**
+     * Gone for good: [Browsers] has let go of this window. Any thread: it is
+     * marked closed at once, so no bot step or button ([reloadPage]) starting
+     * after this builds a view, and the view itself is destroyed on the main
+     * thread. Only the screen's own [view] call makes one; it gets the bot's
+     * current window from [Browsers], never a closed one.
+     */
+    fun close() {
+        closed = true
+        main.post { runCatching { destroy() } }
+    }
+
+    /** The screen's Reload button: does nothing on a closed or unopened window, so it can't build an orphan view. */
+    fun reloadPage() {
+        if (!closed) web?.reload()
+    }
+
+    private fun checkOpen() = check(!closed) { "This bot's browser was closed." }
+
     fun destroy() {
         web?.destroy()
         web = null
@@ -297,8 +318,8 @@ class BrowserController(private val ctx: Context) {
 
     /** Why element [id] can't be used, or null when it is still what the last read showed. */
     private suspend fun changed(id: Int): String? =
-        eval("window.__gbotCheck ? __gbotCheck($id) : 'Read the page first (browser_read).'").ifBlank { null }
-            ?.let { """{"ok":false,"error":"${json(it)}"}""" }
+        checkOpen().let { eval("window.__gbotCheck ? __gbotCheck($id) : 'Read the page first (browser_read).'").ifBlank { null }
+            ?.let { """{"ok":false,"error":"${json(it)}"}""" } }
 
     suspend fun click(id: Int): String {
         changed(id)?.let { return it }
@@ -330,10 +351,16 @@ class BrowserController(private val ctx: Context) {
     }
 
     private suspend fun ensure() {
+        // A bot archived (or phone mode left) mid-run: its window is gone for
+        // good, so a step still running must not build an orphan WebView.
+        checkOpen()
         if (web != null) return
         val ready = CompletableDeferred<Unit>()
-        main.post { runCatching { view() }; ready.complete(Unit) }
+        // Closed between the check and here: the main thread sees it, since
+        // close() posts its destroy after marking it.
+        main.post { if (!closed) runCatching { view() }; ready.complete(Unit) }
         ready.await()
+        checkOpen()
     }
 
     private suspend fun eval(js: String): String =
