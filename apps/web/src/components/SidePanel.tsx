@@ -1,19 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CompositionEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type TouchEvent as RTouchEvent, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type CompositionEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type TouchEvent as RTouchEvent, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Gbot } from "@gbot/characters";
 import { api, type Bot, type ComputerStatus, type Routine } from "../lib/api";
+import { useLiveScreen } from "../lib/screen";
 import { onLive, set, useStore } from "../lib/store";
 import { attempt, toastError } from "../lib/toast";
 import { bouncy, Button, fade, Icon, IconButton, Input, Label, leave, spring, TextArea } from "./ui";
-
-/** WebKit does not paint multipart/x-mixed-replace in <img> (Safari + WKWebView). */
-function mjpegInImgWorks() {
-  if (document.documentElement.dataset.shell === "desktop") return false;
-  const ua = navigator.userAgent;
-  if (/iPhone|iPad|iPod/.test(ua)) return false;
-  return !(/Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|Firefox/.test(ua));
-}
 
 // The bot's own place: its computer (status → preview → takeover) and
 // the routines it runs by itself.
@@ -53,42 +46,6 @@ function useComputer(bot: Bot) {
   return [status, update] as const;
 }
 
-/** Polls the screen while it's on and the page is visible. */
-function useScreen(botId: string, on: boolean, fps = 1.2) {
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => {
-    if (!on) { setSrc(null); return; }
-    let stop = false;
-    let last: string | null = null;
-    let ac: AbortController | null = null;
-    const loop = async () => {
-      while (!stop) {
-        if (document.visibilityState === "visible") {
-          ac = new AbortController();
-          const timeout = window.setTimeout(() => ac?.abort(), 8000);
-          try {
-            const res = await fetch(api.screenUrl(botId), { credentials: "same-origin", signal: ac.signal });
-            if (res.ok) {
-              const blob = await res.blob();
-              // Unmounted or turned off while the frame was loading: create no URL.
-              if (stop) break;
-              const url = URL.createObjectURL(blob);
-              setSrc(url);
-              if (last) URL.revokeObjectURL(last);
-              last = url;
-            }
-          } catch { /* keep the last frame; abort/timeout just retries */ }
-          finally { window.clearTimeout(timeout); }
-        }
-        await new Promise((r) => setTimeout(r, 1000 / fps));
-      }
-    };
-    loop();
-    return () => { stop = true; ac?.abort(); if (last) URL.revokeObjectURL(last); };
-  }, [botId, on, fps]);
-  return src;
-}
-
 // Wake, sleep, watch and take control, kept small in the panel's header.
 function ComputerActions({ bot, onWatch, onTakeover }: { bot: Bot; onWatch: () => void; onTakeover: () => void }) {
   const [status, update] = useComputer(bot);
@@ -124,17 +81,19 @@ function ComputerTab({ bot, onOpen, viewing }: { bot: Bot; onOpen: () => void; v
   const on = status?.state === "on";
   const sleeping = status?.state === "asleep";
   // Full-screen viewing replaces the thumbnail while it is open.
-  const src = useScreen(bot.id, on && !viewing);
+  const { canvas, ready } = useLiveScreen(bot.id, on && !viewing);
   const where = `${status?.backend === "microsandbox" ? "Its own microVM on this machine." : "A container on this machine."}${bot.computerNetwork ? " Online." : " Offline until you allow internet in its settings."}`;
 
   return (
     <div className="px-4 pb-2">
       <button type="button" onClick={onOpen} aria-label={`Watch ${bot.name}'s screen full screen`}
         className="group relative block w-full aspect-[16/10] rounded-2xl overflow-hidden bg-surface shadow-[var(--shadow)] cursor-pointer">
+        {on && !viewing && (
+          <canvas ref={canvas} role="img" aria-label={`${bot.name}'s screen`}
+            className={`absolute inset-0 size-full object-cover transition-opacity duration-300 ${ready ? "opacity-100" : "opacity-0"}`} />
+        )}
         <AnimatePresence initial={false}>
-          {src ? (
-            <motion.img key="screen" src={src} alt={`${bot.name}'s screen`} className="absolute inset-0 size-full object-cover" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
-          ) : (
+          {on && !viewing && ready ? null : (
             <motion.div key="off" className="absolute inset-0 grid place-items-center text-center p-6 bg-surface" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               <div className="px-4 py-3 text-ink">
                 <Gbot look={bot.look} seed={bot.id} size={36} mood={status?.state === "starting" ? "working" : "sleepy"} className="mx-auto" />
@@ -149,7 +108,7 @@ function ComputerTab({ bot, onOpen, viewing }: { bot: Bot; onOpen: () => void; v
             </motion.div>
           )}
         </AnimatePresence>
-        {src && (
+        {ready && (
           <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 text-white text-[12px] px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <Icon.expand /> Watch
           </span>
@@ -178,16 +137,9 @@ function ComputerView({ bot, open, control, onClose }: {
   // textarea sits over the screen and collects real keystrokes and IME.
   const keyboard = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
-  // Chromium paints MJPEG in <img>; WebKit (Safari / macOS WKWebView) does
-  // not, so those clients poll single JPEGs instead of a black panel.
-  const useMjpeg = useMemo(() => mjpegInImgWorks(), []);
+  // The same live stream in every browser and the desktop app (lib/screen.ts).
   const live = open && status?.state === "on";
-  const polled = useScreen(bot.id, live && !useMjpeg, 8);
-  const streamSrc = useMemo(
-    () => (live && useMjpeg ? api.streamUrl(bot.id) : null),
-    [live, useMjpeg, bot.id],
-  );
-  const src = useMjpeg ? streamSrc : polled;
+  const { canvas, ready } = useLiveScreen(bot.id, live);
 
   async function take() {
     setError("");
@@ -411,9 +363,8 @@ function ComputerView({ bot, open, control, onClose }: {
                 aria-label={`Type into ${bot.name}'s computer`}
                 className={`absolute inset-0 size-full resize-none border-0 bg-transparent p-0 text-transparent caret-transparent opacity-0 outline-none text-[16px] ${holding ? "cursor-crosshair" : "pointer-events-none"}`}
               />
-              {src
-                ? <img src={src} alt="" draggable={false} className="absolute inset-0 size-full object-contain select-none pointer-events-none" />
-                : <div className="absolute inset-0 grid place-items-center text-white/60 text-sm">
+              {live && <canvas ref={canvas} aria-hidden className={`absolute inset-0 size-full object-contain select-none pointer-events-none transition-opacity duration-200 ${ready ? "opacity-100" : "opacity-0"}`} />}
+              {!ready && <div className="absolute inset-0 grid place-items-center text-white/60 text-sm">
                   {status?.state === "starting" ? "Waking up…" : status?.state === "on" ? "Connecting to the screen…" : "Its computer is asleep"}
                 </div>}
               {!holding && status?.state === "on" && (

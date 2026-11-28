@@ -22,6 +22,9 @@ type driver interface {
 	start(ctx context.Context, botID, image string, network bool) (string, error)
 	// exec runs args inside the computer. env is KEY=VALUE.
 	exec(ctx context.Context, id, user string, env []string, stdin []byte, detach bool, args ...string) (string, string, int, error)
+	// pipe is the command line that runs args inside the computer with
+	// stdin and stdout connected, for a long-lived stream (the screen).
+	pipe(id, user string, env []string, args ...string) (string, []string)
 	stop(ctx context.Context, id string)
 	// pause freezes a running computer without discarding it; resume
 	// unfreezes it. The guest keeps its windows and processes.
@@ -181,6 +184,18 @@ func (msbDriver) exec(ctx context.Context, id, user string, env []string, stdin 
 	return msbRun(ctx, stdin, append(append(a, "--"), args...)...)
 }
 
+func (msbDriver) pipe(id, user string, env []string, args ...string) (string, []string) {
+	// --stream: without it msb holds the command's output back until stdin closes.
+	a := []string{"exec", id, "--stream"}
+	if user != "" {
+		a = append(a, "-u", user)
+	}
+	for _, e := range env {
+		a = append(a, "-e", e)
+	}
+	return "msb", append(append(a, "--"), args...)
+}
+
 func (msbDriver) stop(ctx context.Context, id string) {
 	_, _, _, _ = run(ctx, "msb", nil, "rm", "--force", id)
 }
@@ -260,6 +275,17 @@ func (dockerDriver) exec(ctx context.Context, id, user string, env []string, std
 		a = append(a, "-e", e)
 	}
 	return run(ctx, "docker", stdin, append(append(a, id), args...)...)
+}
+
+func (dockerDriver) pipe(id, user string, env []string, args ...string) (string, []string) {
+	a := []string{"exec", "-i"}
+	if user != "" {
+		a = append(a, "-u", user)
+	}
+	for _, e := range env {
+		a = append(a, "-e", e)
+	}
+	return "docker", append(append(a, id), args...)
 }
 
 func (dockerDriver) stop(ctx context.Context, id string) {

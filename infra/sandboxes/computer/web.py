@@ -162,13 +162,29 @@ LAYERS_JS = r"""() => {
 
 QUIET_ARM_JS = r"""(key) => {
   try {
-    const box = { last: performance.now() };
-    new MutationObserver(() => { box.last = performance.now(); })
-      .observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    // Changes to the page's structure or text count; the bot's own cursor doesn't, and
+    // attribute-only churn (a carousel's timer, a ticking animation) counts only briefly.
+    const box = { last: performance.now(), lastTree: performance.now(), armed: performance.now() };
+    const ours = (n) => { for (; n; n = n.parentNode) if (n.nodeType === 1 && n.hasAttribute && n.hasAttribute('data-gbot-fx')) return true; return false; };
+    new MutationObserver((list) => {
+      const now = performance.now();
+      for (const m of list) {
+        if (ours(m.target)) continue;
+        box.last = now;
+        if (m.type !== 'attributes') { box.lastTree = now; break; }
+      }
+    }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
     window[key] = box;
   } catch (e) {}
 }"""
-QUIET_READ_JS = r"""(key) => { const b = window[key]; return b ? performance.now() - b.last : 1e9; }"""
+QUIET_READ_JS = r"""(key) => {
+  const b = window[key];
+  if (!b) return 1e9;
+  const now = performance.now();
+  // Only attributes still changing, the structure quiet for a while: as good as quiet.
+  if (now - b.lastTree >= 300 && now - b.armed >= 450) return 1e9;
+  return now - b.last;
+}"""
 
 SCROLL_JS = r"""() => {
   const r = document.scrollingElement || document.documentElement;
@@ -228,21 +244,25 @@ FX_JS = "" if os.environ.get("GBOT_FX", "on").lower() == "off" or not FX_SRC els
 
 def fx_run(page, js, arg=None):
     """Start one effect in the page, first putting the cursor where the last
-    step left it, then wait out its duration here. The script returns
-    [x, y, ms] (x and y worked out by the script itself, or null when the
-    cursor didn't move); nothing the page controls is awaited."""
+    step left it, then wait out its duration here. Loading the cursor, placing
+    it and starting the effect are one round trip to the page. The script
+    returns [x, y, ms] (x and y worked out by the script itself, or null when
+    the cursor didn't move); nothing the page controls is awaited."""
     if not FX_JS:
         return None
     try:
-        page.evaluate(FX_JS)
-        js = fx_name(js)
         try:
             with open(FX_POS) as f:
-                x, y = json.load(f)
-            page.evaluate(fx_name("([x, y]) => window.__gbotFx.at(x, y)"), [x, y])
+                pos = json.load(f)
         except (OSError, ValueError, TypeError):
-            pass
-        out = page.evaluate(js, arg)
+            pos = None
+        out = page.evaluate(fx_name("""([pos, arg]) => {
+          """ + FX_SRC + """
+          const f = window.__gbotFx;
+          if (!f) return null;
+          if (Array.isArray(pos) && pos.length === 2) f.at(pos[0], pos[1]);
+          return (""" + js + """)(arg);
+        }"""), [pos, arg])
         if isinstance(out, list) and len(out) == 3:
             x, y, ms = out
             num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) < 1e6
@@ -252,19 +272,18 @@ def fx_run(page, js, arg=None):
                         json.dump([x, y], f)
                 except OSError:
                     pass
-            if num(ms):
-                time.sleep(min(max(ms, 0), 1000) / 1000)
+            if num(ms) and ms > 0:
+                time.sleep(min(ms, 1000) / 1000)
                 # A stalled frame pauses a glide instead of making it jump, so it can run past
-                # its planned length: wait while the page says it is moving, 0.6 s at most.
+                # its planned length: wait while the page says it is moving, 0.4 s at most.
                 started = time.time()
-                while time.time() - started < 0.6:
+                while time.time() - started < 0.4:
                     try:
                         if not page.evaluate(fx_name("() => !!(window.__gbotFx && window.__gbotFx.moving)")):
                             break
                     except Exception:
                         break
-                    time.sleep(0.03)
-                time.sleep(0.05)
+                    time.sleep(0.016)
         return out
     except Exception:
         return None
@@ -287,6 +306,16 @@ def fx_go(page, el, text):
 
 def fx_press(page):
     fx_run(page, "() => { const f = window.__gbotFx; f.click(); return [null, null, f.dur]; }")
+
+
+def fx_typing(page, on):
+    """The ring around the field glows while the bot types into it."""
+    fx_run(page, "on => { const f = window.__gbotFx; f.typing(on); return [null, null, 0]; }", on)
+
+
+def fx_scan(page, text=None):
+    """Reading the page: a band of light runs down it once. Nothing waits for it."""
+    fx_run(page, "t => { const f = window.__gbotFx; f.show(t); f.scan(); return [f.tx, f.ty, 0]; }", text)
 
 
 def fx_show(page, text=None):
@@ -328,28 +357,49 @@ def fx_reveal(page, el):
         if not way:
             return
         fx_run(page, """([t]) => { const f = window.__gbotFx, x = (document.documentElement.clientWidth || innerWidth) * 0.62, y = (document.documentElement.clientHeight || innerHeight) * 0.55;
-          f.ring(null); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""", ["Scrolling " + way])
+          f.ring(null); f.move(x, y, t); return [f.tx, f.ty, 0]; }""", ["Scrolling " + way])
+        # The glide isn't waited for: the page starts scrolling while the cursor is on its way.
         # Start the smooth scroll, then watch it from here until the element stops
         # moving; nothing waits on the page's own timers.
         try:
             first = b["y"] * 10000 + b["x"]
             # Only the axis that needs it is centred; the other stays where it is, so a page's
             # carousels and tab strips aren't shifted for a step that only needed to go down.
-            el.evaluate("""(e, w) => e.scrollIntoView({
-              block: /[↑↓]/.test(w) ? 'center' : 'nearest', inline: /[←→]/.test(w) ? 'center' : 'nearest', behavior: 'smooth' })""", way, timeout=4000)
+            # The cursor script scrolls by its own frames (a page or browser may skip native smooth
+            # scrolling and jump); inside an iframe, where it isn't loaded, the browser's own is used.
+            # Run in the page's own world, where the cursor script lives (an element handle's own
+            # scripts run in an isolated one); an element in an iframe isn't reachable from the
+            # top page, so it falls back to the browser's smooth scrolling.
+            reveal = """([e, w, name]) => {
+              const block = /[↑↓]/.test(w) ? 'center' : 'nearest', inline = /[←→]/.test(w) ? 'center' : 'nearest';
+              const f = name && window[name];
+              if (f && f.reveal && e.ownerDocument === document) return f.reveal(e, block, inline);
+              e.scrollIntoView({ block, inline, behavior: 'smooth' });
+              return 0;
+            }"""
+            planned = 0
+            try:
+                planned = page.evaluate(reveal, [el, way, FX_NAME])
+            except Exception:
+                el.evaluate("(e, [w, n]) => (" + reveal + ")([e, w, n])", [way, ""], timeout=4000)
+            # The cursor's own scroll says how long it takes: wait that, then make sure it has
+            # stopped. The browser's smooth scroll doesn't say, so it is watched from the start.
+            ours = isinstance(planned, (int, float)) and not isinstance(planned, bool) and 0 < planned <= 1000
+            if ours:
+                time.sleep(planned / 1000)
             last, still = None, 0
-            for i in range(40):
-                time.sleep(0.05)
+            for i in range(60):
+                time.sleep(0.02 if ours else 0.033)
                 nb = el.bounding_box()
                 if not nb:
                     break
                 pos = nb["y"] * 10000 + nb["x"]
-                # Give Chromium a couple of frames to start the smooth scroll before
+                # Give Chromium a couple of frames to start a smooth scroll before
                 # counting motionless polls as finished.
-                if i >= 3:
+                if ours or i >= 4:
                     still = still + 1 if last is not None and abs(pos - last) < 0.5 else 0
                 last = pos
-                if still >= 3:
+                if still >= (1 if ours else 3):
                     break
             if last is not None and abs(last - first) < 1:
                 return  # the page can't scroll any further; don't try again
@@ -479,7 +529,7 @@ def current_page(ctx):
     return page
 
 
-def settle(page, quiet_ms=250, max_ms=2000):
+def settle(page, quiet_ms=200, max_ms=2000):
     """Waits for the page to be ready instead of sleeping a fixed time: the
     document loaded, then no DOM changes for quiet_ms (bounded by max_ms).
     The page can only report changes; the clock and the limit are kept here,
@@ -495,7 +545,7 @@ def settle(page, quiet_ms=250, max_ms=2000):
         return
     started = time.time()
     while (time.time() - started) * 1000 < max_ms:
-        time.sleep(0.05)
+        time.sleep(0.04)
         try:
             idle = page.evaluate(QUIET_READ_JS, key)
         except Exception:
@@ -965,9 +1015,12 @@ def cmd_navigate(page, url):
     page.bring_to_front()
     forget_snapshot()
     landed = urlparse(page.url).hostname or "the page"
-    fx_show(page, f"Reading {landed}")
+    fx_scan(page, f"Reading {landed}")
     fx_note(page, f"Opened {landed}")
-    labels = clear_banners(page, first_wait=0.4)
+    # A late cookie banner usually comes while the page is still settling; wait for that,
+    # not a fixed time, then look (once more after a moment if there was none).
+    settle(page, max_ms=1200)
+    labels = clear_banners(page, first_wait=0.05)
     after_step(page, f"Opened {shown(page.url)}.{banner_note(labels)}")
 
 
@@ -1001,7 +1054,7 @@ def cmd_snapshot(page):
     settle(page, max_ms=1000)
     guard_page(page)
     guard_context(ctx_of(page))
-    fx_show(page, "Reading page")
+    fx_scan(page, "Reading page")
     print(page_state(page))
 
 
@@ -1029,8 +1082,12 @@ def type_visibly(page, el, text):
     words appear. The field ends up holding exactly the text, as with fill."""
     el.fill("", timeout=ACTION_TIMEOUT)
     el.focus()
-    # About a second and a half at most, however long the text.
-    page.keyboard.type(text, delay=max(8, min(40, 1500 // max(1, len(text)))))
+    fx_typing(page, True)
+    # Under a second however long the text, so it reads as quick typing, not a wait.
+    try:
+        page.keyboard.type(text, delay=max(6, min(28, 900 // max(1, len(text)))))
+    finally:
+        fx_typing(page, False)
     try:
         now = el.evaluate("e => ('value' in e ? e.value : (e.innerText || ''))")
     except Exception:
@@ -1129,7 +1186,8 @@ def cmd_scroll(page, direction, amount):
         size = page.viewport_size or {"width": 1280, "height": 800}
     except Exception:
         size = {"width": 1280, "height": 800}
-    fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [f.tx, f.ty, f.dur]; }""",
+    # The page starts scrolling while the cursor glides into place; neither waits for the other.
+    fx_run(page, """([x, y, t]) => { const f = window.__gbotFx; f.ring(null); f.move(x, y, t); return [f.tx, f.ty, 0]; }""",
            [size["width"] * 0.62, size["height"] * 0.55, f"Scrolling {arrows[direction]}"])
     note = f"Scrolled {direction}."
     try:
@@ -1199,12 +1257,19 @@ def cmd_scroll(page, direction, amount):
                 page.mouse.move(size["width"] / 2, size["height"] / 2)
                 page.mouse.wheel(0, delta)
                 time.sleep(0.25)
-        elif direction in ("top", "bottom"):
-            page.evaluate("(top) => { const r = document.scrollingElement || document.documentElement;"
-                          " window.scrollTo({ top: top ? 0 : r.scrollHeight, behavior: 'smooth' }); }", direction == "top")
         else:
-            page.mouse.move(size["width"] / 2, size["height"] / 2)
-            page.evaluate("(d) => window.scrollBy({ top: d, behavior: 'smooth' })", delta)
+            if direction not in ("top", "bottom"):
+                page.mouse.move(size["width"] / 2, size["height"] / 2)
+            # The cursor script scrolls by its own frames, so it is smooth on every page; the
+            # browser's smooth scrolling is the fallback with the cursor off.
+            page.evaluate("""([d, name]) => {
+              const f = window[name];
+              if (f && f.scrollPage) return f.scrollPage(d);
+              const r = document.scrollingElement || document.documentElement;
+              if (d === 'top' || d === 'bottom') window.scrollTo({ top: d === 'top' ? 0 : r.scrollHeight, behavior: 'smooth' });
+              else window.scrollBy({ top: d, behavior: 'smooth' });
+              return 0;
+            }""", [direction if direction in ("top", "bottom") else delta, FX_NAME if FX_JS else ""])
         if not root_locked:
             # Watch the smooth scroll from here until it stops; nothing waits on the page's timers.
             last, still, started, polls = None, 0, time.time(), 0

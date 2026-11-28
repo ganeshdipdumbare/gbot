@@ -289,8 +289,8 @@ func (s *Server) computerScreen(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(img)
 }
 
-// maxStreams bounds open MJPEG streams per computer. Each one runs a
-// capture inside the computer every frame; a few windows is plenty, and
+// maxStreams bounds open MJPEG streams per computer. Each one runs its own
+// capture inside the computer; a few windows is plenty, and
 // the stream itself has no time limit.
 const maxStreams = 4
 
@@ -355,49 +355,94 @@ func (s *Server) computerStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=gbotframe")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	// Each frame costs one exec inside the computer, so the wait after a
-	// capture is only what is left of the frame time: the capture itself sets
-	// the pace, up to about 25 frames a second, which keeps the bot's cursor
-	// gliding instead of jumping. A still screen sends nothing: the browser
-	// keeps the last frame. Native 1280x800 frames: sharp text matters.
-	const frame = 40 * time.Millisecond
-	fails, sent := 0, 0
 	var last []byte
+	sent := 0
 	lastSent := time.Time{}
+	write := func(img []byte) bool {
+		if img != nil {
+			last = img
+		}
+		if _, err := fmt.Fprintf(w, "--gbotframe\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(last)); err != nil {
+			return false
+		}
+		if _, err := w.Write(append(last[:len(last):len(last)], '\r', '\n')); err != nil {
+			return false
+		}
+		flusher.Flush()
+		sent++
+		lastSent = time.Now()
+		return true
+	}
 	checked := time.Now()
-	for {
-		// The stream has no end of its own, so access is checked again now
-		// and then: signing out or losing the bot ends it.
+	// The stream has no end of its own, so access is checked again now and
+	// then: signing out or losing the bot ends it.
+	allowed := func() bool {
 		if time.Since(checked) > 30*time.Second {
 			if !s.stillAllowed(r, b.ID) {
-				return
+				return false
 			}
 			checked = time.Now()
+		}
+		return true
+	}
+
+	// One capture process inside the computer sends a frame each time the
+	// screen changes, up to 30 a second, so the bot's cursor glides instead
+	// of stepping. A still screen sends nothing from the computer; here it
+	// gets a 1s heartbeat so a proxy never holds a lone frame forever, and
+	// the first frame is sent twice: a multipart client needs the next
+	// boundary to finish a part. Native 1280x800 frames: sharp text matters.
+	if frames, done, err := s.Computer.ScreenFrames(r.Context(), o); err == nil {
+		beat := time.NewTicker(time.Second)
+		defer beat.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case img := <-frames:
+				if !write(img) || (sent == 1 && !write(nil)) {
+					return
+				}
+			case <-beat.C:
+				if !allowed() {
+					return
+				}
+				if last != nil && time.Since(lastSent) >= time.Second && !write(nil) {
+					return
+				}
+			case err := <-done:
+				if !errors.Is(err, computer.ErrNoStream) || sent > 0 {
+					return
+				}
+				// An older computer image: capture frame by frame below.
+				goto poll
+			}
+		}
+	}
+poll:
+	s.pollScreen(r, o, write, allowed, &last, &sent, &lastSent)
+}
+
+// pollScreen streams by one capture per frame, for computer images built
+// before the capture could stream. The wait after a capture is only what is
+// left of the frame time, so the capture itself sets the pace.
+func (s *Server) pollScreen(r *http.Request, o computer.Owner, write func([]byte) bool, allowed func() bool,
+	last *[]byte, sent *int, lastSent *time.Time) {
+	const frame = 40 * time.Millisecond
+	fails := 0
+	for {
+		if !allowed() {
+			return
 		}
 		began := time.Now()
 		img, err := s.Computer.Screenshot(r.Context(), o)
 		if err == nil {
 			fails = 0
-			same := last != nil && bytes.Equal(last, img)
-			// Send the first two frames even when identical: a multipart
-			// client/proxy needs the next boundary to finish the part.
-			// After that, a still screen gets a 1s heartbeat so a proxy
-			// never holds a lone frame forever.
-			if same && sent >= 2 && time.Since(lastSent) < time.Second {
-				// nothing changed and the heartbeat isn't due
-			} else {
-				if !same {
-					last = append(last[:0], img...)
-				}
-				if _, err = fmt.Fprintf(w, "--gbotframe\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(last)); err == nil {
-					_, err = w.Write(append(last, '\r', '\n'))
-				}
-				if err != nil {
+			same := *last != nil && bytes.Equal(*last, img)
+			if !(same && *sent >= 2 && time.Since(*lastSent) < time.Second) {
+				if !write(img) {
 					return
 				}
-				flusher.Flush()
-				sent++
-				lastSent = time.Now()
 			}
 		} else if fails++; fails > 30 {
 			return // the computer went away; let the browser stop asking
