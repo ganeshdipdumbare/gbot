@@ -50,7 +50,7 @@ import java.util.concurrent.ConcurrentHashMap
 /** Tools that drive the bot's browser or computer, not just the web. */
 internal fun usesComputer(name: String) = name in COMPUTER_TOOLS
 
-/** Tools that work in the phone's one browser window (open_in_chrome hands off to Chrome instead). */
+/** Tools that work in the bot's own browser window on the phone (open_in_chrome hands off to Chrome instead). */
 /** How much of a browser step's result a remote model gets: a whole page read, like the computer's (30k). */
 internal const val BROWSER_RESULT_CAP = 24_000
 
@@ -114,7 +114,7 @@ class LocalBrain(
     private val db: LocalDb,
     private val api: LocalApi,
     private val events: Events,
-    private val browser: BrowserController,
+    private val browsers: Browsers,
     private val scope: CoroutineScope,
 ) {
     // The phone's own model, loaded from one file at a time. Every run on it
@@ -130,10 +130,10 @@ class LocalBrain(
     // Each chat is its own queue, so bots answer side by side, as on the
     // server. What the phone has only one of is shared more narrowly: the
     // model generates for one run at a time, the person's messages first,
-    // and the browser window belongs to one run until that run ends.
+    // and each bot's browser window belongs to one of its runs until that
+    // run ends. Bots never share a window: each has its own (see [Browsers]).
     private val lanes = Lanes()
     private val turns = Turns()
-    private val browserLock = Mutex()
     private val book = AskBook()
     private val recovered = java.util.concurrent.atomic.AtomicBoolean(false)
     private var idleJob: Job? = null
@@ -156,7 +156,8 @@ class LocalBrain(
     private class RunState(val priority: Int) {
         // What the run agreed and did, for task_verify.
         val proof = RunBook()
-        @Volatile var hasBrowser = false
+        /** The bot's browser lock, while this run holds its window. */
+        @Volatile var browserLock: Mutex? = null
         @Volatile var onComputer = false
         // A remote model has room for a whole page read; the phone's own model (8k tokens) does not.
         @Volatile var remote = false
@@ -443,7 +444,7 @@ class LocalBrain(
             val peers = if (group != null || w.depth >= MAX_ASK_DEPTH) emptyList()
             else db.bots().filter { it.id != bot.id && it.id != w.from }
             val tools = LocalTools(
-                ctx, db, browser, bot.id,
+                ctx, db, browsers.of(bot.id), bot.id,
                 taint = taint,
                 skills = api.localSkills(),
                 secret = { name -> api.secret(name) },
@@ -585,9 +586,9 @@ class LocalBrain(
         } finally {
             // The browser window goes back first: nothing below may keep it
             // from every other bot if it throws.
-            if (rs.hasBrowser) {
-                rs.hasBrowser = false
-                browserLock.unlock()
+            rs.browserLock?.let { held ->
+                rs.browserLock = null
+                held.unlock()
             }
             if (rs.onComputer && browsing.down(bot.id) == 0) emitComputer(bot.id, false)
             try {
@@ -870,15 +871,17 @@ class LocalBrain(
         tools.prefetched.clear()
         val looking = name == "browser_open" || name == "browser_read" || name == "web_fetch" || name == "web_search"
         val onComputer = usesComputer(name)
-        // The phone has one browser window, and a page carries over from one
-        // call to the next, so it is this run's from its first browser step
-        // until the run ends. Another bot browsing first means a wait.
-        if (!rs.hasBrowser && usesBrowserWindow(name)) {
-            if (!browserLock.tryLock()) {
+        // Each bot has its own browser window, and a page carries over from
+        // one call to the next, so it is this run's from its first browser
+        // step until the run ends. Only another run of the same bot (in a
+        // group, say) browsing first means a wait; other bots have their own.
+        if (rs.browserLock == null && usesBrowserWindow(name)) {
+            val lock = browsers.lock(bot.id)
+            if (!lock.tryLock()) {
                 stage("Waiting for the browser")
-                engine.aside { browserLock.lock() }
+                engine.aside { lock.lock() }
             }
-            rs.hasBrowser = true
+            rs.browserLock = lock
         }
         if (onComputer && !rs.onComputer) {
             rs.onComputer = true
@@ -917,7 +920,7 @@ class LocalBrain(
         // Say the site, not just "working", so the header tells them where
         // the bot is and what they could be watching.
         if (name.startsWith("browser_") && usesComputer(name)) {
-            val host = hostOf(browser.url.value)
+            val host = hostOf(browsers.of(bot.id).url.value)
             if (host.isNotEmpty()) stage("Browsing $host")
         }
         return out
