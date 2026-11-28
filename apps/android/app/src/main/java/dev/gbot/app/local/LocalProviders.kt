@@ -423,14 +423,33 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
         putJsonArray("parts") { addJsonObject { put("text", m.content) } }
     }
 
+    /**
+     * One model call. A busy or flaky provider is asked again a few times,
+     * as the server does: rate limits, overloads, dropped connections, and
+     * a content filter that flagged what the model wrote (a new attempt
+     * usually writes something else).
+     */
     private fun post(url: String, headers: Map<String, String>, body: JsonObject): JsonObject {
+        var attempt = 0
+        while (true) {
+            try {
+                return postOnce(url, headers, body)
+            } catch (e: Exception) {
+                if (attempt >= RETRIES || !retryable(e)) throw e
+                attempt++
+                Thread.sleep(minOf(500L shl attempt, 5_000L))
+            }
+        }
+    }
+
+    private fun postOnce(url: String, headers: Map<String, String>, body: JsonObject): JsonObject {
         val req = Request.Builder().url(url)
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .apply { headers.forEach { (k, v) -> header(k, v) } }
             .build()
         client.newCall(req).execute().use { res ->
             val text = res.body.string()
-            if (!res.isSuccessful) throw IllegalStateException("${res.code} ${text.take(300)}".trim())
+            if (!res.isSuccessful) throw ProviderError(res.code, text)
             return Json.parseToJsonElement(text).jsonObject
         }
     }
@@ -445,6 +464,15 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
     }
 
     companion object {
+        /** Extra attempts for a call that failed in a way worth retrying. */
+        const val RETRIES = 3
+
+        fun retryable(e: Throwable): Boolean = when (e) {
+            is ProviderError -> e.code == 408 || e.code == 409 || e.code == 429 || e.code >= 500 || ContentFilter.flaggedOutput(e.body)
+            is java.net.ConnectException, is java.net.SocketException -> true
+            else -> false
+        }
+
         /**
          * Model/tool rounds in one answer. A real task — search, read,
          * compare, write — is many rounds, so the phone matches the server's
@@ -494,3 +522,28 @@ class LocalProviders(private val ctx: Context, private val db: LocalDb) {
 private fun JsonObject.str(k: String): String = this[k]?.jsonPrimitive?.contentOrNull.orEmpty()
 private fun JsonObject.flag(k: String): Boolean = this[k]?.let { runCatching { it.jsonPrimitive.contentOrNull.toBoolean() }.getOrDefault(false) } ?: false
 private fun JsonObject.strings(k: String): List<String> = (this[k] as? JsonArray).orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
+
+/** A provider answered with an error status. */
+class ProviderError(val code: Int, val body: String) : IllegalStateException("$code ${body.take(300)}".trim())
+
+/**
+ * Providers whose content filter checks the model's input and output
+ * (Alibaba's DashScope among them) refuse with data_inspection_failed. On
+ * the output it is usually a passing flag that a new attempt gets past; on
+ * the input it is something in the chat or what a tool read.
+ */
+object ContentFilter {
+    fun hit(text: String): Boolean =
+        text.contains("data_inspection_failed") || text.contains("inappropriate content", ignoreCase = true)
+
+    fun flaggedOutput(text: String): Boolean = hit(text) && text.contains("Output data", ignoreCase = true)
+
+    /** Words for the person, or null if [text] isn't a content-filter refusal. */
+    fun explain(text: String): String? = when {
+        !hit(text) -> null
+        flaggedOutput(text) -> "the model provider's content filter kept blocking the answer the model wrote. " +
+            "Ask a different way, or pick another model in Settings → Models."
+        else -> "the model provider's content filter refused what I sent it: something in this chat, or in a page or file I read. " +
+            "Ask a different way, start a fresh chat, or pick another model in Settings → Models."
+    }
+}

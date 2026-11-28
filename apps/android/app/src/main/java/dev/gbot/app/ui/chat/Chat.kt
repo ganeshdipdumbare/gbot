@@ -225,7 +225,7 @@ private fun SheetAction(icon: String, label: String, onClick: () -> Unit) {
     }
 }
 
-/** Only the messages waiting behind the running turn. Steer hands one to that turn now: the bot reads it before its next step. */
+/** Only the messages waiting behind the running turn. Steer hands one to that turn now: the bot reads it before its next step, or it runs first when that turn ends. */
 @Composable
 private fun QueueStrip(key: ChatKey, items: List<QueueItem>) {
     val app = GbotApp.instance

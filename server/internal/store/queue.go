@@ -77,6 +77,17 @@ func (s *Store) SetQueueStatus(ctx context.Context, id, status, errText string) 
 	return err
 }
 
+// SteerQueued marks a waiting item steered. It reports false if the item
+// had already left the line (taken, finished or cancelled), so a later
+// status is never overwritten.
+func (s *Store) SteerQueued(ctx context.Context, id string) (bool, error) {
+	tag, err := s.DB.Exec(ctx, `UPDATE run_queue SET status='steered' WHERE id=$1 AND status='queued'`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // QueueItem loads one item; the caller authorizes it.
 func (s *Store) QueueItem(ctx context.Context, id string) (*QueueItem, error) {
 	return scanQueue(s.DB.QueryRow(ctx, `SELECT `+queueCols+` FROM run_queue WHERE id=$1`, id))
@@ -102,9 +113,11 @@ func (s *Store) ActiveQueue(ctx context.Context, botID, chatUser, groupID string
 }
 
 // RecoverQueue returns the items a previous process left queued. A
-// message steered into a turn that never read it waits in line again.
+// message steered into a turn that never read it runs first, as it would
+// have.
 func (s *Store) RecoverQueue(ctx context.Context) ([]*QueueItem, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+queueCols+` FROM run_queue WHERE status IN ('queued','steered') ORDER BY created_at`)
+	rows, err := s.DB.Query(ctx, `SELECT `+queueCols+` FROM run_queue WHERE status IN ('queued','steered')
+		ORDER BY status='steered' DESC, created_at`)
 	if err != nil {
 		return nil, err
 	}

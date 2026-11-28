@@ -318,6 +318,12 @@ class LocalApi(
         // A very fast tap can land before the wait starts.
         db.message(cardId)?.str("status")?.takeIf { it != "pending" }?.let { return it == "approved" }
         val d = cards.getOrPut(cardId) { CompletableDeferred() }
+        // An answer or skip between that check and the wait found no one to
+        // tell; it is already saved, so read it again.
+        db.message(cardId)?.str("status")?.takeIf { it != "pending" }?.let {
+            cards.remove(cardId, d)
+            return it == "approved"
+        }
         return runCatching { d.await() }.getOrDefault(false)
     }
 

@@ -335,3 +335,126 @@ func TestQueueSteer(t *testing.T) {
 		t.Fatalf("the steered message didn't go first: fourth %v, third %v", fourth.StartedAt, third.StartedAt)
 	}
 }
+
+// In a group each mentioned bot has its own queue item, with its text in
+// the transcript. A steered one reaches only its own bot, with that text;
+// another bot's steered message runs as its own turn when this one ends.
+func TestQueueSteerGroup(t *testing.T) {
+	dsn := testDB(t)
+	ctx := context.Background()
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cat := models.NewCatalog("http://127.0.0.1:1")
+	cat.Extra = []models.Model{{ID: "mockscript:x", Provider: "mockscript", Tools: true}}
+	script := []any{
+		map[string]any{"tool": "current_time", "wait_ms": 1500},
+		map[string]any{"text": "pip reply"},
+		map[string]any{"text": "cardy reply"},
+	}
+	hub := runs.NewHub()
+	rt, err := runs.New(runs.Config{DatabaseURL: dsn, OllamaHost: cat.OllamaHost, MaxSteps: 6, MockScript: script}, st, hub, cat, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	srv := httptest.NewServer((&api.Server{Store: st, Runtime: rt, Hub: hub, Models: cat, Log: log, AllowSignup: true}).Handler())
+	defer srv.Close()
+
+	c := newClient(t, srv.URL)
+	var me store.User
+	c.do("POST", "/api/auth/signup", map[string]string{"email": "steer-group@example.com", "password": "long-enough-pw"}, &me)
+	var pip, cardy store.Bot
+	c.do("POST", "/api/bots", map[string]any{"name": "Pip", "model": "mockscript:x"}, &pip)
+	c.do("POST", "/api/bots", map[string]any{"name": "Cardy", "model": "mockscript:x"}, &cardy)
+	var g store.Group
+	if code := c.do("POST", "/api/groups", map[string]any{"name": "Crew", "botIds": []string{pip.ID, cardy.ID}}, &g); code != 201 {
+		t.Fatalf("create group: %d", code)
+	}
+	until := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+	// The nth item queued for a bot in the group.
+	item := func(botID string, n int) *store.QueueItem {
+		t.Helper()
+		var q *store.QueueItem
+		until("a queue item", func() bool {
+			var ids []string
+			rows, err := st.DB.Query(ctx, `SELECT id FROM run_queue WHERE group_id=$1 AND bot_id=$2 ORDER BY created_at`, g.ID, botID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var id string
+				_ = rows.Scan(&id)
+				ids = append(ids, id)
+			}
+			rows.Close()
+			if len(ids) <= n {
+				return false
+			}
+			q, err = st.QueueItem(ctx, ids[n])
+			return err == nil
+		})
+		return q
+	}
+	send := func(text string) {
+		t.Helper()
+		if code := c.do("POST", "/api/groups/"+g.ID+"/messages", map[string]string{"text": text}, nil); code != 201 {
+			t.Fatalf("send %q: %d", text, code)
+		}
+	}
+	steer := func(q *store.QueueItem) {
+		t.Helper()
+		if code := c.do("POST", "/api/queue/"+q.ID, map[string]string{"action": "steer"}, nil); code != 200 {
+			t.Fatalf("steer: %d", code)
+		}
+	}
+
+	send("@Pip start")
+	until("Pip to start", func() bool { return item(pip.ID, 0).Status == "running" })
+	send("@Pip also check the weather")
+	send("@Cardy say hi")
+	steer(item(pip.ID, 1))
+	steer(item(cardy.ID, 0))
+	until("both turns", func() bool {
+		return item(pip.ID, 0).Status == "done" && item(cardy.ID, 0).Status == "done"
+	})
+	if got := item(pip.ID, 1).Status; got != "done" {
+		t.Fatalf("Pip's steered message: %q, want done", got)
+	}
+	var withSteer []string
+	rows, err := st.DB.Query(ctx, `SELECT state::text FROM agent_sessions WHERE id LIKE 'grp:%' AND state::text LIKE '%the person sent this%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var s string
+		_ = rows.Scan(&s)
+		withSteer = append(withSteer, s)
+	}
+	rows.Close()
+	if len(withSteer) != 1 {
+		t.Fatalf("%d group turns read a steered message, want 1 (Pip's)", len(withSteer))
+	}
+	if !strings.Contains(withSteer[0], "also check the weather") || strings.Contains(withSteer[0], "say hi") {
+		t.Fatalf("Pip read the wrong steered text: %s", withSteer[0])
+	}
+	pipFirst, cardyQ := item(pip.ID, 0), item(cardy.ID, 0)
+	if cardyQ.StartedAt == nil || pipFirst.FinishedAt == nil || cardyQ.StartedAt.Before(*pipFirst.StartedAt) {
+		t.Fatalf("Cardy's turn: started %v, Pip's %v", cardyQ.StartedAt, pipFirst.StartedAt)
+	}
+}

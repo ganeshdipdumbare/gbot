@@ -128,7 +128,8 @@ const NO_QUEUE: QueueItem[] = [];
 // QueueStrip is only the messages waiting behind the turn that is running
 // now. The running one is already in the transcript, so repeating it here
 // just looks like it is stuck. Steer hands a waiting message to the turn
-// running now: the bot reads it before its next step.
+// running now: the bot reads it before its next step, or it runs first
+// when that turn ends.
 function QueueStrip({ chatKey }: { chatKey: ChatKey }) {
   const items = useStore((s) => s.queue[chatKey] ?? NO_QUEUE);
   const waiting = items.filter((q) => q.status === "queued" || q.status === "steered");
@@ -152,7 +153,7 @@ function QueueStrip({ chatKey }: { chatKey: ChatKey }) {
               <span className={`size-1.5 rounded-full shrink-0 bg-accent ${q.status === "steered" ? "animate-pulse" : ""}`} />
               <span className="text-[13px] truncate flex-1" title={q.prompt}>{q.prompt || "(no text)"}</span>
               {q.status === "steered" ? (
-                <span className="text-[12px] text-ink-3" title="The bot reads it before its next step">Steering…</span>
+                <span className="text-[12px] text-ink-3" title="The bot reads it at its next step; if it can't, it runs first when this turn ends">Steering…</span>
               ) : (
                 <button
                   className="text-[12px] text-accent hover:text-ink cursor-pointer"
