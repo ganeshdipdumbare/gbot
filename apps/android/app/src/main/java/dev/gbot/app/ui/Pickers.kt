@@ -8,7 +8,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -46,30 +49,31 @@ fun LookPicker(look: Look, seed: String, onChange: (Look) -> Unit) {
     fun set(shape: String = t.shape, hue: String = t.hue, eyes: String = t.eyes) = onChange(Look(shape, hue, eyes, look.seed ?: seed))
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Shape", style = T.tiny, color = g.ink3)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            shapes.forEach { o -> ChoiceBody(t.shape == o, { set(shape = o) }) { Gbot(Look(o, t.hue, t.eyes), seed, 36) } }
-        }
+        PickRow(shapes.map { o -> { ChoiceBody(t.shape == o, { set(shape = o) }) { Gbot(Look(o, t.hue, t.eyes), seed, 36) } } })
         Text("Color", style = T.tiny, color = g.ink3)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            hueNames.forEach { o ->
-                Box(Modifier.size(40.dp).clip(CircleShape).background(if (t.hue == o) g.selected else Color.Transparent).border(if (t.hue == o) 1.dp else 0.dp, if (t.hue == o) g.ink3 else Color.Transparent, CircleShape).pressable { set(hue = o) }, contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(28.dp).clip(CircleShape).background(Color(hues.getValue(o).body)))
-                }
+        PickRow(hueNames.map { o -> {
+            Box(Modifier.fillMaxWidth().widthIn(max = 48.dp).aspectRatio(1f).clip(CircleShape).background(if (t.hue == o) g.selected else Color.Transparent).border(if (t.hue == o) 1.dp else 0.dp, if (t.hue == o) g.ink3 else Color.Transparent, CircleShape).pressable { set(hue = o) }, contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize(.64f).clip(CircleShape).background(Color(hues.getValue(o).body)))
             }
-        }
+        } })
         Text("Eyes", style = T.tiny, color = g.ink3)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            eyeStyles.forEach { o -> ChoiceBody(t.eyes == o, { set(eyes = o) }) { Gbot(Look(t.shape, t.hue, o), seed, 36) } }
-        }
+        PickRow(eyeStyles.map { o -> { ChoiceBody(t.eyes == o, { set(eyes = o) }) { Gbot(Look(t.shape, t.hue, o), seed, 36) } } })
     }
 }
 
+/** Eight equal columns for every row, so shape, color and eyes share one left edge and pitch. */
+@Composable
+private fun PickRow(cells: List<@Composable () -> Unit>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        repeat(8) { i -> Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { cells.getOrNull(i)?.invoke() } }
+    }
+}
 
 @Composable
 private fun ChoiceBody(on: Boolean, onClick: () -> Unit, content: @Composable () -> Unit) {
     val g = LocalG.current
     Box(
-        Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(if (on) g.selected else Color.Transparent)
+        Modifier.fillMaxWidth().widthIn(max = 48.dp).aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(if (on) g.selected else Color.Transparent)
             .border(1.dp, if (on) g.ink3 else Color.Transparent, RoundedCornerShape(12.dp)).pressable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { content() }

@@ -141,7 +141,7 @@ export function Sidebar({ activeId, compact, onSelect, onHatch, onSettings, onSe
 
   return (
     <div className="h-full flex flex-col bg-chrome select-none">
-      <div className={compact ? "flex flex-col items-center gap-0.5 py-2 shrink-0" : "flex items-center gap-1 h-11 pl-4 pr-2 shrink-0"}>
+      <div className={compact ? "flex flex-col items-center gap-0.5 py-2 shrink-0" : "flex items-center gap-1 h-11 pl-5 pr-[15px] shrink-0"}>
         {!compact && <span className="text-[16px] font-semibold tracking-[-0.2px] flex-1">gbot</span>}
         {compact && <IconButton label="Search" onClick={onSearch} className="size-7!"><Icon.search /></IconButton>}
         <IconButton label="New group" onClick={onNewGroup} className="size-7!"><Icon.users /></IconButton>
@@ -369,7 +369,7 @@ function Row({ compact, active, onClick, onMenu, onHover, avatar, name, titleTex
       onFocus={(e) => onHover?.(e.currentTarget)} onBlur={() => onHover?.(null)}
       aria-label={titleText}
       aria-current={active ? "page" : undefined}
-      className={`group w-full flex items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors duration-[120ms] cursor-pointer ${active ? "bg-selected" : "hover:bg-hover"}`}
+      className={`group w-full flex items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition-colors duration-[120ms] cursor-pointer ${active ? "bg-selected" : "hover:bg-hover"}`}
     >
       {avatar}
       <div className="min-w-0 flex-1">
