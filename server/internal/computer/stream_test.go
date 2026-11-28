@@ -76,3 +76,32 @@ func TestScreenFramesOldImage(t *testing.T) {
 		t.Fatal("no answer")
 	}
 }
+
+func TestScreenFramesClosesStdinOnCancel(t *testing.T) {
+	m, o := streamManager(`printf 'GBF 3\nabc'; cat >/dev/null`)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, done, err := m.ScreenFrames(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case f := <-frames:
+		if !bytes.Equal(f, []byte("abc")) {
+			t.Fatalf("got frame %q", f)
+		}
+	case err := <-done:
+		t.Fatalf("stream ended early: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("no frame")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("cancelled stream should end cleanly, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream didn't stop after cancel")
+	}
+}

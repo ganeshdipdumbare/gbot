@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -574,6 +575,9 @@ func (m *Manager) ScreenFrames(ctx context.Context, o Owner) (<-chan []byte, <-c
 	}
 	bin, args := m.d.pipe(id, "gbot", []string{"DISPLAY=:1"}, "/usr/local/bin/gbot-capture", "--stream", strconv.Itoa(StreamFPS), "72")
 	cmd := exec.CommandContext(ctx, bin, args...)
+	// Run in its own process group so cancelling the stream terminates any
+	// child processes that inherited stdout and would otherwise hold the pipe open.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Stdin stays open while the stream is watched; when it closes the capture inside ends.
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -583,13 +587,27 @@ func (m *Manager) ScreenFrames(ctx context.Context, o Owner) (<-chan []byte, <-c
 	if err != nil {
 		return nil, nil, err
 	}
+	cmd.Cancel = func() error {
+		_ = stdin.Close()
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 500 * time.Millisecond
 	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
 	frames := make(chan []byte, 1)
 	done := make(chan error, 1)
 	go func() {
-		defer func() { _ = stdin.Close(); _ = cmd.Wait() }()
+		defer func() {
+			_ = stdin.Close()
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+			_ = cmd.Wait()
+		}()
 		r := bufio.NewReaderSize(stdout, 256<<10)
 		n := 0
 		for {
@@ -614,7 +632,10 @@ func (m *Manager) ScreenFrames(ctx context.Context, o Owner) (<-chan []byte, <-c
 			}
 			img := make([]byte, size)
 			if _, err := io.ReadFull(r, img); err != nil {
-				done <- nil
+				if ctx.Err() != nil {
+					err = nil
+				}
+				done <- err
 				return
 			}
 			n++

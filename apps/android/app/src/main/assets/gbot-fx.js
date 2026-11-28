@@ -113,9 +113,10 @@
   // so the cursor is never somewhere nobody can see.
   const M = 14; // screen pixels for off-screen targets
   const EDGE = 9; // screen pixels so the 15px dot never clips at a viewport edge
-  // A glide advances by at most this much per drawn frame (about one), in ms, so a stalled frame
-  // pauses it instead of making it jump; it ends by dur + SLACK whatever happens (see move).
-  const MAX_FRAME = 20, SLACK = 600;
+  // A glide advances by at most this much per drawn frame, in ms, so a stalled frame
+  // pauses it instead of making it jump while 20-60 fps screens still glide in real time;
+  // it ends by dur + SLACK whatever happens (see move).
+  const MAX_FRAME = 50, SLACK = 600;
   // Page pixels per screen pixel: 1 on a desktop, about 2.5 on a phone showing a page shrunk to fit.
   const unit = () => { const v = window.visualViewport; const k = v && v.scale > 0 ? 1 / v.scale : 1; return Math.min(4, Math.max(0.5, k)); };
   const view = () => {
@@ -148,6 +149,9 @@
       if (!host || typeof host.showPopover !== "function") return;
       if (host.matches(":popover-open")) {
         if (!promote) return;
+        // Only re-promote if another popover is open above us; toggling hide/show on
+        // every move or click forces a repaint and causes a 1-frame flicker.
+        if (document.querySelectorAll(":popover-open").length <= 1) return;
         host.hidePopover();
       }
       host.showPopover();
@@ -191,13 +195,13 @@
   // Set only when it changes: a style write on the host every frame would look like the page changing.
   let shownUnit = 0;
   const setUnit = (u) => { if (u !== shownUnit) { shownUnit = u; host.style.setProperty("--u", u); } };
-  const place = (px, py) => {
+  const place = (px, py, u = unit(), v = view()) => {
     if (!dot) return;
     // Keep the dot fully inside the visible viewport; targets outside pull to the margin.
-    const u = unit(), v = view();
     setUnit(u);
-    const [x, y] = keep(px, py, inside(px, py) ? EDGE : M, v);
-    const at = `translate(${x}px, ${y}px)`;
+    const inView = px >= v.l && px <= v.r && py >= v.t && py <= v.b;
+    const [x, y] = keep(px, py, inView ? EDGE : M, v);
+    const at = `translate3d(${x}px, ${y}px, 0)`;
     dot.style.transform = at;
     halo.style.transform = at;
     // The label sits down and to the right of the dot, flips at edges, and is clamped on both axes.
@@ -208,7 +212,7 @@
     const rawTop = y + gy + th > v.b - m ? y - gy - th : y + gy;
     const left = Math.min(Math.max(v.l + m, rawLeft), Math.max(v.l + m, v.r - m - w));
     const top = Math.min(Math.max(v.t + m, rawTop), Math.max(v.t + m, v.b - m - th));
-    tag.style.transform = `translate(${left}px, ${top}px)`;
+    tag.style.transform = `translate3d(${left}px, ${top}px, 0)`;
     return [x, y];
   };
   // The light trail: dots on the glide's own curve, a few milliseconds behind the cursor each,
@@ -216,7 +220,7 @@
   const trace = (pts, on) => {
     trail.forEach((t, i) => {
       const p = pts && pts[i];
-      if (p) t.style.transform = `translate(${p[0]}px, ${p[1]}px)`;
+      if (p) t.style.transform = `translate3d(${p[0]}px, ${p[1]}px, 0)`;
       t.style.opacity = on && p ? String((0.5 - i * 0.055).toFixed(3)) : "0";
     });
   };
@@ -293,10 +297,14 @@
     boxes.forEach((n, i) => { n.style.scrollBehavior = "auto"; set(n, from[i]); });
     const dur = Math.max(260, Math.min(620, 200 + dist * 0.28));
     let played = 0, last = 0, over = false;
+    fx.scrolling = true;
     const finish = () => {
       if (over) return;
       over = true;
-      if (run === scrollRun) boxes.forEach((n, i) => set(n, to[i]));
+      if (run === scrollRun) {
+        fx.scrolling = false;
+        boxes.forEach((n, i) => set(n, to[i]));
+      }
       boxes.forEach((n, i) => { n.style.scrollBehavior = saved[i]; });
     };
     const inOut = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
@@ -345,6 +353,7 @@
     ty: -1,
     dur: 0, // how long the last move or click takes, in ms, for a caller that waits on its own clock
     moving: false, // a glide is under way; it can run past dur when frames stall, by SLACK at most
+    scrolling: false, // a smooth scroll is under way
 
     /** Where the cursor was left by the last step, so the next one starts there. */
     at(x, y) { if (this.x < 0 && x >= 0 && y >= 0) { const k = keep(x, y, EDGE); this.x = k[0]; this.y = k[1]; this.tx = k[0]; this.ty = k[1]; } },
@@ -355,7 +364,7 @@
         if (!wake()) return;
         if (text !== undefined && text !== null) label(text);
         place(this.x, this.y);
-        this.tx = this.x; this.ty = this.y;
+        if (!this.moving) { this.tx = this.x; this.ty = this.y; }
       } catch (e) {}
     },
 
@@ -364,7 +373,7 @@
         if (!wake()) return;
         label(text);
         place(this.x, this.y);
-        this.tx = this.x; this.ty = this.y;
+        if (!this.moving) { this.tx = this.x; this.ty = this.y; }
       } catch (e) {}
     },
 
@@ -457,11 +466,13 @@
             last = now;
             const k = Math.min(1, played / dur), e = ease(k);
             [this.x, this.y] = curve(e);
-            place(this.x, this.y);
+            const u = unit(), v = view();
+            place(this.x, this.y, u, v);
+            if (k >= 0.72 && pendingRing) showRing();
             if (TRAIL) {
               // Evenly spaced along the path just travelled, a few screen pixels apart, and
               // drawn in towards the dot as it lands so the streak shrinks into it.
-              const v = view(), gap = 7 * unit() * (k < 0.8 ? 1 : Math.max(0, (1 - k) / 0.2));
+              const gap = 7 * u * (k < 0.8 ? 1 : Math.max(0, (1 - k) / 0.2));
               const here = arcAt(e), pts = [];
               for (let i = 1; i <= TRAIL; i++) { const p = curve(eAt(Math.max(0, here - i * gap))); pts.push(keep(p[0], p[1], EDGE, v)); }
               trace(pts, k < 0.97);

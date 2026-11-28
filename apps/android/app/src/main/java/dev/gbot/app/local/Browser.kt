@@ -270,7 +270,7 @@ class BrowserController(private val ctx: Context) {
     private suspend fun arrive(ms: Long) {
         kotlinx.coroutines.delay(ms.coerceIn(0L, 1000L))
         val t0 = System.currentTimeMillis()
-        while (System.currentTimeMillis() - t0 < 400 && eval("window.__gbotFx && window.__gbotFx.moving ? '1' : ''") == "1") {
+        while (System.currentTimeMillis() - t0 < 600 && eval("window.__gbotFx && window.__gbotFx.moving ? '1' : ''") == "1") {
             kotlinx.coroutines.delay(16)
         }
     }

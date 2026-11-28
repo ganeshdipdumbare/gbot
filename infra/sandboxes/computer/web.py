@@ -275,9 +275,9 @@ def fx_run(page, js, arg=None):
             if num(ms) and ms > 0:
                 time.sleep(min(ms, 1000) / 1000)
                 # A stalled frame pauses a glide instead of making it jump, so it can run past
-                # its planned length: wait while the page says it is moving, 0.4 s at most.
+                # its planned length: wait while the page says it is moving, 0.6 s at most.
                 started = time.time()
-                while time.time() - started < 0.4:
+                while time.time() - started < 0.6:
                     try:
                         if not page.evaluate(fx_name("() => !!(window.__gbotFx && window.__gbotFx.moving)")):
                             break
@@ -382,14 +382,23 @@ def fx_reveal(page, el):
                 planned = page.evaluate(reveal, [el, way, FX_NAME])
             except Exception:
                 el.evaluate("(e, [w, n]) => (" + reveal + ")([e, w, n])", [way, ""], timeout=4000)
-            # The cursor's own scroll says how long it takes: wait that, then make sure it has
-            # stopped. The browser's smooth scroll doesn't say, so it is watched from the start.
+            # The cursor's own scroll says how long it takes: wait that, then wait for
+            # fx.scrolling to finish (bounded) before confirming stillness. The browser's
+            # smooth scroll doesn't report a flag, so it is watched from the start.
             ours = isinstance(planned, (int, float)) and not isinstance(planned, bool) and 0 < planned <= 1000
             if ours:
                 time.sleep(planned / 1000)
+                started = time.time()
+                while time.time() - started < 0.6:
+                    try:
+                        if not page.evaluate(fx_name("() => !!(window.__gbotFx && window.__gbotFx.scrolling)")):
+                            break
+                    except Exception:
+                        break
+                    time.sleep(0.016)
             last, still = None, 0
             for i in range(60):
-                time.sleep(0.02 if ours else 0.033)
+                time.sleep(0.033)
                 nb = el.bounding_box()
                 if not nb:
                     break
