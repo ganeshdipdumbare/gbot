@@ -22,7 +22,7 @@ export function LookPicker({ look, seed, onChange }: { look: Look; seed: string;
       <Row title="Color">
         {hueNames.map((o) => (
           <Choice key={o} on={t.hue === o} label={cap(o)} onClick={() => setT({ hue: o })} round>
-            <span className="block size-7 rounded-full" style={{ background: hues[o].body, boxShadow: "inset 0 0 0 1px rgba(0,0,0,.08)" }} />
+            <span className="block size-8 rounded-full" style={{ background: hues[o].body, boxShadow: "inset 0 0 0 1px rgba(0,0,0,.08)" }} />
           </Choice>
         ))}
       </Row>
@@ -41,7 +41,8 @@ function Row({ title, children }: { title: string; children: React.ReactNode }) 
   return (
     <div>
       <div className="text-[12px] text-ink-3 mb-1.5">{title}</div>
-      <div className="flex flex-wrap gap-1.5">{children}</div>
+      {/* Eight columns for every row, so shapes, colors and eyes share one left edge and pitch. */}
+      <div className="grid grid-cols-8 gap-1.5">{children}</div>
     </div>
   );
 }
@@ -56,7 +57,7 @@ function Choice({ on, label, onClick, round, children }: { on: boolean; label: s
       title={label}
       aria-label={label}
       aria-pressed={on}
-      className={`grid place-items-center ${round ? "size-9 rounded-full" : "size-11 rounded-[10px]"} transition-colors duration-[120ms] cursor-pointer ${
+      className={`grid place-items-center w-full max-w-11 aspect-square ${round ? "rounded-full" : "rounded-[10px]"} transition-colors duration-[120ms] cursor-pointer ${
         on ? "bg-selected shadow-[inset_0_0_0_1px_var(--ink-3)]" : "hover:bg-hover"
       }`}
     >
