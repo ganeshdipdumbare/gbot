@@ -113,12 +113,19 @@ class BrowserController(private val ctx: Context) {
 
     /**
      * Gone for good: [Browsers] has let go of this window. Any thread: it is
-     * marked closed at once, so no step starting after this builds a view,
-     * and the view itself is destroyed on the main thread.
+     * marked closed at once, so no bot step or button ([reloadPage]) starting
+     * after this builds a view, and the view itself is destroyed on the main
+     * thread. Only the screen's own [view] call makes one; it gets the bot's
+     * current window from [Browsers], never a closed one.
      */
     fun close() {
         closed = true
         main.post { runCatching { destroy() } }
+    }
+
+    /** The screen's Reload button: does nothing on a closed or unopened window, so it can't build an orphan view. */
+    fun reloadPage() {
+        if (!closed) web?.reload()
     }
 
     private fun checkOpen() = check(!closed) { "This bot's browser was closed." }
