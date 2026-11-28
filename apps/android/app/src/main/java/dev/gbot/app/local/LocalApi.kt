@@ -77,9 +77,10 @@ class LocalApi(
 ) : Api {
 
     val providers = LocalProviders(ctx, db)
-    val browser = BrowserController(ctx)
+    /** Each bot's own browser window: one bot's pages never show on another's computer. */
+    val browsers = Browsers(ctx)
     val mcp = Mcp(ctx)
-    val brain by lazy { LocalBrain(ctx, db, this, events, browser, scope) }
+    val brain by lazy { LocalBrain(ctx, db, this, events, browsers, scope) }
     private val prefs = ctx.getSharedPreferences("gbot", android.content.Context.MODE_PRIVATE)
     private val routines by lazy {
         LocalRoutines(db, scope, arm = { dev.gbot.app.live.RoutineAlarm.arm(ctx, it) }) { r -> db.bot(r.botId)?.let { brain.launchRoutine(it, r.prompt) } }
@@ -231,6 +232,7 @@ class LocalApi(
     override suspend fun archiveBot(id: String) = withContext(Dispatchers.IO) {
         check(id != MAIN_BOT) { "The main bot can't be archived." }
         db.removeBot(id)
+        browsers.close(id)
         emit("bot_removed", id)
     }
 
@@ -765,7 +767,7 @@ class LocalApi(
         routines.stop()
         runCatching { slack.stop() }
         dev.gbot.app.live.LocalService.stop(ctx)
-        runCatching { browser.destroy() }
+        runCatching { browsers.closeAll() }
         scope.launch { brain.shutdown() }
     }
 

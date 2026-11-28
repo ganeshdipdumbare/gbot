@@ -70,7 +70,7 @@ fun LocalComputerScreen(nav: NavHostController, id: String) {
         return
     }
     val local = app.api as? LocalApi ?: return
-    val browser = local.browser
+    val browser = local.browsers.of(bot.id)
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val url by browser.url.collectAsState()
