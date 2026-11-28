@@ -98,8 +98,8 @@ fun LocalComputerScreen(nav: NavHostController, id: String) {
             { nav.popBackStack() },
             subtitle = if (expanded) "Its browser, full size" else "A browser on this phone",
             actions = {
-                IconBtn("back", "Back a page", { scope.launch { browser.back() } })
-                IconBtn("next", "Forward a page", { scope.launch { browser.forward() } })
+                IconBtn("back", "Back a page", { scope.launch { runCatching { browser.back() } } })
+                IconBtn("next", "Forward a page", { scope.launch { runCatching { browser.forward() } } })
                 IconBtn("refresh", "Reload", { browser.view().reload() })
                 IconBtn("globe", "Open in Chrome", {
                     val target = browser.url.value

@@ -13,7 +13,6 @@ import java.util.concurrent.ConcurrentHashMap
 class Browsers(private val ctx: Context) {
     private val windows = ConcurrentHashMap<String, BrowserController>()
     private val locks = ConcurrentHashMap<String, Mutex>()
-    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun of(botId: String): BrowserController = windows.getOrPut(botId) { BrowserController(ctx) }
 
@@ -21,9 +20,9 @@ class Browsers(private val ctx: Context) {
 
     /** A bot that is gone lets go of its window. */
     fun close(botId: String) {
-        // A WebView is only touched on the main thread. The lock stays: a run
-        // still holding it unlocks the same one.
-        windows.remove(botId)?.let { b -> main.post { runCatching { b.close() } } }
+        // Marked closed right away, destroyed on the main thread. The lock
+        // stays: a run still holding it unlocks the same one.
+        windows.remove(botId)?.close()
     }
 
     fun closeAll() {
