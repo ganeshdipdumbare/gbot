@@ -97,6 +97,11 @@ func (r *Runtime) drain(k string, j Job, w *worker) {
 		}
 		cancel()
 		r.mu.Lock()
+		// Steered messages the turn ended before reading go first.
+		if len(w.steered) > 0 {
+			w.queue = append(w.steered, w.queue...)
+			w.steered = nil
+		}
 		if len(w.queue) == 0 {
 			delete(r.workers, k)
 			r.mu.Unlock()
@@ -107,8 +112,8 @@ func (r *Runtime) drain(k string, j Job, w *worker) {
 	}
 }
 
-// claim moves a running item from queued to running. A paused, cancelled
-// or already finished item is skipped. Every job, queued or internal (a
+// claim moves a running item from queued (or steered) to running. A
+// cancelled or already finished item is skipped. Every job, queued or internal (a
 // bot-to-bot ask, a reply, a group handoff), runs only while its person can
 // still use the bot: a removed team member's work is dropped, not run with
 // their own credentials. A failed lookup also drops the job.
@@ -135,7 +140,7 @@ func (r *Runtime) claim(j *Job) bool {
 	if err != nil {
 		return true // the record is best effort; access was checked above
 	}
-	if q.Status != "queued" {
+	if q.Status != "queued" && q.Status != "steered" {
 		return false
 	}
 	if err := r.store.SetQueueStatus(ctx, j.QueueID, "running", ""); err != nil {
@@ -184,7 +189,8 @@ func (r *Runtime) queueConvo(q *store.QueueItem) convo {
 }
 
 // Stop cancels one chat's current turn. Messages queued behind it stay,
-// so the person can still cancel or pause them one by one.
+// so the person can still cancel or steer them one by one; any already
+// steered into the stopped turn run next.
 func (r *Runtime) Stop(key string) bool {
 	return r.stopWhere(func(k string) bool { return k == key })
 }
@@ -221,7 +227,7 @@ func (r *Runtime) ClearQueue(ctx context.Context, spaceID, botID, userID, groupI
 	}
 	r.mu.Lock()
 	if w := r.workers[key]; w != nil {
-		w.queue = nil
+		w.queue, w.steered = nil, nil
 	}
 	r.mu.Unlock()
 	if err := r.store.CancelQueue(ctx, botID, userID, groupID); err != nil {
@@ -237,8 +243,8 @@ func (r *Runtime) ClearQueue(ctx context.Context, spaceID, botID, userID, groupI
 	return nil
 }
 
-// CancelQueueItem cancels one queued or paused message, or stops the turn
-// if that is the item running now.
+// CancelQueueItem cancels one queued or steered message, or stops the
+// turn if that is the item running now.
 func (r *Runtime) CancelQueueItem(ctx context.Context, q *store.QueueItem) error {
 	if q.Status == "running" {
 		key := ChatKey(q.BotID, q.ChatUser)
@@ -251,48 +257,15 @@ func (r *Runtime) CancelQueueItem(ctx context.Context, q *store.QueueItem) error
 		return err
 	}
 	r.removeQueued(q)
+	r.unsteer(q)
 	r.broadcastQueue(r.queueConvo(q), q.BotID, q.GroupID)
-	return nil
-}
-
-// PauseQueueItem holds one message until the person resumes it.
-func (r *Runtime) PauseQueueItem(ctx context.Context, q *store.QueueItem) error {
-	if q.Status == "running" {
-		return errors.New("that message is already running")
-	}
-	if err := r.store.SetQueueStatus(ctx, q.ID, "paused", ""); err != nil {
-		return err
-	}
-	r.removeQueued(q)
-	r.broadcastQueue(r.queueConvo(q), q.BotID, q.GroupID)
-	return nil
-}
-
-// ResumeQueueItem puts a paused message back in line.
-func (r *Runtime) ResumeQueueItem(ctx context.Context, q *store.QueueItem) error {
-	if q.Status != "paused" {
-		return errors.New("that message is not paused")
-	}
-	j, err := r.jobFromQueue(ctx, q)
-	if err != nil {
-		_ = r.store.SetQueueStatus(ctx, q.ID, "error", err.Error())
-		return err
-	}
-	if err := r.store.SetQueueStatus(ctx, q.ID, "queued", ""); err != nil {
-		return err
-	}
-	r.enqueue(*j, true)
 	return nil
 }
 
 func (r *Runtime) removeQueued(q *store.QueueItem) {
-	key := ChatKey(q.BotID, q.ChatUser)
-	if q.GroupID != "" {
-		key = GroupKey(q.GroupID)
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	w := r.workers[key]
+	w := r.workers[queueKey(q)]
 	if w == nil {
 		return
 	}

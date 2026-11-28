@@ -21,7 +21,7 @@ export interface Space { id: string; name: string; role: "owner" | "member" }
 export interface Group { id: string; spaceId: string; userId: string; name: string; botIds: string[]; createdAt: string; lastMessage?: Message }
 export interface Presence { state: "idle" | "thinking" | "working" | "waiting" | "blocked" | "done"; detail?: string; queued?: number; live?: boolean }
 export interface Model { id: string; label: string; provider: string; local: boolean; tools: boolean; caps?: string[]; best?: boolean }
-export interface QueueItem { id: string; prompt: string; status: "queued" | "paused" | "running" | "waiting" | "done" | "stopped" | "error" | "cancelled"; error?: string; createdAt: string }
+export interface QueueItem { id: string; prompt: string; status: "queued" | "steered" | "running" | "waiting" | "done" | "stopped" | "error" | "cancelled"; error?: string; createdAt: string }
 export type ProviderKind = "openai" | "anthropic" | "gemini" | "codex";
 export interface CodexLogin { available: boolean; allowed: boolean }
 export interface Provider {
@@ -92,7 +92,7 @@ export const api = {
   stop: (id: string) => req("POST", `${bot(id)}/stop`, {}),
   queue: (id: string) => req<{ items: QueueItem[] }>("GET", `${bot(id)}/queue`),
   groupQueue: (id: string) => req<{ items: QueueItem[] }>("GET", `/api/groups/${id}/queue`),
-  queueAction: (qid: string, action: "pause" | "resume" | "cancel") => req<{ items: QueueItem[] }>("POST", `/api/queue/${qid}`, { action }),
+  queueAction: (qid: string, action: "steer" | "cancel") => req<{ items: QueueItem[] }>("POST", `/api/queue/${qid}`, { action }),
   clearQueue: (id: string) => req<{ items: QueueItem[] }>("POST", `${bot(id)}/queue/clear`, {}),
   // Delete this chat with a bot and start it fresh; memory also forgets what it learned.
   clearChat: (id: string, memory: boolean) => req("DELETE", `${bot(id)}/messages${memory ? "?memory=1" : ""}`),

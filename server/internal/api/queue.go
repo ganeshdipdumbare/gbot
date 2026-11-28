@@ -7,7 +7,8 @@ import (
 )
 
 // The queue of one chat: what the bot is doing now and what waits behind
-// it. A person can pause, resume or cancel any of it.
+// it. A person can steer a waiting message into the running turn, or
+// cancel any of it.
 
 func (s *Server) botQueue(w http.ResponseWriter, r *http.Request) {
 	b := s.bot(w, r)
@@ -76,14 +77,12 @@ func (s *Server) queueAction(w http.ResponseWriter, r *http.Request) {
 	}
 	var err error
 	switch body.Action {
-	case "pause":
-		err = s.Runtime.PauseQueueItem(r.Context(), q)
-	case "resume":
-		err = s.Runtime.ResumeQueueItem(r.Context(), q)
+	case "steer":
+		err = s.Runtime.SteerQueueItem(r.Context(), q)
 	case "cancel":
 		err = s.Runtime.CancelQueueItem(r.Context(), q)
 	default:
-		writeErr(w, 400, "use pause, resume or cancel")
+		writeErr(w, 400, "use steer or cancel")
 		return
 	}
 	if err != nil {

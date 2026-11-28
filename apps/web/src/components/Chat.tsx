@@ -127,10 +127,12 @@ const NO_QUEUE: QueueItem[] = [];
 
 // QueueStrip is only the messages waiting behind the turn that is running
 // now. The running one is already in the transcript, so repeating it here
-// just looks like it is stuck.
+// just looks like it is stuck. Steer hands a waiting message to the turn
+// running now: the bot reads it before its next step, or it runs first
+// when that turn ends.
 function QueueStrip({ chatKey }: { chatKey: ChatKey }) {
   const items = useStore((s) => s.queue[chatKey] ?? NO_QUEUE);
-  const waiting = items.filter((q) => q.status === "queued" || q.status === "paused");
+  const waiting = items.filter((q) => q.status === "queued" || q.status === "steered");
   if (!waiting.length) return null;
   const fail = (e: unknown) => toast((e as Error).message || "Couldn't change the queue", "error");
   return (
@@ -148,11 +150,19 @@ function QueueStrip({ chatKey }: { chatKey: ChatKey }) {
         <ul className="px-2 pb-2 max-h-32 overflow-y-auto scroll-soft">
           {waiting.map((q) => (
             <li key={q.id} className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-hover">
-              <span className={`size-1.5 rounded-full shrink-0 ${q.status === "paused" ? "bg-ink-3" : "bg-accent"}`} />
+              <span className={`size-1.5 rounded-full shrink-0 bg-accent ${q.status === "steered" ? "animate-pulse" : ""}`} />
               <span className="text-[13px] truncate flex-1" title={q.prompt}>{q.prompt || "(no text)"}</span>
-              <button className="text-[12px] text-ink-2 hover:text-ink cursor-pointer" onClick={() => queueAction(chatKey, q.id, q.status === "paused" ? "resume" : "pause").catch(fail)}>
-                {q.status === "paused" ? "Resume" : "Pause"}
-              </button>
+              {q.status === "steered" ? (
+                <span className="text-[12px] text-ink-3" title="The bot reads it at its next step; if it can't, it runs first when this turn ends">Steering…</span>
+              ) : (
+                <button
+                  className="text-[12px] text-accent hover:text-ink cursor-pointer"
+                  title="Give it to the bot now, without waiting for this turn to end"
+                  onClick={() => queueAction(chatKey, q.id, "steer").catch(fail)}
+                >
+                  Steer
+                </button>
+              )}
               <button className="text-[12px] text-ink-3 hover:text-danger cursor-pointer" onClick={() => queueAction(chatKey, q.id, "cancel").catch(fail)}>Cancel</button>
             </li>
           ))}

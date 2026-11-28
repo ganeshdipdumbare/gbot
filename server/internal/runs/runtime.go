@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -71,6 +72,8 @@ type Job struct {
 	round     string // the round this run's asks go into, once it sends one
 	joinRound string // set on the run that gets a round's answers back
 	tainted   bool   // the run read outside text
+	steerText string // a steered group message's text, which its job doesn't carry
+	carried   []Job  // messages steered into this run and read by it
 
 	model  string // the model this run resolved to
 	skills []*store.Skill
@@ -164,8 +167,11 @@ type agentSlot struct {
 }
 
 type worker struct {
-	queue  []Job
-	cancel context.CancelFunc
+	queue []Job
+	// steered are messages the person moved out of the line into the
+	// running turn; it reads them with its next tool result (steer.go).
+	steered []Job
+	cancel  context.CancelFunc
 }
 
 func New(cfg Config, st *store.Store, hub *Hub, cat *models.Catalog, log *slog.Logger) (*Runtime, error) {
@@ -207,7 +213,7 @@ func (r *Runtime) build(model string) (*kritrim.Agent, error) {
 			BeforeTool: r.beforeTool,
 			AfterTool:  r.afterTool,
 		},
-		Retry:     &kritrim.Retry{Max: 3},
+		Retry:     &kritrim.Retry{Max: 3, RetryOn: retryModel},
 		Limits:    kritrim.Limits{Steps: max(r.cfg.MaxSteps, 1), ToolCalls: max(96, max(r.cfg.MaxSteps, 1)*4)},
 		Reasoning: r.reasoningFor(model),
 		Logger:    func(msg string) { r.log.Debug("agent", "msg", msg) },
@@ -529,7 +535,13 @@ func firstNonEmpty(a ...string) string {
 func (r *Runtime) run(ctx context.Context, j *Job) {
 	b := j.Bot
 	qStatus, qErr := "error", ""
-	defer func() { r.finishQueue(j, qStatus, qErr) }()
+	var carriedMu sync.Mutex
+	defer func() {
+		r.finishQueue(j, qStatus, qErr)
+		carriedMu.Lock()
+		defer carriedMu.Unlock()
+		r.finishCarried(j.carried, qStatus, qErr)
+	}()
 	c := j.convo()
 	bg := context.WithoutCancel(ctx)
 	r.rounds.startRun(j)
@@ -613,6 +625,19 @@ func (r *Runtime) run(ctx context.Context, j *Job) {
 	if !j.Untrusted && j.Trigger == "chat" {
 		for _, u := range linksIn(j.Prompt) {
 			rc.allowFetch(u)
+		}
+	}
+	// Messages steered into this turn reach it with its next tool result.
+	// A reply to another bot doesn't take them (it goes back to that bot),
+	// nor does a Slack turn, whose reply would carry the person's chat there.
+	if len(j.exchange) == 0 && j.Trigger != "slack" {
+		key := j.key()
+		rc.steer = func() []Job {
+			got := r.takeSteered(key, b.ID)
+			carriedMu.Lock()
+			j.carried = append(j.carried, got...)
+			carriedMu.Unlock()
+			return got
 		}
 	}
 	ctx = withRun(ctx, rc)
@@ -1184,6 +1209,10 @@ func (r *Runtime) friendlyError(model string, err error) string {
 		return "I was busy with another task. Send that again?"
 	case errors.Is(err, kritrim.ErrSessionTampered):
 		return "This chat's history failed its integrity check, so I won't replay it. Clear the chat to start fresh."
+	case contentFiltered(s) && filteredOutput(s):
+		return "The model provider's content filter kept blocking the answer the model wrote. Ask a different way, or pick another model."
+	case contentFiltered(s):
+		return "The model provider's content filter refused what I sent it: something in this chat, or in a page or file I read. Ask a different way, clear the chat, or pick another model."
 	}
 	if len(s) > 300 {
 		s = s[:300] + "…"
@@ -1195,3 +1224,36 @@ func splitModel(model string) (string, string) {
 	provider, name, _ := strings.Cut(model, ":")
 	return provider, name
 }
+
+// retryModel is kritrim's retry rule (rate limits, overloads, server
+// errors, dropped connections) plus a content filter that flagged what the
+// model wrote: providers that check output (Alibaba's DashScope among them)
+// refuse with data_inspection_failed, and a new attempt usually writes
+// something else.
+func retryModel(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var se *kritrim.StatusError
+	if errors.As(err, &se) {
+		return se.Code == 408 || se.Code == 409 || se.Code == 429 || se.Code >= 500 ||
+			(contentFiltered(se.Body) && filteredOutput(se.Body))
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	for _, part := range []string{"rate limit", "overloaded", "timeout", "temporarily unavailable"} {
+		if strings.Contains(s, part) {
+			return true
+		}
+	}
+	return contentFiltered(s) && filteredOutput(s)
+}
+
+func contentFiltered(s string) bool {
+	return strings.Contains(s, "data_inspection_failed") || strings.Contains(strings.ToLower(s), "inappropriate content")
+}
+
+func filteredOutput(s string) bool { return strings.Contains(strings.ToLower(s), "output data") }

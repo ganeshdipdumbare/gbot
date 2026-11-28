@@ -168,7 +168,7 @@ function setQueue(k: ChatKey, items: QueueItem[]) {
   set((s) => ({ queue: { ...s.queue, [k]: items } }));
 }
 
-export async function queueAction(k: ChatKey, qid: string, action: "pause" | "resume" | "cancel") {
+export async function queueAction(k: ChatKey, qid: string, action: "steer" | "cancel") {
   const { items } = await api.queueAction(qid, action);
   setQueue(k, items);
 }

@@ -171,7 +171,7 @@ func (r *Runtime) modelFor(model string) (kritrim.Model, error) {
 		return kritrim.Mock(), nil
 	case "mockscript":
 		turns := mockTurns(r.cfg.MockScript)
-		return kritrim.Mock(turns...), nil
+		return &slowMock{Model: kritrim.Mock(turns...), waits: mockWaits(r.cfg.MockScript)}, nil
 	case "anthropic":
 		return kritrim.Anthropic(name), nil
 	case "gemini":
